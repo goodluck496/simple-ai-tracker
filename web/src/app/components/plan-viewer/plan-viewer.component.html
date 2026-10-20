@@ -1,0 +1,33 @@
+<div class="plan">
+  @if (!hasPlan()) {
+    <p-message
+      severity="secondary"
+      text="План ещё не приложен. Агент прикладывает его через MCP-инструмент tracker_attach_plan; версии сохраняются в карточке."
+    ></p-message>
+  } @else {
+    <div class="plan-versions">
+      <p-selectButton
+        [options]="versionOptions()"
+        optionLabel="label"
+        optionValue="value"
+        [ngModel]="activeVersion()"
+        (ngModelChange)="selectVersion($event)"
+        styleClass="plan-version-select"
+      ></p-selectButton>
+
+      @if (activeAttachment(); as attachment) {
+        <span class="plan-meta">
+          <i class="pi pi-file"></i>
+          {{ attachment.name }}
+          <p-tag [value]="formatBytes(attachment.size)" severity="secondary" [rounded]="true"></p-tag>
+          <span class="plan-meta-date">{{ formatDateTime(attachment.createdAt) }}</span>
+          @if (attachment.sourcePath) {
+            <span class="plan-meta-path">{{ attachment.sourcePath }}</span>
+          }
+        </span>
+      }
+    </div>
+
+    <article class="plan-content md" [innerHTML]="renderedHtml()"></article>
+  }
+</div>

@@ -1,0 +1,106 @@
+// Токены дизайна Simple AI Tracker (SCSS-партиал, в CSS не компилируется сам).
+// Использование: @use '../../../styles/tokens' as t;
+
+// ------------------------------------------------------------------ палитра
+$sat-bg: #020617;
+$sat-bg-elevated: #0b1120;
+$sat-surface: #0f172a;
+$sat-surface-hover: #1e293b;
+$sat-border: #1e293b;
+$sat-border-strong: #334155;
+$sat-text: #f8fafc;
+$sat-text-muted: #94a3b8;
+$sat-text-dim: #64748b;
+
+$sat-accent: #38bdf8;
+$sat-accent-dark: #0284c7;
+$sat-accent-bright: #0ea5e9;
+$sat-accent-hover: #0369a1;
+$sat-hover-muted: #475569;
+$text-strong: #f1f5f9;
+$accent-soft-text: #bae6fd;
+$white: #ffffff;
+$danger-hover: #f87171;
+$danger-soft: #fca5a5;
+$sat-success: #22c55e;
+$sat-warn: #f59e0b;
+$sat-danger: #ef4444;
+
+$sat-backdrop: rgba(0, 0, 0, 0.55);
+$sat-shadow: 0 18px 40px rgba(0, 0, 0, 0.6);
+$sat-shadow-menu: 0 10px 25px -5px rgba(0, 0, 0, 0.8);
+
+$radius: 12px;
+$radius-sm: 8px;
+$radius-pill: 999px;
+$font-stack: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+$font-mono: 'JetBrains Mono', 'Cascadia Code', Consolas, monospace;
+
+// Цвета статусов: используется и в CSS-переменных, и в компонентах.
+$status-palette: (
+  backlog: #7b89a8,
+  planning: #38bdf8,
+  questions: #f59e0b,
+  ready: #2fd4a0,
+  in_progress: #38bdf8,
+  testing: #a78bfa,
+  review: #fb923c,
+  done: #22c55e,
+);
+
+// ------------------------------------------------------------------- миксины
+@mixin surface-panel($bg: $sat-surface, $border: $sat-border) {
+  background: $bg;
+  border: 1px solid $border;
+  border-radius: $radius-sm;
+}
+
+@mixin popup-menu($width: 260px) {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  width: $width;
+  background: $sat-surface;
+  border: 1px solid $sat-border-strong;
+  border-radius: $radius-sm;
+  box-shadow: $sat-shadow-menu;
+  z-index: 2000;
+  padding: 8px;
+}
+
+@mixin icon-button($size: 28px) {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: $size;
+  height: $size;
+  border-radius: 6px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: $sat-text-muted;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+
+  &:hover {
+    background: $sat-surface-hover;
+    border-color: $sat-border-strong;
+    color: $sat-text;
+  }
+}
+
+@mixin menu-section-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: $sat-text-muted;
+  padding: 2px 4px 6px;
+  border-bottom: 1px solid $sat-border;
+}
+
+@mixin ellipsis {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}

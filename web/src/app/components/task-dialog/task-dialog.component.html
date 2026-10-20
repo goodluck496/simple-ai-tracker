@@ -1,0 +1,667 @@
+<!-- Затемнение фона при открытом сайдбаре -->
+<div class="sidebar-backdrop" [class.backdrop-resizing]="isResizing()" (click)="close()"></div>
+
+<!-- Выдвижная панель карточки справа с изменяемой шириной -->
+<aside
+  class="task-sidebar"
+  [style.width.px]="sidebarWidth()"
+  [class.sidebar-resizing]="isResizing()"
+  role="dialog"
+  aria-label="Карточка задачи"
+>
+  <p-confirmDialog acceptButtonStyleClass="p-button-danger p-button-sm" rejectButtonStyleClass="p-button-text p-button-sm"></p-confirmDialog>
+
+  <!-- Ручка изменения ширины (левая граница) -->
+  <div class="sidebar-resizer" (mousedown)="onResizeStart($event)" pTooltip="Потяните, чтобы изменить ширину" tooltipPosition="left">
+    <div class="resizer-handle-line"></div>
+  </div>
+
+  <!-- Шапка сайдбара: id карточки, редактируемое название, кнопки окна -->
+  <header class="sidebar-header">
+    <div class="sidebar-header-left">
+      @if (!isCreate()) {
+        <p-tag [value]="task()?.id ?? ''" severity="info" styleClass="header-id-badge"></p-tag>
+      }
+      <input
+        id="sat-title"
+        type="text"
+        pInputText
+        class="sidebar-title-input"
+        [placeholder]="isCreate() ? 'Название новой записи' : 'Название задачи'"
+        [ngModel]="title()"
+        (ngModelChange)="title.set($event)"
+        aria-label="Название задачи"
+      />
+    </div>
+
+    <div class="sidebar-header-right">
+      <p-button
+        [icon]="isExpanded() ? 'pi pi-window-minimize' : 'pi pi-window-maximize'"
+        severity="secondary"
+        [text]="true"
+        [rounded]="true"
+        size="small"
+        [pTooltip]="isExpanded() ? 'Обычный размер' : 'Развернуть на весь экран'"
+        (onClick)="toggleExpand()"
+      ></p-button>
+      <p-button
+        icon="pi pi-times"
+        severity="secondary"
+        [text]="true"
+        [rounded]="true"
+        size="small"
+        pTooltip="Закрыть (Esc)"
+        (onClick)="close()"
+      ></p-button>
+    </div>
+  </header>
+
+  <!-- Фиксированная строка карточки: статус, тип и ручная проверка.
+       Она не скроллится — уезжает только содержимое вкладок. -->
+  <section class="card-form-head">
+    <div class="head-row">
+      @if (isCreate()) {
+        <span
+          class="head-note"
+          pTooltip="Новая карточка создаётся в бэклоге — дальше двигайте её по статусам"
+          tooltipPosition="bottom"
+        >
+          <i class="pi pi-inbox" aria-hidden="true"></i>
+          Статус: бэклог
+        </span>
+      } @else {
+        <p-select
+          inputId="sat-status"
+          class="head-status-select"
+          [options]="statusOptions()"
+          optionLabel="label"
+          optionValue="value"
+          [ngModel]="status()"
+          (ngModelChange)="changeStatus($event)"
+          pTooltip="Сменить статус карточки"
+          tooltipPosition="bottom"
+        ></p-select>
+      }
+
+      <p-select
+        inputId="sat-type"
+        class="head-type-select"
+        [options]="typeOptions"
+        optionLabel="label"
+        optionValue="value"
+        [ngModel]="type()"
+        (ngModelChange)="onTypeChange($event)"
+        pTooltip="Тип записи"
+        tooltipPosition="bottom"
+      ></p-select>
+
+      <p-togglebutton
+        [ngModel]="requiresManualTest()"
+        (ngModelChange)="requiresManualTest.set($event)"
+        onLabel="Ручная проверка"
+        offLabel="Без ручной проверки"
+        onIcon="pi pi-eye"
+        offIcon="pi pi-eye-slash"
+        size="small"
+        pTooltip="Нужна ручная проверка пользователем после автотестов"
+        tooltipPosition="bottom"
+      ></p-togglebutton>
+    </div>
+
+    @if (error(); as message) {
+      <p-message severity="error" [text]="message"></p-message>
+    }
+  </section>
+
+  @if (isCreate()) {
+    <!-- Создание: вкладок нет, скроллится весь блок формы -->
+    <div class="sidebar-scroll-body">
+      <div class="dialog-content">
+        <ng-container [ngTemplateOutlet]="overviewPanel" />
+      </div>
+    </div>
+  } @else {
+    <!-- Вкладки карточки: PrimeNG p-tabs, скроллятся только панели -->
+    <p-tabs class="card-tabs" [value]="tab()" (valueChange)="onTabChange($event)" scrollable>
+      <p-tablist>
+        @for (tabItem of tabs(); track tabItem.id) {
+          <p-tab [value]="tabItem.id">
+            {{ tabItem.label }}
+            @if (tabItem.badge) {
+              <p-badge [value]="tabItem.badge" severity="info" size="small" styleClass="tab-badge"></p-badge>
+            }
+          </p-tab>
+        }
+      </p-tablist>
+
+      <p-tabpanels>
+        <p-tabpanel value="overview">
+          <ng-container [ngTemplateOutlet]="overviewPanel" />
+        </p-tabpanel>
+
+
+            <p-tabpanel value="plan">
+              @if (task(); as card) {
+                <div class="tab-panel">
+                  <div class="panel-head">
+                    <span class="field-label">План решения</span>
+                    <p-button
+                      [label]="showPlanForm() ? 'Отменить' : 'Приложить версию плана'"
+                      [icon]="showPlanForm() ? 'pi pi-times' : 'pi pi-plus'"
+                      severity="secondary"
+                      [outlined]="true"
+                      size="small"
+                      (onClick)="showPlanForm.set(!showPlanForm())"
+                    ></p-button>
+                  </div>
+
+                  @if (showPlanForm()) {
+                    <div class="subform">
+                      <textarea
+                        pTextarea
+                        rows="6"
+                        class="w-full"
+                        placeholder="Markdown-план: цель, шаги, затронутые файлы, план тестирования, критерии приёмки…"
+                        [ngModel]="planDraft()"
+                        (ngModelChange)="planDraft.set($event)"
+                      ></textarea>
+                      <input
+                        type="text"
+                        pInputText
+                        class="w-full"
+                        placeholder="Краткое резюме (необязательно)"
+                        [ngModel]="planSummary()"
+                        (ngModelChange)="planSummary.set($event)"
+                      />
+                      <textarea
+                        pTextarea
+                        rows="3"
+                        class="w-full"
+                        placeholder="Вопросы к исполнителю, по одному на строку (необязательно)"
+                        [ngModel]="planQuestions()"
+                        (ngModelChange)="planQuestions.set($event)"
+                      ></textarea>
+                      <p-button
+                        label="Приложить план"
+                        icon="pi pi-upload"
+                        size="small"
+                        [disabled]="!planDraft().trim()"
+                        (onClick)="submitPlan()"
+                      ></p-button>
+                    </div>
+                  }
+
+                  <sat-plan-viewer [attachments]="card.attachments" [currentPlan]="card.plan" />
+                </div>
+              }
+            </p-tabpanel>
+
+            <p-tabpanel value="questions">
+              @if (task(); as card) {
+                <div class="tab-panel">
+                  <sat-questions-panel
+                    [questions]="card.questions"
+                    (answered)="answerQuestion($event)"
+                    (asked)="askQuestion($event.text)"
+                    (removed)="deleteQuestion($event.questionId)"
+                  />
+                </div>
+              }
+            </p-tabpanel>
+
+            <p-tabpanel value="discussion">
+              @if (task(); as card) {
+                <div class="tab-panel">
+                  <div class="panel-head">
+                    <span class="field-label">Обсуждение и история решений</span>
+                    <p-button
+                      [label]="showClarificationForm() ? 'Отменить' : 'Зафиксировать уточнение'"
+                      [icon]="showClarificationForm() ? 'pi pi-times' : 'pi pi-pencil'"
+                      severity="secondary"
+                      [outlined]="true"
+                      size="small"
+                      (onClick)="showClarificationForm.set(!showClarificationForm())"
+                    ></p-button>
+                  </div>
+
+                  @if (showClarificationForm()) {
+                    <div class="subform">
+                      <p class="subform-hint">
+                        Уточнение сохраняется в карточке: описание, комментарий и журнал решений. Агент перечитает план
+                        и, если решение изменилось, приложит новую версию.
+                      </p>
+                      <textarea
+                        pTextarea
+                        rows="3"
+                        class="w-full"
+                        placeholder="Что уточняем (формулировка пользователя)"
+                        [ngModel]="clarificationDraft()"
+                        (ngModelChange)="clarificationDraft.set($event)"
+                      ></textarea>
+                      <input
+                        type="text"
+                        pInputText
+                        class="w-full"
+                        placeholder="Причина: почему это важно"
+                        [ngModel]="clarificationReason()"
+                        (ngModelChange)="clarificationReason.set($event)"
+                      />
+                      <input
+                        type="text"
+                        pInputText
+                        class="w-full"
+                        placeholder="Влияние на решение: что меняется"
+                        [ngModel]="clarificationImpact()"
+                        (ngModelChange)="clarificationImpact.set($event)"
+                      />
+                      <textarea
+                        pTextarea
+                        rows="2"
+                        class="w-full"
+                        placeholder="Новые вопросы агенту, по одному на строку (необязательно)"
+                        [ngModel]="clarificationQuestions()"
+                        (ngModelChange)="clarificationQuestions.set($event)"
+                      ></textarea>
+                      <p-checkbox
+                        [binary]="true"
+                        inputId="sat-plan-changed"
+                        [ngModel]="clarificationPlanChanged()"
+                        (ngModelChange)="clarificationPlanChanged.set($event)"
+                        label="план нужно пересобрать"
+                      ></p-checkbox>
+                      <p-button
+                        label="Сохранить уточнение"
+                        icon="pi pi-check"
+                        size="small"
+                        [disabled]="!clarificationDraft().trim()"
+                        (onClick)="submitClarification()"
+                      ></p-button>
+                    </div>
+                  }
+
+                  <div class="comment-form">
+                    <textarea
+                      pTextarea
+                      rows="3"
+                      class="w-full"
+                      placeholder="Комментарий к задаче…"
+                      [ngModel]="commentDraft()"
+                      (ngModelChange)="commentDraft.set($event)"
+                    ></textarea>
+                    <p-button
+                      label="Отправить"
+                      icon="pi pi-send"
+                      size="small"
+                      [disabled]="!commentDraft().trim()"
+                      (onClick)="submitComment()"
+                    ></p-button>
+                  </div>
+
+                  <sat-decision-log [events]="card.events" />
+
+                  <p-accordion [multiple]="true" styleClass="card-accordion">
+                    <p-accordion-panel value="comments">
+                      <p-accordion-header>Комментарии ({{ card.comments.length }})</p-accordion-header>
+                      <p-accordion-content>
+                        @if (card.comments.length === 0) {
+                          <p-message severity="secondary" text="Комментариев пока нет."></p-message>
+                        } @else {
+                          <ul class="comments-list">
+                            @for (comment of card.comments; track comment.id) {
+                              <li class="comment-item">
+                                <header>
+                                  <span class="comment-author">{{ comment.author }}</span>
+                                  <p-tag [value]="commentKindLabel(comment.kind)" severity="secondary" [rounded]="true"></p-tag>
+                                  <span class="comment-time">{{ formatDateTime(comment.createdAt) }}</span>
+                                </header>
+                                <p>{{ comment.text }}</p>
+                              </li>
+                            }
+                          </ul>
+                        }
+                      </p-accordion-content>
+                    </p-accordion-panel>
+
+                    @if (card.attachments.length > 0) {
+                      <p-accordion-panel value="attachments">
+                        <p-accordion-header>Вложения ({{ card.attachments.length }})</p-accordion-header>
+                        <p-accordion-content>
+                          <ul class="attachments-list">
+                            @for (attachment of card.attachments; track attachment.id) {
+                              <li>
+                                <i class="pi pi-paperclip"></i>
+                                <p-tag
+                                  [value]="attachment.kind"
+                                  [severity]="attachment.kind === 'plan' ? 'info' : 'secondary'"
+                                ></p-tag>
+                                <span class="attachment-name">{{ attachment.name }}</span>
+                                @if (attachment.kind === 'plan') {
+                                  <p-tag [value]="'v' + attachment.version" severity="success"></p-tag>
+                                }
+                                <span class="attachment-meta">{{ formatBytes(attachment.size) }}</span>
+                                <span class="attachment-meta">{{ formatDateTime(attachment.createdAt) }}</span>
+                              </li>
+                            }
+                          </ul>
+                        </p-accordion-content>
+                      </p-accordion-panel>
+                    }
+                  </p-accordion>
+                </div>
+              }
+            </p-tabpanel>
+
+            <p-tabpanel value="relations">
+              @if (task(); as card) {
+                <div class="tab-panel">
+                  @if (card.parent; as parent) {
+                    <div class="relations-block">
+                      <span class="relations-label">Родительская фича</span>
+                      <p-button
+                        [label]="parent.id + ' — ' + parent.title"
+                        icon="pi pi-star-fill"
+                        severity="secondary"
+                        [link]="true"
+                        (onClick)="openTask(parent.id)"
+                      ></p-button>
+                    </div>
+                  }
+
+                  <div class="relations-block">
+                    <span class="relations-label">Связи</span>
+                    @for (row of linkRows(); track row.linkId) {
+                      <div class="relations-row">
+                        <p-tag [value]="row.relation" severity="warn"></p-tag>
+                        <p-button
+                          [label]="row.otherId + ' — ' + row.title"
+                          [link]="true"
+                          severity="info"
+                          (onClick)="openTask(row.otherId)"
+                        ></p-button>
+                        @if (row.status) {
+                          <p-tag [value]="row.status" severity="secondary"></p-tag>
+                        }
+                        <p-button
+                          icon="pi pi-trash"
+                          severity="danger"
+                          [text]="true"
+                          [rounded]="true"
+                          size="small"
+                          pTooltip="Удалить связь"
+                          (onClick)="unlink(row.otherId)"
+                        ></p-button>
+                      </div>
+                    }
+                    @if (linkRows().length === 0) {
+                      <span class="empty-hint">Связей нет.</span>
+                    }
+                  </div>
+
+                  <div class="relations-add">
+                    <p-select
+                      [options]="relationOptions"
+                      optionLabel="label"
+                      optionValue="value"
+                      [ngModel]="linkRelation()"
+                      (ngModelChange)="linkRelation.set($event)"
+                    ></p-select>
+                    <p-select
+                      [options]="availableTasks()"
+                      optionLabel="title"
+                      optionValue="id"
+                      placeholder="Выберите задачу…"
+                      [filter]="true"
+                      filterBy="title,id"
+                      [ngModel]="linkTargetId()"
+                      (ngModelChange)="linkTargetId.set($event)"
+                      [pTooltip]="linkTargetLabel()"
+                      tooltipPosition="top"
+                      [tooltipDisabled]="!linkTargetLabel()"
+                    ></p-select>
+                    <p-button
+                      label="Связать"
+                      icon="pi pi-link"
+                      size="small"
+                      [disabled]="!linkTargetId()"
+                      (onClick)="link()"
+                    ></p-button>
+                  </div>
+
+                  <div class="relations-block">
+                    <span class="relations-label">Подзадачи ({{ childTasks().length }})</span>
+                    @for (child of childTasks(); track child.id) {
+                      <p-button
+                        [label]="child.id + ' — ' + child.title"
+                        icon="pi pi-sitemap"
+                        severity="secondary"
+                        [link]="true"
+                        (onClick)="openTask(child.id)"
+                      ></p-button>
+                    }
+                    @if (childTasks().length === 0) {
+                      <span class="empty-hint">Подзадач нет.</span>
+                    }
+                  </div>
+                </div>
+              }
+            </p-tabpanel>
+      </p-tabpanels>
+    </p-tabs>
+  }
+
+
+      <!-- ОБЗОР: общий блок для создания и просмотра -->
+      <ng-template #overviewPanel>
+        <div class="tab-panel">
+          @if (statusMeta(); as meta) {
+            <p-message
+              severity="secondary"
+              [text]="meta.title + ': ' + meta.description"
+              styleClass="status-hint"
+            ></p-message>
+          }
+
+          <div class="field">
+            <label class="field-label" for="sat-description">Описание и критерии приёмки</label>
+            <textarea
+              id="sat-description"
+              pTextarea
+              rows="10"
+              class="w-full"
+              placeholder="Что нужно сделать, что считается готовым результатом…"
+              [ngModel]="description()"
+              (ngModelChange)="description.set($event)"
+            ></textarea>
+          </div>
+
+          <div class="field">
+            <label class="field-label" for="sat-tag-input">Теги</label>
+            <div class="tags-editor">
+              @for (tag of tags(); track tag) {
+                <p-chip [label]="tag" icon="pi pi-hashtag" [removable]="true" (onRemove)="removeTag(tag)"></p-chip>
+              }
+              @if (tags().length === 0) {
+                <span class="tags-empty">нет тегов</span>
+              }
+            </div>
+            <div class="tags-add">
+              <p-autocomplete
+                inputId="sat-tag-input"
+                class="tags-autocomplete"
+                [suggestions]="tagSuggestions()"
+                optionLabel="name"
+                [dropdown]="true"
+                [ngModel]="tagDraft()"
+                (ngModelChange)="tagDraft.set($event)"
+                (completeMethod)="filterTagSuggestions($event)"
+                (onSelect)="onTagSelected($event)"
+                placeholder="Добавить тег…"
+                pTooltip="Выберите существующий тег или введите новый"
+              ></p-autocomplete>
+              <p-button
+                label="Добавить"
+                icon="pi pi-plus"
+                size="small"
+                [disabled]="!tagDraft().trim()"
+                (onClick)="addTag(tagDraft())"
+              ></p-button>
+            </div>
+          </div>
+
+          <div class="field">
+            <label class="field-label">
+              <i class="pi pi-image"></i> Скриншоты ({{ images().length }})
+            </label>
+
+            <!-- Зона загрузки: drag&drop, вставка из буфера (Ctrl+V), выбор файла -->
+            <div
+              class="dropzone"
+              [class.dropzone--active]="isDraggingFiles()"
+              (dragover)="onDragOverFiles($event)"
+              (dragleave)="onDragLeaveFiles($event)"
+              (drop)="onDropFiles($event)"
+              (click)="imageInput.click()"
+            >
+              <i class="pi pi-cloud-upload dropzone-icon"></i>
+              <span class="dropzone-title">Перетащите картинки сюда</span>
+              <span class="dropzone-hint">или нажмите <b>Ctrl+V</b> для вставки из буфера / кликните для обзора</span>
+              <input #imageInput type="file" accept="image/*" multiple hidden (change)="onImageInputChange($event)" />
+            </div>
+
+            @if (images().length > 0) {
+              <div class="image-gallery">
+                @for (image of images(); track image; let index = $index) {
+                  <div class="image-thumb">
+                    <p-image [src]="image" [preview]="true" alt="Скриншот" width="120"></p-image>
+                    <button
+                      type="button"
+                      class="image-remove"
+                      pTooltip="Удалить скриншот"
+                      (click)="removeImage(index, $event)"
+                    >
+                      <i class="pi pi-times"></i>
+                    </button>
+                  </div>
+                }
+              </div>
+            }
+          </div>
+
+          <!-- Вложения: планы .md и документы -->
+          <div class="field">
+            <div class="panel-head">
+              <label class="field-label"><i class="pi pi-paperclip"></i> Вложения ({{ attachments().length }})</label>
+              <p-button
+                label="Прикрепить план (.md)"
+                icon="pi pi-plus"
+                severity="secondary"
+                [outlined]="true"
+                size="small"
+                (onClick)="attachmentInput.click()"
+              ></p-button>
+              <input
+                #attachmentInput
+                type="file"
+                accept=".md,.txt,.json,.markdown"
+                multiple
+                hidden
+                (change)="onAttachmentInputChange($event)"
+              />
+            </div>
+
+            @if (attachments().length > 0) {
+              <ul class="attachments-list">
+                @for (attachment of attachments(); track attachment.id) {
+                  <li>
+                    <i class="pi pi-file-edit"></i>
+                    <span class="attachment-name">{{ attachment.name }}</span>
+                    @if (attachment.kind === 'plan') {
+                      <p-tag [value]="'v' + attachment.version" severity="success"></p-tag>
+                    }
+                    <span class="attachment-meta">{{ formatBytes(attachment.size) }}</span>
+                    <span class="attachment-meta">{{ formatDateTime(attachment.createdAt) }}</span>
+                    <p-button
+                      icon="pi pi-eye"
+                      severity="secondary"
+                      [text]="true"
+                      [rounded]="true"
+                      size="small"
+                      pTooltip="Открыть вложение"
+                      (onClick)="openAttachmentPreview(attachment)"
+                    ></p-button>
+                    <p-button
+                      icon="pi pi-trash"
+                      severity="danger"
+                      [text]="true"
+                      [rounded]="true"
+                      size="small"
+                      pTooltip="Удалить вложение"
+                      (onClick)="deleteAttachment(attachment)"
+                    ></p-button>
+                  </li>
+                }
+              </ul>
+            } @else {
+              <p-message
+                severity="secondary"
+                text="Вложений пока нет. Агент прикрепляет план через MCP, вы можете добавить .md вручную."
+              ></p-message>
+            }
+          </div>
+
+          @if (!isCreate() && task(); as card) {
+            <div class="meta-grid">
+              <div><span>Создана</span>{{ formatDateTime(card.createdAt) }}</div>
+              <div><span>Обновлена</span>{{ formatRelative(card.updatedAt) }}</div>
+              <div><span>Родительская фича</span>{{ card.parent?.title ?? '—' }}</div>
+              <div><span>Подзадач</span>{{ childTasks().length }}</div>
+              <div><span>Комментариев</span>{{ card.comments.length }}</div>
+              <div><span>Вложений</span>{{ card.attachments.length }}</div>
+            </div>
+          }
+        </div>
+      </ng-template>
+
+  <!-- Подвал сайдбара -->
+  <footer class="sidebar-footer">
+    @if (!isCreate()) {
+      <p-button
+        label="Удалить"
+        icon="pi pi-trash"
+        severity="danger"
+        [text]="true"
+        size="small"
+        (onClick)="confirmRemove()"
+      ></p-button>
+    }
+    <div class="footer-right">
+      <p-button label="Закрыть" severity="secondary" [text]="true" size="small" (onClick)="close()"></p-button>
+      <p-button
+        [label]="isCreate() ? 'Создать' : 'Сохранить'"
+        icon="pi pi-check"
+        size="small"
+        [disabled]="!title().trim() || store.busy()"
+        [loading]="store.busy()"
+        (onClick)="save()"
+      ></p-button>
+    </div>
+  </footer>
+  <!-- Просмотр вложения: markdown-рендер или текст -->
+  <p-dialog
+    [visible]="preview() !== null"
+    (visibleChange)="onPreviewVisibleChange($event)"
+    [modal]="true"
+    [draggable]="false"
+    [resizable]="false"
+    [style]="{ width: 'min(900px, 92vw)' }"
+    [header]="preview()?.name ?? 'Вложение'"
+    styleClass="attachment-preview"
+  >
+    @if (preview(); as file) {
+      <article class="md" [innerHTML]="previewHtml()"></article>
+    }
+    <ng-template pTemplate="footer">
+      <p-button label="Закрыть" severity="secondary" [text]="true" size="small" (onClick)="closePreview()"></p-button>
+    </ng-template>
+  </p-dialog>
+</aside>

@@ -1,0 +1,64 @@
+{
+  "version": 1,
+  "projects": {
+    "simple-ai-tracker-web": {
+      "projectType": "application",
+      "root": "web",
+      "sourceRoot": "web/src",
+      "prefix": "sat",
+      "architect": {
+        "build": {
+          "builder": "@angular-devkit/build-angular:application",
+          "options": {
+            "outputPath": "dist/web",
+            "index": "web/src/index.html",
+            "browser": "web/src/main.ts",
+            "polyfills": ["zone.js"],
+            "tsConfig": "web/tsconfig.app.json",
+            "assets": [],
+            "styles": ["node_modules/primeicons/primeicons.css", "web/src/styles.scss"]
+          },
+          "configurations": {
+            "production": {
+              "outputHashing": "all",
+              "budgets": [
+                {
+                  "type": "initial",
+                  "maximumWarning": "1.5mb",
+                  "maximumError": "2.5mb"
+                },
+                {
+                  "type": "anyComponentStyle",
+                  "maximumWarning": "40kb",
+                  "maximumError": "80kb"
+                }
+              ]
+            },
+            "development": {
+              "optimization": false,
+              "extractLicenses": false,
+              "sourceMap": true,
+              "outputHashing": "none"
+            }
+          },
+          "defaultConfiguration": "production"
+        },
+        "serve": {
+          "builder": "@angular-devkit/build-angular:dev-server",
+          "configurations": {
+            "production": {
+              "buildTarget": "simple-ai-tracker-web:build:production"
+            },
+            "development": {
+              "buildTarget": "simple-ai-tracker-web:build:development"
+            }
+          },
+          "defaultConfiguration": "development",
+          "options": {
+            "port": 4318
+          }
+        }
+      }
+    }
+  }
+}

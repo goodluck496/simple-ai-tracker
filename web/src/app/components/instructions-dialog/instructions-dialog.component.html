@@ -1,0 +1,53 @@
+<p-dialog
+  [(visible)]="visible"
+  (onHide)="closed.emit()"
+  [modal]="true"
+  [draggable]="false"
+  [resizable]="false"
+  [maximizable]="true"
+  [dismissableMask]="true"
+  [style]="{ width: 'min(1080px, 94vw)' }"
+  styleClass="instructions-dialog"
+  header="Инструкция для ИИ-агента"
+>
+  <div class="instructions-body">
+    @if (loading()) {
+      <div class="instructions-state">
+        <p-progressSpinner [style]="{ width: '42px', height: '42px' }" strokeWidth="4"></p-progressSpinner>
+        <span>Загружаем AGENT_INSTRUCTIONS.md…</span>
+      </div>
+    } @else if (failed()) {
+      <p-message severity="error" text="Не удалось загрузить инструкцию с сервера трекера."></p-message>
+      <p-button label="Повторить" icon="pi pi-refresh" size="small" (onClick)="load()"></p-button>
+    } @else {
+      <article class="md" [innerHTML]="rendered()"></article>
+    }
+  </div>
+
+  <ng-template pTemplate="footer">
+    <div class="instructions-footer">
+      <p-button
+        label="Скопировать"
+        [icon]="copied() ? 'pi pi-check' : 'pi pi-copy'"
+        [severity]="copied() ? 'success' : 'secondary'"
+        size="small"
+        [disabled]="!markdown()"
+        pTooltip="Скопировать в буфер: вставьте в AGENTS.md проекта-потребителя"
+        (onClick)="copy()"
+      ></p-button>
+      <p-button
+        label="Скачать .md"
+        icon="pi pi-download"
+        severity="secondary"
+        [outlined]="true"
+        size="small"
+        [disabled]="!markdown()"
+        (onClick)="download()"
+      ></p-button>
+      <div class="instructions-footer-right">
+        <span class="instructions-hint">Этот же текст MCP-сервер отдаёт агенту как instructions</span>
+        <p-button label="Закрыть" size="small" (onClick)="close()"></p-button>
+      </div>
+    </div>
+  </ng-template>
+</p-dialog>

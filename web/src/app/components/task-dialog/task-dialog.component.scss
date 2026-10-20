@@ -1,0 +1,640 @@
+// Боковая карточка задачи (SCSS).
+@use '../../../styles/tokens' as t;
+
+/* Затемнение фона */
+.sidebar-backdrop {
+  position: fixed;
+  inset: 0;
+  background: t.$sat-backdrop;
+  z-index: 1090;
+  backdrop-filter: blur(2px);
+  animation: backdropFadeIn 0.2s ease-out;
+}
+
+.backdrop-resizing {
+  cursor: ew-resize !important;
+}
+
+@keyframes backdropFadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* Выдвижная панель справа */
+.task-sidebar {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  height: 100vh;
+  z-index: 1100;
+  background: var(--sat-bg-elevated);
+  border-left: 1px solid var(--sat-border);
+  box-shadow: -10px 0 35px rgba(0, 0, 0, 0.8);
+  display: flex;
+  flex-direction: column;
+  color: var(--sat-text);
+  animation: sidebarSlideIn 0.22s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.task-sidebar.sidebar-resizing {
+  transition: none !important;
+}
+
+@keyframes sidebarSlideIn {
+  from {
+    transform: translateX(100%);
+  }
+  to {
+    transform: translateX(0);
+  }
+}
+
+/* Ручка изменения ширины */
+.sidebar-resizer {
+  position: absolute;
+  left: -5px;
+  top: 0;
+  bottom: 0;
+  width: 10px;
+  cursor: ew-resize;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s;
+}
+
+.sidebar-resizer:hover {
+  background: rgba(56, 189, 248, 0.25);
+}
+
+.resizer-handle-line {
+  width: 2px;
+  height: 36px;
+  border-radius: 1px;
+  background: t.$sat-hover-muted;
+  transition: all 0.15s ease;
+}
+
+.sidebar-resizer:hover .resizer-handle-line {
+  background: var(--sat-accent);
+}
+
+/* Шапка: id + редактируемое название + кнопки окна */
+.sidebar-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 12px 10px 16px;
+  background: var(--sat-surface);
+  border-bottom: 1px solid var(--sat-border);
+  flex: 0 0 auto;
+}
+
+.sidebar-header-left {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+/* Название живёт прямо в шапке сайдбара */
+.sidebar-title-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 0.95rem;
+  font-weight: 650;
+}
+
+.sidebar-header-right {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: 0 0 auto;
+}
+
+/* Фиксированная строка карточки: статус, тип, ручная проверка.
+   Не скроллится вместе с содержимым вкладок. */
+.card-form-head {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 16px 12px;
+  background: var(--sat-surface);
+  border-bottom: 1px solid var(--sat-border);
+  flex: 0 0 auto;
+}
+
+.head-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+:host ::ng-deep .head-status-select {
+  width: 200px;
+  max-width: 100%;
+  flex: 0 1 200px;
+}
+
+:host ::ng-deep .head-type-select {
+  width: 170px;
+  max-width: 100%;
+  flex: 0 1 170px;
+}
+
+.head-row p-togglebutton {
+  margin-left: auto;
+}
+
+/* Переключатель одной высоты с селектами, чтобы строка была ровной */
+:host ::ng-deep .head-row p-togglebutton.p-togglebutton {
+  display: inline-flex;
+  align-items: center;
+  height: 32px;
+  padding: 0 10px;
+  line-height: 1;
+}
+
+/* Подсказка вместо статуса при создании карточки */
+.head-note {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 10px;
+  border: 1px dashed var(--sat-border-strong);
+  border-radius: 7px;
+  color: var(--sat-text-muted);
+  font-size: 0.82rem;
+  white-space: nowrap;
+
+  i {
+    font-size: 0.8rem;
+  }
+}
+
+/* Тело: в режиме создания скроллится форма целиком */
+.sidebar-scroll-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+.dialog-content {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 16px;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.field-label {
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: var(--sat-text-muted);
+}
+
+.required {
+  color: t.$danger-hover;
+}
+
+.field-input {
+  width: 100%;
+}
+
+
+.status-hint {
+  font-size: 0.76rem;
+  color: var(--sat-text-muted);
+  background: var(--sat-surface);
+  border: 1px solid var(--sat-border);
+  border-radius: 7px;
+  padding: 7px 10px;
+}
+
+.status-hint strong {
+  color: var(--sat-text);
+}
+
+.dialog-error {
+  padding: 8px 11px;
+  border-radius: 7px;
+  background: rgba(239, 68, 68, 0.12);
+  border: 1px solid rgba(239, 68, 68, 0.4);
+  color: t.$danger-soft;
+  font-size: 0.8rem;
+}
+
+/* Вкладки */
+
+.tab-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/* Теги */
+.tags-editor {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-height: 26px;
+  align-items: center;
+}
+
+.tags-empty {
+  font-size: 0.74rem;
+  color: var(--sat-text-dim);
+}
+
+.tags-add {
+  display: flex;
+  gap: 7px;
+  margin-top: 4px;
+}
+
+.tags-add input {
+  flex: 1 1 auto;
+  max-width: 260px;
+}
+
+/* Метаданные */
+.meta-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--sat-border);
+}
+
+.meta-grid div {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 0.8rem;
+}
+
+.meta-grid span {
+  font-size: 0.66rem;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: var(--sat-text-dim);
+}
+
+/* Подформы */
+.panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.subform {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  border: 1px dashed var(--sat-border-strong);
+  border-radius: var(--sat-radius-sm);
+  background: rgba(2, 6, 23, 0.5);
+}
+
+.subform-hint {
+  margin: 0;
+  font-size: 0.74rem;
+  color: var(--sat-text-muted);
+}
+
+.comment-form {
+  display: flex;
+  gap: 8px;
+  align-items: flex-end;
+}
+
+.comment-form textarea {
+  flex: 1 1 auto;
+}
+
+/* Комментарии и вложения */
+
+.comments-list,
+.attachments-list {
+  list-style: none;
+  margin: 10px 0 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.comment-item {
+  padding: 8px 11px;
+  border-radius: var(--sat-radius-sm);
+  background: var(--sat-bg);
+  border: 1px solid var(--sat-border);
+}
+
+.comment-item header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+  flex-wrap: wrap;
+}
+
+.comment-author {
+  font-size: 0.74rem;
+  font-weight: 650;
+  color: t.$accent-soft-text;
+}
+
+.comment-kind {
+  font-size: 0.65rem;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--sat-surface);
+  color: var(--sat-text-dim);
+}
+
+.comment-time {
+  margin-left: auto;
+  font-size: 0.68rem;
+  color: var(--sat-text-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+.comment-item p {
+  font-size: 0.8rem;
+  color: var(--sat-text-muted);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.attachments-list li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.76rem;
+  color: var(--sat-text-muted);
+  padding: 6px 9px;
+  border-radius: var(--sat-radius-sm);
+  background: var(--sat-bg);
+  border: 1px solid var(--sat-border);
+}
+
+.attachment-kind {
+  font-size: 0.65rem;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: var(--sat-info);
+}
+
+.attachment-name {
+  color: var(--sat-text);
+  font-weight: 600;
+}
+
+.attachment-version {
+  font-size: 0.68rem;
+  color: var(--sat-success);
+}
+
+.attachment-meta {
+  margin-left: auto;
+  font-size: 0.68rem;
+  color: var(--sat-text-dim);
+}
+
+.attachment-meta + .attachment-meta {
+  margin-left: 0;
+}
+
+/* Связи */
+.relations-block {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--sat-border);
+}
+
+.relations-label {
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: var(--sat-text-dim);
+  font-weight: 700;
+}
+
+.relations-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.relations-add {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding-top: 8px;
+}
+
+/* Подвал */
+.sidebar-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 16px;
+  background: var(--sat-surface);
+  border-top: 1px solid var(--sat-border);
+  flex: 0 0 auto;
+}
+
+.footer-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+}
+
+.empty-hint {
+  font-size: 0.76rem;
+  color: var(--sat-text-dim);
+}
+
+/* ---------------------------------------------- вкладки карточки (PrimeNG) */
+/* Заголовки вкладок всегда на виду — скроллятся только панели */
+:host ::ng-deep .card-tabs.p-tabs {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+
+  .p-tablist {
+    flex: 0 0 auto;
+    background: var(--sat-bg-elevated);
+    border-bottom: 1px solid var(--sat-border);
+  }
+
+  .p-tablist-tab-list {
+    background: transparent;
+    border-color: var(--sat-border);
+    gap: 2px;
+  }
+
+  .p-tab {
+    font-size: 0.8rem;
+    font-weight: 600;
+    padding: 10px 12px;
+    color: var(--sat-text-muted);
+
+    &:hover {
+      color: var(--sat-text);
+    }
+
+    &.p-tab-active {
+      color: var(--sat-accent);
+    }
+  }
+
+  .p-tabpanels {
+    display: block;
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    overflow-x: hidden;
+    background: transparent;
+    padding: 14px 16px 18px;
+  }
+
+  .tab-badge {
+    margin-left: 5px;
+  }
+}
+
+:host ::ng-deep .card-accordion {
+  .p-accordionheader {
+    font-size: 0.78rem;
+    color: var(--sat-text-muted);
+    padding: 8px 4px;
+  }
+
+  .p-accordioncontent-content {
+    background: transparent;
+    padding: 6px 0;
+  }
+}
+
+/* ---------------------------------------- скриншоты и вложения (карточка) */
+.dropzone {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 16px;
+  border: 2px dashed var(--sat-border-strong);
+  border-radius: t.$radius-sm;
+  background: rgba(2, 6, 23, 0.45);
+  cursor: pointer;
+  text-align: center;
+  transition: border-color 0.15s ease, background 0.15s ease;
+
+  &:hover {
+    border-color: t.$sat-accent;
+    background: rgba(56, 189, 248, 0.06);
+  }
+
+  &--active {
+    border-color: t.$sat-accent;
+    background: rgba(56, 189, 248, 0.12);
+  }
+}
+
+.dropzone-icon {
+  font-size: 1.5rem;
+  color: t.$sat-accent;
+}
+
+.dropzone-title {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: t.$sat-text;
+}
+
+.dropzone-hint {
+  font-size: 0.72rem;
+  color: t.$sat-text-dim;
+}
+
+.image-gallery {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.image-thumb {
+  position: relative;
+  width: 120px;
+  border-radius: t.$radius-sm;
+  overflow: hidden;
+  border: 1px solid var(--sat-border);
+
+  ::ng-deep img {
+    display: block;
+    width: 120px;
+    height: auto;
+  }
+}
+
+.image-remove {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: none;
+  background: rgba(239, 68, 68, 0.9);
+  color: #fff;
+  font-size: 0.65rem;
+  cursor: pointer;
+
+  &:hover {
+    background: #dc2626;
+  }
+}
+
+:host ::ng-deep .attachment-preview {
+  .p-dialog-content {
+    max-height: 70vh;
+    overflow-y: auto;
+    background: var(--sat-bg);
+  }
+}

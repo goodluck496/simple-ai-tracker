@@ -1,0 +1,102 @@
+<div class="questions">
+  @if (openQuestions().length > 0) {
+    <p-message
+      severity="warn"
+      [text]="'Агент ждёт ответов: ' + openQuestions().length + '. Пока ответов нет, работа по карточке приостановлена.'"
+    ></p-message>
+  }
+
+  <div class="question-add">
+    <input
+      type="text"
+      pInputText
+      class="question-add__input"
+      placeholder="Новый вопрос (например, что нужно уточнить у агента)…"
+      [ngModel]="questionDraft()"
+      (ngModelChange)="questionDraft.set($event)"
+      (keydown.enter)="submitQuestion()"
+    />
+    <p-button label="Добавить вопрос" icon="pi pi-plus" size="small" [disabled]="!questionDraft().trim()" (onClick)="submitQuestion()"></p-button>
+  </div>
+
+  @for (question of openQuestions(); track question.id) {
+    <article class="question-item question-item--open">
+      <header class="question-head">
+        <p-tag value="ждёт ответа" severity="warn" [rounded]="true"></p-tag>
+        <p-tag [value]="phaseLabel(question.phase)" severity="secondary" [rounded]="true"></p-tag>
+        <span class="question-time">{{ formatDateTime(question.createdAt) }}</span>
+      </header>
+
+      <div class="question-text-row">
+        <p class="question-text">{{ question.text }}</p>
+        <p-button
+          icon="pi pi-trash"
+          severity="danger"
+          [text]="true"
+          [rounded]="true"
+          size="small"
+          pTooltip="Удалить вопрос"
+          (onClick)="removed.emit({ questionId: question.id })"
+        ></p-button>
+      </div>
+
+      <div class="question-answer">
+        <textarea
+          pTextarea
+          rows="2"
+          class="w-full"
+          placeholder="Ваш ответ…"
+          [ngModel]="draftFor(question.id)"
+          (ngModelChange)="onDraftInput(question.id, $event)"
+          [disabled]="disabled()"
+        ></textarea>
+        <p-button
+          label="Ответить"
+          icon="pi pi-send"
+          size="small"
+          [disabled]="disabled() || !draftFor(question.id).trim()"
+          (onClick)="submit(question.id)"
+        ></p-button>
+      </div>
+    </article>
+  }
+
+  @if (answeredQuestions().length > 0) {
+    <p-accordion styleClass="questions-history">
+      <p-accordion-panel value="history">
+        <p-accordion-header>Отвеченные вопросы ({{ answeredQuestions().length }})</p-accordion-header>
+        <p-accordion-content>
+          @for (question of answeredQuestions(); track question.id) {
+            <article class="question-item">
+              <header class="question-head">
+                <p-tag value="отвечен" severity="success" [rounded]="true"></p-tag>
+                <p-tag [value]="phaseLabel(question.phase)" severity="secondary" [rounded]="true"></p-tag>
+                <span class="question-time">{{ formatDateTime(question.answeredAt) }}</span>
+              </header>
+              <div class="question-text-row">
+                <p class="question-text">{{ question.text }}</p>
+                <p-button
+                  icon="pi pi-trash"
+                  severity="danger"
+                  [text]="true"
+                  [rounded]="true"
+                  size="small"
+                  pTooltip="Удалить вопрос"
+                  (onClick)="removed.emit({ questionId: question.id })"
+                ></p-button>
+              </div>
+              <p class="question-reply">
+                <span>{{ question.answeredBy ?? 'Пользователь' }}:</span>
+                {{ question.answer }}
+              </p>
+            </article>
+          }
+        </p-accordion-content>
+      </p-accordion-panel>
+    </p-accordion>
+  }
+
+  @if (questions().length === 0) {
+    <p-message severity="secondary" text="Вопросов нет. Агент задаёт их через MCP, если не хватает вводных."></p-message>
+  }
+</div>

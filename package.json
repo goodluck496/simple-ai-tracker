@@ -1,0 +1,55 @@
+{
+  "name": "simple-ai-tracker",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Simple AI Tracker — self-contained issue tracker for AI agents: SQLite storage, REST API, MCP server and Angular kanban board.",
+  "engines": {
+    "node": ">=22.5.0"
+  },
+  "scripts": {
+    "build": "npm run build:server && npm run build:web",
+    "build:server": "node scripts/build-server.mjs",
+    "build:web": "ng build",
+    "start": "node dist/server/api.mjs",
+    "dev:api": "npm run build:server && node --watch dist/server/api.mjs",
+    "serve:web": "ng serve --proxy-config web/proxy.conf.json",
+    "mcp": "node dist/server/mcp.mjs",
+    "cli": "node dist/server/cli.mjs",
+    "smoke:mcp": "node scripts/smoke-mcp.mjs",
+    "doctor": "npm run build:server && node dist/server/cli.mjs doctor",
+    "db:doctor": "node dist/server/cli.mjs doctor",
+    "db:migrate": "npm run build:server && node dist/server/cli.mjs db:migrate",
+    "db:backup": "npm run build:server && node dist/server/cli.mjs db:backup",
+    "db:backups": "npm run build:server && node dist/server/cli.mjs db:backups",
+    "db:restore": "npm run build:server && node dist/server/cli.mjs db:restore",
+    "import:json": "npm run build:server && node dist/server/cli.mjs import:json",
+    "export:json": "npm run build:server && node dist/server/cli.mjs export:json",
+    "db:stats": "npm run build:server && node dist/server/cli.mjs db:stats",
+    "test": "tsx --test \"server/src/**/*.spec.ts\"",
+    "typecheck": "tsc -p tsconfig.server.json --noEmit"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.1",
+    "esbuild": "^0.28.0"
+  },
+  "devDependencies": {
+    "@angular-devkit/build-angular": "^19.0.0",
+    "@angular/cli": "^19.0.0",
+    "@angular/common": "^19.0.0",
+    "@angular/compiler": "^19.0.0",
+    "@angular/compiler-cli": "^19.0.0",
+    "@angular/core": "^19.0.0",
+    "@angular/forms": "^19.0.0",
+    "@angular/platform-browser": "^19.0.0",
+    "@angular/platform-browser-dynamic": "^19.0.0",
+    "@primeng/themes": "^19.1.4",
+    "@types/node": "^22.0.0",
+    "primeicons": "^8.0.2",
+    "primeng": "^19.1.4",
+    "rxjs": "~7.8.0",
+    "tsx": "^4.19.0",
+    "typescript": "~5.6.2",
+    "zone.js": "~0.15.0"
+  }
+}

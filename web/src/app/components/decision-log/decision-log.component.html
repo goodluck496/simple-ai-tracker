@@ -1,0 +1,48 @@
+<div class="log">
+  <div class="log-head">
+    <span class="log-title">Журнал решений</span>
+    @if (hiddenCount() > 0 || showingAll()) {
+      <p-button
+        [label]="showingAll() ? 'Только важное' : 'Показать все (' + hiddenCount() + ')'"
+        icon="pi pi-filter"
+        severity="secondary"
+        [text]="true"
+        size="small"
+        (onClick)="toggleAll()"
+      ></p-button>
+    }
+  </div>
+
+  @if (entries().length === 0) {
+    <p-message severity="secondary" text="Пока нет записей. Здесь появятся уточнения, версии плана и смены статусов."></p-message>
+  } @else {
+    <ol class="log-list">
+      @for (entry of entries(); track entry.id) {
+        <li class="log-item" [class.log-item--clarification]="entry.type === 'clarification'">
+          <span class="log-icon" aria-hidden="true"><i [class]="entry.icon"></i></span>
+          <div class="log-body">
+            <div class="log-meta">
+              <p-tag
+                [value]="entry.typeLabel"
+                [severity]="entry.type === 'clarification' ? 'warn' : 'secondary'"
+                [rounded]="true"
+              ></p-tag>
+              <span class="log-actor">{{ entry.actor }}</span>
+              <span class="log-time">{{ formatDateTime(entry.createdAt) }}</span>
+            </div>
+            <p class="log-summary">{{ entry.summary }}</p>
+            @if (entry.reason) {
+              <p class="log-detail"><span>Причина:</span> {{ entry.reason }}</p>
+            }
+            @if (entry.impact) {
+              <p class="log-detail"><span>Влияние:</span> {{ entry.impact }}</p>
+            }
+            @if (entry.planChanged) {
+              <p class="log-flag"><i class="pi pi-exclamation-circle"></i> План пересобирался после уточнения</p>
+            }
+          </div>
+        </li>
+      }
+    </ol>
+  }
+</div>

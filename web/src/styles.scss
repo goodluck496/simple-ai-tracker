@@ -1,0 +1,427 @@
+// Simple AI Tracker — глобальные стили.
+// PrimeIcons подключается в angular.json первым файлом стилей.
+// Токены дизайна — в styles/_tokens.scss.
+
+@use './styles/tokens' as t;
+
+// ------------------------------------------------- токены для компонентов
+:root {
+  --sat-bg: #{t.$sat-bg};
+  --sat-bg-elevated: #{t.$sat-bg-elevated};
+  --sat-surface: #{t.$sat-surface};
+  --sat-surface-hover: #{t.$sat-surface-hover};
+  --sat-border: #{t.$sat-border};
+  --sat-border-strong: #{t.$sat-border-strong};
+  --sat-text: #{t.$sat-text};
+  --sat-text-muted: #{t.$sat-text-muted};
+  --sat-text-dim: #{t.$sat-text-dim};
+
+  --sat-accent: #{t.$sat-accent};
+  --sat-accent-soft: #{rgba(t.$sat-accent, 0.16)};
+  --sat-success: #{t.$sat-success};
+  --sat-warn: #{t.$sat-warn};
+  --sat-danger: #{t.$sat-danger};
+  --sat-info: #{t.$sat-accent};
+
+  @each $status, $color in t.$status-palette {
+    --sat-status-#{$status}: #{$color};
+  }
+
+  --sat-radius: #{t.$radius};
+  --sat-radius-sm: #{t.$radius-sm};
+  --sat-shadow: #{t.$sat-shadow};
+
+  color-scheme: dark;
+}
+
+// ------------------------------------------------------------------- база
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html,
+body {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background-color: var(--sat-bg);
+  color: var(--sat-text);
+  font-family: t.$font-stack;
+  /* База 16px: всё, что задано в rem, читается крупно */
+  font-size: 16px;
+}
+
+// Скроллбары под тёмную тему
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+
+  &-track {
+    background: t.$sat-surface;
+  }
+
+  &-thumb {
+    background: t.$sat-border-strong;
+    border-radius: 4px;
+
+    &:hover {
+      background: #475569;
+    }
+  }
+}
+
+// ------------------------------------- компактные размеры PrimeNG-элементов
+.p-button {
+  font-size: 0.95rem;
+
+  .p-button-label {
+    font-size: inherit;
+  }
+
+  &.p-button-sm {
+    font-size: 0.9rem;
+    padding: 0.45rem 0.8rem;
+  }
+
+  &.p-button-icon-only.p-button-sm {
+    width: 2.15rem;
+    height: 2.15rem;
+    padding: 0;
+  }
+
+  .p-button-icon {
+    font-size: 0.95rem;
+  }
+}
+
+.p-select,
+.p-select-label,
+.p-select-dropdown,
+.p-inputtext,
+.p-textarea,
+.p-autocomplete input {
+  font-size: 0.95rem;
+}
+
+.p-select-option,
+.p-select-item,
+.p-autocomplete-item {
+  font-size: 0.92rem;
+}
+
+.p-inputtext,
+.p-select {
+  padding: 0.5rem 0.7rem;
+}
+
+.p-chip .p-chip-label {
+  font-size: 0.85rem;
+}
+
+.p-tag {
+  font-size: 0.8rem;
+}
+
+.p-dialog .p-dialog-title {
+  font-size: 1.15rem;
+}
+
+.p-accordionheader {
+  font-size: 0.95rem;
+}
+
+.p-tab {
+  font-size: 0.95rem;
+}
+
+// ------------------------------ типографика markdown (планы, инструкции, карточки)
+/* Общая типографика markdown-блоков */
+.md {
+  font-size: 15px;
+  line-height: 1.65;
+  color: var(--sat-text);
+}
+
+.md :is(h1, h2, h3, h4, h5, h6) {
+  margin: 20px 0 8px;
+  line-height: 1.3;
+  color: #f2f6ff;
+}
+
+.md h1 {
+  font-size: 22px;
+}
+.md h2 {
+  font-size: 19px;
+}
+.md h3 {
+  font-size: 17px;
+}
+.md h4,
+.md h5,
+.md h6 {
+  font-size: 15px;
+}
+
+.md p {
+  margin: 0 0 10px;
+}
+
+.md ul {
+  margin: 0 0 12px;
+  padding-left: 22px;
+}
+
+.md li {
+  margin-bottom: 5px;
+}
+
+.md ul.md-ordered {
+  list-style: decimal;
+}
+
+.md code {
+  font-family: 'JetBrains Mono', 'Cascadia Code', Consolas, monospace;
+  font-size: 13.5px;
+  background: rgba(76, 141, 255, 0.12);
+  color: #bcd4ff;
+  padding: 1px 5px;
+  border-radius: 5px;
+}
+
+.md pre {
+  background: #0a1226;
+  border: 1px solid var(--sat-border);
+  border-radius: var(--sat-radius-sm);
+  padding: 12px 14px;
+  overflow-x: auto;
+  margin: 0 0 12px;
+}
+
+.md pre code {
+  background: transparent;
+  color: #cbd8f3;
+  padding: 0;
+  font-size: 12.5px;
+}
+
+.md blockquote {
+  margin: 0 0 12px;
+  padding: 8px 14px;
+  border-left: 3px solid var(--sat-accent);
+  background: var(--sat-accent-soft);
+  border-radius: 0 var(--sat-radius-sm) var(--sat-radius-sm) 0;
+  color: var(--sat-text-muted);
+}
+
+.md hr {
+  border: none;
+  border-top: 1px solid var(--sat-border);
+  margin: 18px 0;
+}
+
+.md a {
+  color: #7fb0ff;
+  text-decoration: none;
+}
+
+.md a:hover {
+  text-decoration: underline;
+}
+
+.md-empty {
+  color: var(--sat-text-dim);
+}
+
+/* ------------------------------------- компактные размеры PrimeNG-элементов */
+/* Единая геометрия полей: одна высота, один радиус, один шрифт */
+.p-inputtext,
+.p-textarea,
+.p-select,
+.p-autocomplete input,
+.p-inputnumber-input {
+  border-radius: 7px;
+  font-size: 0.88rem;
+}
+
+.p-inputtext,
+.p-autocomplete input {
+  height: 32px;
+  padding: 0 9px;
+}
+
+.p-textarea {
+  padding: 8px 10px;
+  line-height: 1.5;
+}
+
+.p-select.p-select,
+.p-inputtext.p-inputtext {
+  border-radius: 8px;
+}
+
+.p-select.p-select {
+  height: 32px;
+  display: inline-flex;
+  align-items: center;
+  border-radius: 7px;
+
+  .p-select-label {
+    font-size: 0.88rem;
+    padding: 0 8px;
+    line-height: 30px;
+  }
+
+  .p-select-dropdown {
+    width: 1.6rem;
+  }
+
+  .p-select-clear-icon {
+    font-size: 0.72rem;
+    margin-inline-start: auto;
+    width: 1.1rem;
+  }
+}
+
+.p-select-option,
+.p-select-item {
+  font-size: 0.9rem;
+}
+
+.p-button {
+  border-radius: 7px;
+  font-size: 0.88rem;
+
+  &.p-button-sm {
+    font-size: 0.86rem;
+    height: 32px;
+    padding: 0 0.7rem;
+  }
+
+  &.p-button-icon-only.p-button-sm {
+    width: 32px;
+    height: 32px;
+    padding: 0;
+
+    .p-button-icon {
+      font-size: 0.88rem;
+    }
+  }
+
+  .p-button-label {
+    line-height: 1;
+  }
+}
+
+.p-tag {
+  font-size: 0.78rem;
+  padding: 2px 8px;
+}
+
+.p-chip {
+  padding: 2px 8px;
+
+  .p-chip-label {
+    font-size: 0.82rem;
+  }
+}
+
+.p-popover {
+  padding: 10px;
+  border-radius: 10px;
+}
+
+.p-dialog {
+  border-radius: 12px;
+
+  .p-dialog-header {
+    padding: 14px 18px;
+  }
+
+  .p-dialog-title {
+    font-size: 1.1rem;
+  }
+
+  .p-dialog-content {
+    padding: 0 18px 16px;
+  }
+
+  .p-dialog-footer {
+    padding: 0 18px 14px;
+  }
+}
+
+.p-accordionheader {
+  font-size: 0.92rem;
+  padding: 10px 12px;
+}
+
+.p-tab {
+  font-size: 0.92rem;
+  padding: 8px 14px;
+}
+
+/* ---------------------------------------------------------------------------
+   Селекты: ширина не раздувается по самому длинному значению.
+   Предел 400px, дальше текст обрезается многоточием, полное значение — в тултипе.
+   --------------------------------------------------------------------------- */
+.p-select {
+  max-width: 400px;
+  min-width: 0;
+}
+
+.p-select-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ---------------------------------------------------------------------------
+   «Тень» перетаскиваемой карточки: компактная плашка вместо снимка всей карточки.
+   Снимок большой карточки браузер каждый кадр перерисовывает под курсором —
+   на больших экранах это заметно подтормаживает.
+   --------------------------------------------------------------------------- */
+.sat-drag-ghost {
+  position: fixed;
+  top: -1000px;
+  left: -1000px;
+  max-width: 280px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--sat-accent);
+  background: #0b1120;
+  color: var(--sat-text);
+  font-size: 0.82rem;
+  font-weight: 600;
+  line-height: 1.2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events: none;
+  z-index: 2000;
+}
+
+/* Выпадающая панель не подстраивается под ширину триггера: растёт по контенту,
+   но не шире 400px (нижняя граница — чтобы короткие списки не были «щелью»). */
+.p-select .p-select-overlay {
+  width: max-content;
+  min-width: 320px;
+  max-width: 400px;
+
+  .p-select-filter {
+    width: 100%;
+    box-sizing: border-box;
+  }
+
+  /* Длинное название переносится по словам, а не обрезается: в списке важна суть */
+  .p-select-option,
+  .p-select-item {
+    white-space: normal;
+    overflow-wrap: anywhere;
+    line-height: 1.35;
+  }
+}
+

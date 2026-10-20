@@ -1,0 +1,109 @@
+// Журнал решений (SCSS).
+@use '../../../styles/tokens' as t;
+
+.log {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.log-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.log-title {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: t.$sat-text-dim;
+  font-weight: 700;
+}
+
+.log-list {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.log-item {
+  display: grid;
+  grid-template-columns: 26px 1fr;
+  gap: 10px;
+  padding: 9px 11px;
+  border-radius: t.$radius-sm;
+  background: t.$sat-bg-elevated;
+  border: 1px solid t.$sat-border;
+
+  &--clarification {
+    border-color: rgba(t.$sat-warn, 0.45);
+    background: rgba(t.$sat-warn, 0.08);
+  }
+}
+
+.log-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: t.$sat-surface;
+  color: t.$sat-text-muted;
+  font-size: 0.72rem;
+}
+
+.log-body {
+  min-width: 0;
+}
+
+.log-meta {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex-wrap: wrap;
+  margin-bottom: 3px;
+}
+
+.log-actor {
+  font-size: 0.7rem;
+  color: t.$sat-text-dim;
+}
+
+.log-time {
+  margin-left: auto;
+  font-size: 0.7rem;
+  color: t.$sat-text-dim;
+  font-variant-numeric: tabular-nums;
+}
+
+.log-summary {
+  font-size: 0.8rem;
+  color: t.$sat-text;
+  word-break: break-word;
+}
+
+.log-detail {
+  margin-top: 4px;
+  font-size: 0.75rem;
+  color: t.$sat-text-muted;
+
+  span {
+    color: t.$sat-text-dim;
+  }
+}
+
+.log-flag {
+  margin-top: 6px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: t.$sat-warn;
+
+  i {
+    font-size: 0.7rem;
+    margin-right: 4px;
+  }
+}

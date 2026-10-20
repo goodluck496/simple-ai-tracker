@@ -1,0 +1,60 @@
+// Реестр тегов (SCSS).
+@use '../../../styles/tokens' as t;
+
+.tags-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.tags-add {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.tags-input {
+  flex: 1 1 auto;
+  min-width: 160px;
+}
+
+.tags-list {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 52vh;
+  overflow-y: auto;
+}
+
+.tags-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 8px;
+  border-radius: t.$radius-sm;
+  border: 1px solid transparent;
+
+  &:hover {
+    background: t.$sat-surface;
+    border-color: t.$sat-border;
+  }
+}
+
+:host ::ng-deep .tag-chip {
+  cursor: pointer;
+}
+
+.tag-count {
+  margin-left: auto;
+  font-size: 0.72rem;
+  color: t.$sat-text-dim;
+  font-variant-numeric: tabular-nums;
+}
+
+.tags-empty {
+  font-size: 0.78rem;
+  color: t.$sat-text-dim;
+  padding: 8px 2px;
+}

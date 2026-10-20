@@ -1,0 +1,109 @@
+<div class="toolbar">
+  <!-- Поиск -->
+  <div class="search-box">
+    <i class="pi pi-search search-icon" aria-hidden="true"></i>
+    <input
+      type="text"
+      pInputText
+      class="search-input"
+      placeholder="Поиск по задачам"
+      [ngModel]="store.query()"
+      (ngModelChange)="onQueryInput($event)"
+    />
+    @if (store.query()) {
+      <button type="button" class="search-clear" pTooltip="Очистить" tooltipPosition="bottom" (click)="clearQuery()">
+        <i class="pi pi-times"></i>
+      </button>
+    }
+
+    <!-- Поля поиска: компактная кнопка + popover с чекбоксами -->
+    <button
+      type="button"
+      class="scope-trigger"
+      [class.scope-trigger--active]="store.searchScopes().length < scopeOptions.length"
+      pTooltip="Поля поиска: название, описание, комментарии, теги, ID"
+      tooltipPosition="bottom"
+      (click)="scopeMenu.toggle($event)"
+    >
+      <i class="pi pi-sliders-h"></i>
+      <span>{{ store.searchScopes().length }}/{{ scopeOptions.length }}</span>
+    </button>
+    <p-popover #scopeMenu styleClass="scope-popover">
+      <div class="scope-menu">
+        <span class="scope-menu-title">Искать в полях</span>
+        @for (option of scopeOptions; track option.key) {
+          <label class="scope-menu-row" [for]="'scope-' + option.key">
+            <p-checkbox
+              [binary]="true"
+              [inputId]="'scope-' + option.key"
+              [ngModel]="isScopeActive(option.key)"
+              (ngModelChange)="toggleScope(option.key)"
+            ></p-checkbox>
+            <i [class]="option.icon"></i>
+            <span class="scope-menu-name">{{ option.label }}</span>
+          </label>
+        }
+        <div class="scope-menu-footer">
+          <button type="button" class="link-btn" (click)="selectAllScopes()">Все</button>
+          <button type="button" class="link-btn" (click)="selectOnlyTitle()">Только название</button>
+        </div>
+      </div>
+    </p-popover>
+  </div>
+
+  <!-- Фильтры. Статус не фильтруем: он и есть колонки доски -->
+  <div class="filters">
+    <p-select
+      class="filter-select"
+      [options]="typeOptions"
+      optionLabel="label"
+      optionValue="value"
+      placeholder="Тип"
+      [ngModel]="typeFilter()"
+      (ngModelChange)="onTypeChange($event)"
+      [showClear]="true"
+      [pTooltip]="typeFilterLabel()"
+      tooltipPosition="bottom"
+      [tooltipDisabled]="!typeFilterLabel()"
+    ></p-select>
+
+    <p-select
+      class="filter-select"
+      [options]="tagOptions()"
+      optionLabel="label"
+      optionValue="value"
+      placeholder="Тег"
+      [ngModel]="tagFilter()"
+      (ngModelChange)="onTagChange($event)"
+      [showClear]="true"
+      [filter]="true"
+      filterBy="label"
+      [pTooltip]="tagFilterLabel()"
+      tooltipPosition="bottom"
+      [tooltipDisabled]="!tagFilterLabel()"
+    ></p-select>
+
+    <p-select
+      class="filter-select filter-select--wide"
+      [options]="featureOptions()"
+      optionLabel="label"
+      optionValue="value"
+      placeholder="Фича"
+      [ngModel]="featureFilter()"
+      (ngModelChange)="onFeatureChange($event)"
+      [showClear]="true"
+      [filter]="true"
+      filterBy="label"
+      [pTooltip]="featureFilterLabel()"
+      tooltipPosition="bottom"
+      [tooltipDisabled]="!featureFilterLabel()"
+    ></p-select>
+
+    @if (store.filtersActive()) {
+      <button type="button" class="reset-btn" pTooltip="Сбросить фильтры" tooltipPosition="bottom" (click)="resetFilters()">
+        <i class="pi pi-filter-slash"></i>
+        <span>Сбросить</span>
+      </button>
+    }
+  </div>
+</div>

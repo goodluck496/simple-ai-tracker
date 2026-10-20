@@ -1,0 +1,145 @@
+<div class="tracker-layout">
+  <!-- Шапка: бренд, поиск с фильтрами, действия -->
+  <header class="tracker-header">
+    <div class="brand">
+      <!-- Статус связи с сервером — зелёная точка прямо на логотипе -->
+      <span
+        class="brand-logo"
+        [pTooltip]="store.online() ? 'Сервер на связи' : 'Нет связи с сервером'"
+        tooltipPosition="bottom"
+        [attr.aria-label]="store.online() ? 'Сервер на связи' : 'Нет связи с сервером'"
+      >
+        <i class="pi pi-compass brand-icon" aria-hidden="true"></i>
+        <span class="brand-dot" [class.brand-dot--offline]="!store.online()"></span>
+      </span>
+      <div class="brand-text">
+        <h1 class="brand-title">Simple AI Tracker</h1>
+        <span class="brand-subtitle">Kanban &amp; MCP hub</span>
+      </div>
+    </div>
+
+    <sat-toolbar />
+
+    <div class="header-actions">
+      <p-button
+        icon="pi pi-tags"
+        severity="secondary"
+        [text]="true"
+        [rounded]="true"
+        size="small"
+        ariaLabel="Реестр тегов"
+        pTooltip="Теги"
+        tooltipPosition="bottom"
+        (onClick)="showTags.set(true)"
+      ></p-button>
+
+      <p-button
+        icon="pi pi-cloud-download"
+        severity="secondary"
+        [text]="true"
+        [rounded]="true"
+        size="small"
+        styleClass="mini-action"
+        ariaLabel="Бэкапы базы"
+        pTooltip="Бэкапы"
+        tooltipPosition="bottom"
+        (onClick)="showBackups.set(true)"
+      ></p-button>
+
+      <p-button
+        icon="pi pi-question-circle"
+        severity="secondary"
+        [text]="true"
+        [rounded]="true"
+        size="small"
+        ariaLabel="Инструкция для ИИ-агента"
+        pTooltip="Инструкция для агента"
+        tooltipPosition="bottom"
+        (onClick)="showInstructions.set(true)"
+      ></p-button>
+
+      <!-- Combobutton быстрого создания: фича / задача / баг -->
+      <p-button
+        label="Создать"
+        icon="pi pi-plus"
+        iconPos="left"
+        styleClass="create-combobutton"
+        pTooltip="Добавить фичу, задачу или баг"
+        tooltipPosition="bottom"
+        (onClick)="createMenu.toggle($event)"
+      ></p-button>
+      <p-popover #createMenu styleClass="create-menu-popover">
+        <div class="create-menu">
+          <span class="create-menu-title">Создать запись</span>
+          <p-button
+            label="Фича"
+            icon="pi pi-star-fill"
+            severity="secondary"
+            [text]="true"
+            styleClass="create-menu-item"
+            (onClick)="onCreateType('feature'); createMenu.hide()"
+          ></p-button>
+          <p-button
+            label="Задача"
+            icon="pi pi-bolt"
+            severity="secondary"
+            [text]="true"
+            styleClass="create-menu-item"
+            (onClick)="onCreateType('task'); createMenu.hide()"
+          ></p-button>
+          <p-button
+            label="Баг"
+            icon="pi pi-exclamation-triangle"
+            severity="secondary"
+            [text]="true"
+            styleClass="create-menu-item"
+            (onClick)="onCreateType('bug'); createMenu.hide()"
+          ></p-button>
+        </div>
+      </p-popover>
+    </div>
+  </header>
+
+  <!-- Полоса загрузки: тонкая, ровно под шапкой, не сдвигает доску -->
+  <div class="load-bar" [class.load-bar--active]="showProgress()" aria-hidden="true">
+    @if (showProgress()) {
+      <p-progressbar mode="indeterminate" [showValue]="false"></p-progressbar>
+    }
+  </div>
+
+  @if (store.error(); as error) {
+    <div class="app-error">{{ error }}</div>
+  }
+
+  <!-- Канбан-доска -->
+  <main class="board-wrapper">
+    <sat-board
+      (addRequested)="onQuickAdd($event.status)"
+      (addSubtaskRequested)="onAddSubtask($event)"
+      (deleteRequested)="onDeleteTask($event.id)"
+    />
+  </main>
+
+  <!-- Боковая карточка задачи -->
+  @if (store.openTask(); as card) {
+    <sat-task-dialog [task]="card" (closed)="closeCard()" />
+  } @else if (createMode()) {
+    <sat-task-dialog
+      [createMode]="true"
+      [createType]="createType()"
+      [createStatus]="createStatus()"
+      [parentId]="createParentId()"
+      (closed)="closeCreate()"
+    />
+  }
+
+  @if (showTags()) {
+    <sat-tags-panel (closed)="showTags.set(false)" />
+  }
+
+  @if (showBackups()) {
+    <sat-backup-panel (closed)="showBackups.set(false)" />
+  }
+
+  <sat-instructions-dialog [(visible)]="showInstructions" />
+</div>

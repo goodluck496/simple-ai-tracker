@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "simple-ai-tracker": {
+      "command": "node",
+      "args": ["<путь до simple-ai-tracker>/scripts/mcp-launcher.mjs"]
+    }
+  }
+}

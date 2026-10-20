@@ -1,0 +1,71 @@
+<p-dialog
+  [(visible)]="isOpen"
+  (onHide)="close()"
+  [modal]="true"
+  [draggable]="false"
+  [resizable]="false"
+  [dismissableMask]="true"
+  [style]="{ width: 'min(660px, 94vw)' }"
+  header="Бэкапы базы"
+>
+  <div class="backup-panel">
+    @if (store.backupInfo(); as info) {
+      <p-message
+        severity="secondary"
+        [text]="
+          'Снимки лежат в ' + info.directory + '. Хранится последних ' + info.keep + '; авто-бэкап ' +
+          (info.autoEnabled ? 'включён (каждые ' + info.intervalHours + ' ч)' : 'выключен') + '.'
+        "
+      ></p-message>
+    }
+
+    <div class="backup-actions">
+      <p-button
+        label="Создать бэкап сейчас"
+        icon="pi pi-cloud-download"
+        size="small"
+        [loading]="busy()"
+        (onClick)="createBackup()"
+      ></p-button>
+      @if (message(); as text) {
+        <span class="backup-message">{{ text }}</span>
+      }
+    </div>
+
+    <ul class="backup-list">
+      @for (backup of store.backups(); track backup.name) {
+        <li class="backup-row">
+          <div class="backup-info">
+            <span class="backup-name">{{ backup.name }}</span>
+            <span class="backup-meta">{{ formatDateTime(backup.createdAt) }} · {{ formatBytes(backup.size) }}</span>
+          </div>
+          <p-tag [value]="formatBytes(backup.size)" severity="secondary" [rounded]="true"></p-tag>
+          <a pButton [href]="store.backupDownloadUrl(backup.name)" download class="p-button-sm p-button-text" pTooltip="Скачать снимок">
+            <i class="pi pi-download"></i>
+          </a>
+          <p-button
+            icon="pi pi-trash"
+            severity="danger"
+            [text]="true"
+            [rounded]="true"
+            size="small"
+            pTooltip="Удалить бэкап"
+            (onClick)="remove(backup.name)"
+          ></p-button>
+        </li>
+      }
+      @if (store.backups().length === 0) {
+        <li class="backup-empty">Бэкапов ещё нет — создайте первый снимок кнопкой выше.</li>
+      }
+    </ul>
+
+    <p-message
+      severity="info"
+      text="Восстановление выполняется при остановленном сервере: npm run db:restore -- --file <имя>"
+    ></p-message>
+  </div>
+
+  <ng-template pTemplate="footer">
+    <p-button label="Закрыть" severity="secondary" [text]="true" size="small" (onClick)="close()"></p-button>
+  </ng-template>
+</p-dialog>

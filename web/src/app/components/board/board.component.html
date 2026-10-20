@@ -1,0 +1,366 @@
+<!-- Карточка задачи: одинаковая для фичи, подзадачи и обычной задачи. -->
+<ng-template #taskCard let-task>
+  <article
+    class="sat-card"
+    [attr.data-task-id]="task.id"
+    [attr.data-type]="task.type"
+    [attr.aria-label]="'Задача ' + task.id + ': ' + task.title"
+    tabindex="0"
+    draggable="true"
+    (dragstart)="onDragStart($event, task)"
+    (dragend)="onDragEnd()"
+    (click)="onCardClick(task.id)"
+    (keydown.enter)="onCardActivate($event, task.id)"
+  >
+    <div class="sat-card__top">
+      <span class="sat-card__id">{{ task.id }}</span>
+      <p-tag [value]="typeLabel(task.type)" [icon]="typeIcon(task.type)" [severity]="typeSeverity(task.type)"></p-tag>
+    </div>
+
+    <h4 class="sat-card__title" [title]="task.title">{{ task.title }}</h4>
+
+    <!-- Родительская фича у отдельной карточки: клик фильтрует доску по фиче -->
+    @if (parentOf(task); as parent) {
+      <div class="sat-card__parent" (click)="$event.stopPropagation()">
+        <i class="pi pi-bookmark" aria-hidden="true"></i>
+        <button type="button" class="sat-card__parent-name" (click)="onFeatureFilterTrigger($event, parent.id)">
+          {{ parent.title }}
+        </button>
+      </div>
+    }
+
+    @if (task.description) {
+      <p class="sat-card__desc">{{ task.description }}</p>
+    }
+
+    @if (hasTags(task)) {
+      <div class="sat-card__tags" (click)="$event.stopPropagation()">
+        @for (tag of task.tags; track tag.id) {
+          <button
+            type="button"
+            class="sat-card__tag"
+            [pTooltip]="'Фильтровать по тегу #' + tag.name"
+            tooltipPosition="top"
+            (click)="onTagClick($event, tag.name)"
+          >
+            #{{ tag.name }}
+          </button>
+        }
+      </div>
+    }
+
+    @if (hasBadges(task)) {
+      <div class="sat-card__meta">
+        @if (task.openQuestionsCount > 0) {
+          <span class="sat-meta sat-meta--questions" [pTooltip]="questionsTooltip(task)" tooltipPosition="top">
+            <i class="pi pi-question-circle"></i>
+            <span>{{ task.openQuestionsCount }}</span>
+          </span>
+        }
+        @if (task.imagesCount > 0) {
+          <span class="sat-meta" pTooltip="Скриншоты" tooltipPosition="top">
+            <i class="pi pi-image"></i>
+            <span>{{ task.imagesCount }}</span>
+          </span>
+        }
+        @if (task.attachmentsCount > 0) {
+          <span class="sat-meta" [pTooltip]="planTooltip(task)" tooltipPosition="top">
+            <i class="pi pi-paperclip"></i>
+            <span>{{ task.attachmentsCount }}</span>
+          </span>
+        }
+        @if (task.commentsCount > 0) {
+          <span class="sat-meta" pTooltip="Комментарии" tooltipPosition="top">
+            <i class="pi pi-comments"></i>
+            <span>{{ task.commentsCount }}</span>
+          </span>
+        }
+      </div>
+    }
+
+    <!-- Подвал: порядок в колонке, смена статуса, правка, удаление -->
+    <div class="sat-card__footer" (click)="$event.stopPropagation()">
+      <div class="sat-card__order">
+        <p-button
+          icon="pi pi-chevron-up"
+          severity="secondary"
+          [text]="true"
+          [rounded]="true"
+          size="small"
+          [disabled]="isFirstInColumn(task)"
+          pTooltip="Поднять выше"
+          tooltipPosition="top"
+          (onClick)="onMoveOrder($event, task, 'up')"
+        ></p-button>
+        <p-button
+          icon="pi pi-chevron-down"
+          severity="secondary"
+          [text]="true"
+          [rounded]="true"
+          size="small"
+          [disabled]="isLastInColumn(task)"
+          pTooltip="Опустить ниже"
+          tooltipPosition="top"
+          (onClick)="onMoveOrder($event, task, 'down')"
+        ></p-button>
+      </div>
+
+      <div class="sat-card__actions">
+        @if (previousStatus(task.status); as previous) {
+          <p-button
+            icon="pi pi-arrow-left"
+            severity="secondary"
+            [text]="true"
+            [rounded]="true"
+            size="small"
+            [pTooltip]="'Перевести в «' + statusTitle(previous) + '»'"
+            tooltipPosition="top"
+            (onClick)="onShiftClick($event, task, previous)"
+          ></p-button>
+        }
+        <p-button
+          icon="pi pi-pencil"
+          severity="secondary"
+          [text]="true"
+          [rounded]="true"
+          size="small"
+          pTooltip="Редактировать"
+          tooltipPosition="top"
+          (onClick)="onEdit($event, task)"
+        ></p-button>
+        <p-button
+          icon="pi pi-trash"
+          severity="danger"
+          [text]="true"
+          [rounded]="true"
+          size="small"
+          pTooltip="Удалить"
+          tooltipPosition="top"
+          (onClick)="onDelete($event, task)"
+        ></p-button>
+        @if (nextStatus(task.status); as next) {
+          <p-button
+            icon="pi pi-arrow-right"
+            severity="secondary"
+            [text]="true"
+            [rounded]="true"
+            size="small"
+            [pTooltip]="'Перевести в «' + statusTitle(next) + '»'"
+            tooltipPosition="top"
+            (onClick)="onShiftClick($event, task, next)"
+          ></p-button>
+        }
+      </div>
+    </div>
+  </article>
+</ng-template>
+
+<div class="sat-board" #boardScroll role="list" aria-label="Канбан-доска задач">
+  @for (status of statuses(); track status.status) {
+    <section
+      [class]="columnClasses(status)"
+      role="listitem"
+      [attr.data-status]="status.status"
+      [attr.aria-label]="status.title + ': ' + countOf(status.status)"
+    >
+      <!-- Подсветка колонки-приёмника: отдельный слой, включается инлайновой opacity -->
+      <div class="sat-col__drop" aria-hidden="true"></div>
+      <!-- Заголовок колонки -->
+      <header class="sat-col__head" [attr.data-status]="status.status">
+        <div class="sat-col__title-wrap">
+          <i [class]="status.icon + ' sat-col__icon'" aria-hidden="true"></i>
+          <h3 class="sat-col__title" [title]="status.description || status.title">{{ status.title }}</h3>
+        </div>
+        <span class="sat-col__count" [title]="'Всего задач: ' + countOf(status.status)">{{ countOf(status.status) }}</span>
+      </header>
+
+      <!-- Прокручиваемое тело колонки -->
+      <div class="sat-col__body">
+        <!-- 1. Группы «фича → её подзадачи» (видны всегда) -->
+        @for (group of visibleFeatureGroups(status.status); track group.feature.id) {
+          <div class="sat-feature">
+            <div class="sat-feature__head">
+              <button
+                type="button"
+                class="sat-feature__toggle"
+                (click)="onToggleFeature($event, group.feature.id)"
+                [attr.aria-expanded]="isExpanded(group.feature.id)"
+                [pTooltip]="isExpanded(group.feature.id) ? 'Свернуть детали фичи' : 'Показать детали фичи'"
+                tooltipPosition="top"
+              >
+                <i [class]="isExpanded(group.feature.id) ? 'pi pi-chevron-down' : 'pi pi-chevron-right'"></i>
+              </button>
+
+              <span class="sat-feature__status" [pTooltip]="'Статус фичи: ' + statusTitle(group.feature.status)" tooltipPosition="top">
+                {{ statusShort(group.feature.status) }}
+              </span>
+
+              <button
+                type="button"
+                class="sat-feature__title"
+                [pTooltip]="'Открыть фичу: ' + group.feature.title"
+                tooltipPosition="top"
+                (click)="onCardClick(group.feature.id)"
+              >
+                {{ group.feature.title }}
+              </button>
+
+              <div class="sat-feature__right">
+                <button
+                  type="button"
+                  class="sat-feature__filter"
+                  [class.sat-feature__filter--active]="isFeatureFiltered(group.feature.id)"
+                  (click)="onFeatureFilterTrigger($event, group.feature.id)"
+                  [pTooltip]="isFeatureFiltered(group.feature.id) ? 'Снять фильтр фичи' : 'Фильтровать доску по этой фиче'"
+                  tooltipPosition="top"
+                >
+                  <i [class]="isFeatureFiltered(group.feature.id) ? 'pi pi-filter-fill' : 'pi pi-filter'"></i>
+                  <span>{{ doneSubtasks(group) }}/{{ group.subtasks.length }}</span>
+                </button>
+
+                <button
+                  type="button"
+                  class="sat-feature__quick sat-feature__quick--task"
+                  (click)="onAddSubtask($event, group.feature.id, 'task')"
+                  pTooltip="Добавить задачу к этой фиче"
+                  tooltipPosition="top"
+                >
+                  <i class="pi pi-plus"></i> Таск
+                </button>
+                <button
+                  type="button"
+                  class="sat-feature__quick sat-feature__quick--bug"
+                  (click)="onAddSubtask($event, group.feature.id, 'bug')"
+                  pTooltip="Добавить баг к этой фиче"
+                  tooltipPosition="top"
+                >
+                  <i class="pi pi-plus"></i> Баг
+                </button>
+
+                <p-button
+                  icon="pi pi-pencil"
+                  severity="secondary"
+                  [text]="true"
+                  [rounded]="true"
+                  size="small"
+                  pTooltip="Редактировать фичу"
+                  tooltipPosition="top"
+                  (onClick)="onEdit($event, group.feature)"
+                ></p-button>
+              </div>
+            </div>
+
+            <!-- Полоска прогресса подзадач -->
+            <div class="sat-feature__progress-track">
+              <div class="sat-feature__progress-fill" [style.width.%]="featurePercent(group)"></div>
+            </div>
+
+            <!-- Детали фичи (разворачиваются) -->
+            @if (isExpanded(group.feature.id)) {
+              <div class="sat-feature__body">
+                @if (group.feature.description) {
+                  <p class="sat-card__desc">{{ group.feature.description }}</p>
+                }
+                @if (hasTags(group.feature)) {
+                  <div class="sat-card__tags">
+                    @for (tag of group.feature.tags; track tag.id) {
+                      <button type="button" class="sat-card__tag" (click)="onTagClick($event, tag.name)">#{{ tag.name }}</button>
+                    }
+                  </div>
+                }
+                @if (hasBadges(group.feature)) {
+                  <div class="sat-card__meta">
+                    @if (group.feature.openQuestionsCount > 0) {
+                      <span class="sat-meta sat-meta--questions">
+                        <i class="pi pi-question-circle"></i><span>{{ group.feature.openQuestionsCount }}</span>
+                      </span>
+                    }
+                    @if (group.feature.imagesCount > 0) {
+                      <span class="sat-meta"><i class="pi pi-image"></i><span>{{ group.feature.imagesCount }}</span></span>
+                    }
+                    @if (group.feature.attachmentsCount > 0) {
+                      <span class="sat-meta"><i class="pi pi-paperclip"></i><span>{{ group.feature.attachmentsCount }}</span></span>
+                    }
+                    @if (group.feature.commentsCount > 0) {
+                      <span class="sat-meta"><i class="pi pi-comments"></i><span>{{ group.feature.commentsCount }}</span></span>
+                    }
+                  </div>
+                }
+              </div>
+            }
+
+            <!-- Подзадачи фичи в этой колонке -->
+            <div class="sat-feature__subtasks">
+              @for (subtask of group.subtasks; track subtask.id) {
+                <ng-container [ngTemplateOutlet]="taskCard" [ngTemplateOutletContext]="{ $implicit: subtask }" />
+              }
+
+              @if (group.subtasks.length === 0) {
+                <div class="sat-feature__empty">
+                  <i class="pi pi-info-circle"></i>
+                  <span>Нет задач в этом статусе (</span>
+                  <button type="button" class="sat-feature__hint-link" (click)="onAddSubtask($event, group.feature.id, 'task')">+Таск</button>
+                  <span>, </span>
+                  <button type="button" class="sat-feature__hint-link" (click)="onAddSubtask($event, group.feature.id, 'bug')">+Баг</button>
+                  <span>)</span>
+                </div>
+              }
+            </div>
+          </div>
+        }
+
+        <!-- 2. Отдельные задачи без фичи -->
+        @if (visibleColumnTasks(status.status).length > 0) {
+          <div class="sat-standalone">
+            @if (featureGroups(status.status).length > 0) {
+              <div class="sat-standalone__divider">
+                <span class="sat-standalone__line"></span>
+                <span class="sat-standalone__label">
+                  <i class="pi pi-list"></i> Отдельные задачи ({{ visibleColumnTasks(status.status).length }})
+                </span>
+                <span class="sat-standalone__line"></span>
+              </div>
+            }
+
+            @for (task of visibleColumnTasks(status.status); track task.id) {
+              <ng-container [ngTemplateOutlet]="taskCard" [ngTemplateOutletContext]="{ $implicit: task }" />
+            }
+          </div>
+        }
+
+        <!-- Пустая колонка -->
+        @if (isEmptyColumn(status.status)) {
+          <div class="sat-col__empty">
+            <i class="pi pi-inbox"></i>
+            <span>Нет задач</span>
+          </div>
+        }
+      </div>
+
+      <!-- Догрузка следующей порции карточек (lazy) -->
+      @if (hiddenCount(status.status) > 0) {
+        <div class="sat-col__more">
+          <button type="button" class="sat-col__more-btn" (click)="loadMore(status.status)">
+            <i class="pi pi-angle-double-down"></i>
+            Показать ещё {{ hiddenCount(status.status) }}
+          </button>
+        </div>
+      }
+
+      <!-- Создание задачи доступно только в бэклоге; остальные колонки — только перемещение -->
+      @if (canCreateInColumn(status.status)) {
+        <footer class="sat-col__foot">
+          <p-button
+            label="задача"
+            icon="pi pi-plus"
+            severity="secondary"
+            [text]="true"
+            size="small"
+            pTooltip="Создать задачу в бэклоге"
+            (onClick)="onQuickAdd(status.status)"
+          ></p-button>
+        </footer>
+      }
+    </section>
+  }
+</div>

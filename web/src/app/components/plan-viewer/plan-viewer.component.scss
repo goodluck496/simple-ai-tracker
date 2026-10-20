@@ -1,0 +1,48 @@
+// Просмотр плана (SCSS).
+@use '../../../styles/tokens' as t;
+
+.plan {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 0;
+}
+
+.plan-versions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--sat-border);
+}
+
+.plan-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  margin-left: auto;
+  font-size: 0.72rem;
+  color: t.$sat-text-dim;
+  flex-wrap: wrap;
+
+  i {
+    font-size: 0.75rem;
+  }
+}
+
+.plan-meta-date,
+.plan-meta-path {
+  font-variant-numeric: tabular-nums;
+}
+
+.plan-meta-path {
+  font-family: t.$font-mono;
+  font-size: 0.68rem;
+}
+
+.plan-content {
+  overflow: auto;
+  padding: 4px 2px 20px;
+  min-height: 0;
+}

@@ -1,0 +1,27 @@
+﻿# Runtime data (SQLite database, WAL files, backups)
+data/*.db
+data/*.db-wal
+data/*.db-shm
+data/backups/
+data/images/
+
+# Экспорт карточек (json/markdown-снимки)
+export/
+
+# Build output
+dist/
+.angular/
+
+# Node
+node_modules/
+npm-debug.log*
+
+# Local env overrides
+.env
+.env.local
+
+# Editor / OS noise
+.DS_Store
+Thumbs.db
+
+.idea/
