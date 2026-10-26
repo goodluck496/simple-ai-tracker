@@ -12,7 +12,7 @@
             <strong>{{ item.taskId }} · {{ item.title }}</strong><span>{{ statusTitles[item.status] }} @if (item.queuePosition) { · место {{ item.queuePosition }} }</span>
             <span>Этап {{ item.stage < item.pipeline.length ? item.stage + 1 : item.pipeline.length }} / {{ item.pipeline.length }} · {{ currentRole(item) }}</span>
             @if (item.tokenUsage; as usage) { <span>{{ tokenMeter.label(usage) }}</span> }
-            <small>{{ item.status === runStatus.Running ? item.lastMessage || health(item) : item.summary || item.lastMessage || health(item) }}</small>
+            <small>{{ progress(item.status === runStatus.Running ? item.lastMessage || health(item) : item.summary || item.lastMessage || health(item)) }}</small>
           </button>
           @if (item.status === runStatus.Queued) { <button type="button" class="dequeue-action" [disabled]="busy()" (click)="dequeue(item)">Убрать из очереди</button> }
         } @empty { <p class="muted">Нет запусков</p> }
@@ -32,7 +32,7 @@
         <li [class.current]="i === item.stage"><strong>{{ role(stage.role) }}</strong> · {{ stage.runner }} / {{ stage.model }}
           <span>{{ i < item.stage ? 'Пройден' : i === item.stage ? statusTitles[item.status] : 'Ожидает' }}</span></li>
       }</ol>
-      @if (item.summary) { <p class="summary">{{ item.summary }}</p> }
+      @if (item.summary) { <p class="summary">{{ progress(item.summary) }}</p> }
       @if (detail()?.run?.id === item.id) {
         @let attempts = detail()?.run?.usageAttempts || [];
         @let total = tokenMeter.summary(attempts, detail()?.run?.usageIncomplete);
@@ -56,7 +56,6 @@
           </p-table>
         </section>
       }
-      @if (item.lastMessage) { <p class="summary">{{ item.lastMessage }}</p> }
       <div class="actions"><button type="button" (click)="openTask.emit(item.taskId)">Открыть задачу {{ item.openQuestions ? 'и ответить на вопросы' : '' }}</button>
         @if (item.status === runStatus.Queued) { <button type="button" class="dequeue-action" [disabled]="busy()" (click)="dequeue(item)">Убрать из очереди</button> }
         @if (item.status === runStatus.Running || item.status === runStatus.Waiting) { <button type="button" [disabled]="busy()" (click)="action(item, runAction.Cancel)">Остановить</button> }
@@ -66,10 +65,7 @@
       @if (item.actionReason) { <p class="muted">{{ item.actionReason }}</p> }
       @if (item.canResume || item.canRestart) { <p class="muted">Продолжение использует прежние настройки и рабочую ветку. «Начать заново» создаёт новый запуск и новую ветку от базовой ветки с сохранёнными настройками команды; старый журнал останется.</p> }
       <h4>Журнал выполнения</h4>
-      <div class="events">@for (event of detail()?.run?.id === item.id ? detail()?.events : []; track event.id) {
-        <div class="event"><time>{{ event.at | date:'mediumTime' }}</time><strong>{{ eventTitles[event.kind] || event.kind }}</strong><p>{{ progress(event.text) }}</p>
-          <p-accordion><p-accordion-panel [value]="event.id"><p-accordion-header>Исходное событие</p-accordion-header><p-accordion-content><pre>{{ event.text }}</pre></p-accordion-content></p-accordion-panel></p-accordion></div>
-      } @empty { <p>Событий пока нет. Запуск ожидает worker.</p> }</div>
+      <sat-run-console [runId]="item.id" [events]="detail()?.run?.id === item.id ? (detail()?.events ?? []) : []" />
     </article>
   } @else { <p class="muted">Выберите запуск, чтобы увидеть этапы, журнал и доступные действия.</p> }
 </div>

@@ -2,6 +2,7 @@ import { AUTOMATION_TIMING, RunStatus, type AgentRole, type RunnerId } from './c
 import type { TaskStatus } from '../tasks/status.js';
 import type { HostStatus } from './project.js';
 import type { UsageSummary } from './token-usage.js';
+import { RunConsoleDecoder } from './console.js';
 
 export const RunPhase = { Preparing: 'preparing', Setup: 'setup', Agent: 'agent', Checks: 'checks', Merge: 'merge' } as const;
 export type RunPhase = typeof RunPhase[keyof typeof RunPhase];
@@ -33,17 +34,9 @@ export interface QueueSnapshot { items: QueueItem[]; host: HostStatus; serverTim
 /** Display structured CLI events without dumping JSON envelopes into the queue. */
 export class RunProgressText {
   public static format(text: string): string {
-    const parts: string[] = [];
-    for (const line of text.trim().split(/\r?\n/)) {
-      try {
-        const event = JSON.parse(line) as { type?: string; item?: { type?: string; text?: string; command?: string; tool?: string; error?: { message?: string } }; error?: { message?: string } };
-        if (event.item?.text) parts.push(event.item.text);
-        else if (event.item?.command) parts.push(`Команда: ${event.item.command}`);
-        else if (event.item?.tool) parts.push(`MCP: ${event.item.tool}${event.item.error?.message ? ` — ${event.item.error.message}` : ''}`);
-        else if (event.error?.message) parts.push(event.error.message);
-      } catch { if (line.trim() && !line.trim().startsWith('{')) parts.push(line); }
-    }
-    return parts.join('\n').slice(-QUEUE_LIMITS.previewChars);
+    return RunConsoleDecoder.render([{ id: 0, runId: '', at: '', kind: 'progress', text }]).lines
+      .map((line) => line.level === 'command' && line.text.startsWith('$ ') ? `Команда: ${line.text.slice(2)}` : line.text)
+      .join('\n').slice(-QUEUE_LIMITS.previewChars);
   }
 }
 export class QueuePresentation {

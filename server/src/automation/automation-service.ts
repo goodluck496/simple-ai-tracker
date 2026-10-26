@@ -32,6 +32,7 @@ export class AutomationService {
   public list(taskId?: string): AgentRun[] {
     return this.runs.db.transaction(() => { this.expireLeases(); return this.runs.list(taskId).map((run) => this.publicRun(run)); });
   }
+  public logPage(id: string, after = 0) { this.requireRun(id); return this.runs.eventPage(id, after); }
   public detail(id: string) {
     return this.runs.db.transaction(() => { this.expireLeases(); return { run: this.publicRun(this.requireRun(id)), events: this.runs.events(id) }; });
   }

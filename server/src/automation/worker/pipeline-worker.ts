@@ -10,6 +10,8 @@ import { RunPhase } from '../../../../shared/automation/queue.js';
 import type { TokenUsage } from '../../../../shared/automation/token-usage.js';
 import { WorktreePreparation } from './worktree-preparation.js';
 import { StageCheckpoint, type StageResult } from './stage-checkpoint.js';
+import { AgentHandoff } from '../../../../shared/automation/handoff.js';
+import { ProgressBuffer } from '../../../../shared/automation/progress-buffer.js';
 
 export class PipelineWorker {
   private activeController?: AbortController;
@@ -25,7 +27,7 @@ export class PipelineWorker {
     this.activeController = controller;
     let finished = false;
     const timeout = setTimeout(() => controller.abort(), run.settings.timeoutMinutes * 60_000);
-    let pending = ''; let channelError: unknown;
+    const pending = new ProgressBuffer(); let channelError: unknown;
     let heartbeatBusy = false;
     let metering: { attemptId: string; usage?: TokenUsage } | undefined;
     const reportUsage = async (sample: { attemptId: string; usage?: TokenUsage }, finished = false) => {
@@ -44,13 +46,13 @@ export class PipelineWorker {
       void (async () => {
         await this.channel.call(AutomationTool.Heartbeat, { id: run!.id, leaseToken: token });
         if (metering?.usage) await reportUsage({ ...metering });
-        if (pending) {
-          const text = redact(pending); pending = '';
+        if (pending.length) {
+          const text = redact(pending.take());
           await this.channel.call(AutomationTool.Progress, { id: run!.id, leaseToken: token, text });
         }
       })().catch((error: unknown) => { if (!finished) { channelError = error; controller.abort(); } }).finally(() => { heartbeatBusy = false; });
     }, AUTOMATION_TIMING.heartbeatMs);
-    const progress = (text: string) => { pending = (pending + text).slice(-AUTOMATION_LIMITS.eventTextLength); };
+    const progress = (text: string) => { pending.append(text); };
     const phase = async (value: RunPhase, text: string) => { await this.channel.call(AutomationTool.Progress, { id: run!.id, leaseToken: token, phase: value, text }); };
     try {
       await phase(RunPhase.Preparing, 'Создание или проверка отдельной рабочей ветки.');
@@ -142,7 +144,7 @@ export class PipelineWorker {
           saved.checksComplete = outcome.verdict === AgentVerdict.Pass;
           if (saved.checksComplete) await checkpoint.save(saved);
         }
-        if (pending) { await this.channel.call(AutomationTool.Progress, { id: run.id, leaseToken: token, text: redact(pending) }); pending = ''; }
+        if (pending.length) { await this.channel.call(AutomationTool.Progress, { id: run.id, leaseToken: token, text: redact(pending.take()) }); }
         run = await this.channel.call<AgentRun>(AutomationTool.CompleteStage, { id: run.id, leaseToken: token, outcome, branch, commitSha: sha });
       }
       finished = true;
@@ -184,7 +186,7 @@ export class PipelineWorker {
     return `You are the ${role}. ${instructions.trim() || DEFAULT_ROLE_INSTRUCTIONS[role]}\nRead repository AGENTS.md and applicable instructions before work.\n`
       + `${roleInstructions[role]}\n`
       + `Tracker workspace: ${process.env.SAT_WORKSPACE ?? 'default'}. The worker supplies the current task context via MCP. If you consult tracker tools, always pass this explicit workspace. Do not change tracker data yourself.\n`
-      + `Task context:\n${JSON.stringify(context)}\nPrevious feedback:\n${feedback}\nChanges:\n${diff}\n`
+      + `${AgentHandoff.instructions}\nTask context:\n${AgentHandoff.task(context)}\nPrevious feedback:\n${AgentHandoff.feedback(feedback)}\nChanges:\n${AgentHandoff.diff(diff)}\n`
       + `Configured checks: ${JSON.stringify(checks)}\nVisual artifacts: ${JSON.stringify(artifacts)}\n`
       + `Only developer/designer may edit files. Do not change branches, commit, merge, publish or alter tracker data directly; the worker handles commits. `
       + `The worker prepared dependencies before this invocation. Reuse that environment; only change/install dependencies when required by the task's manifest changes. Do not repeatedly reinstall packages for an unchanged infrastructure failure. `

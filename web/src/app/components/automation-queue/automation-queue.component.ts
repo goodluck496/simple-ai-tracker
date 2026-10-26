@@ -2,7 +2,7 @@ import { ChangeDetectionStrategy, Component, DestroyRef, EventEmitter, Input, Ou
 import { DatePipe, DecimalPipe } from '@angular/common';
 import { TableModule } from 'primeng/table';
 import { TokenMeter } from '../../../../../shared/automation/token-usage';
-import { AccordionModule } from 'primeng/accordion';
+import { RunConsoleComponent } from '../run-console/run-console.component';
 import { HttpClient } from '@angular/common/http';
 import { takeUntilDestroyed, toObservable, toSignal } from '@angular/core/rxjs-interop';
 import { EMPTY, Subject, catchError, combineLatest, exhaustMap, finalize, merge, of, switchMap, tap, timer } from 'rxjs';
@@ -12,7 +12,7 @@ import { QUEUE_LANES, QUEUE_LIMITS, RUN_EVENT_TITLES, RUN_PHASE_TITLES, RUN_STAT
 import { ROLE_OPTIONS } from '../../../../../shared/automation/presets';
 import { TASK_STATUS_TITLES } from '../../../../../shared/automation/task-readiness';
 
-@Component({ selector: 'sat-automation-queue', standalone: true, imports: [DatePipe, DecimalPipe, AccordionModule, TableModule],
+@Component({ selector: 'sat-automation-queue', standalone: true, imports: [DatePipe, DecimalPipe, RunConsoleComponent, TableModule],
   changeDetection: ChangeDetectionStrategy.OnPush, templateUrl: './automation-queue.component.html', styleUrl: './automation-queue.component.scss' })
 export class AutomationQueueComponent {
   private readonly http = inject(HttpClient);
@@ -51,7 +51,7 @@ export class AutomationQueueComponent {
   public role(role: string): string { return ROLE_OPTIONS.find((entry) => entry.value === role)?.label ?? role; }
   public currentRole(item: QueueItem): string { return this.role(item.pipeline.at(item.stage)?.role ?? ''); }
   public duration(at: string | undefined): string { return at ? `${Math.max(0, Math.floor((Date.parse(this.snapshot().serverTime) - Date.parse(at)) / 1000))} с` : 'нет данных'; }
-  public progress(text: string): string { return RunProgressText.format(text) || text; }
+  public progress(text: string): string { return RunProgressText.format(text); }
   public select(id: string): void { this.selectedId.set(id); this.error.set(''); }
   public action(item: QueueItem, action: RunAction): void {
     if (this.busy()) return;

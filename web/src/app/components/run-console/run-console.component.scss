@@ -1,0 +1,16 @@
+:host { display: block; min-width: 0; }
+.console { min-width: 0; }
+.toolbar { display: flex; flex-wrap: wrap; gap: .5rem; align-items: end; }
+button, select { color: inherit; background: var(--p-content-background); border: 1px solid var(--p-content-border-color); border-radius: .3rem; padding: .4rem; max-width: 100%; }
+button { cursor: pointer; } button:disabled { cursor: default; opacity: .6; }
+label { display: grid; gap: .2rem; font-size: .8rem; }
+.hint { color: var(--p-text-muted-color); font-size: .8rem; }
+.terminal { height: 24rem; overflow: auto; padding: .65rem; border: 1px solid #334155; border-radius: .4rem; background: #0b1020; color: #e2e8f0; font: .8rem/1.5 ui-monospace, Consolas, monospace; overflow-wrap: anywhere; }
+.line { display: grid; grid-template-columns: 4.5rem minmax(5rem, 8rem) 4.5rem minmax(0, 1fr); gap: .5rem; align-items: baseline; }
+time, .stage { color: #94a3b8; } .stage { font-size: .7rem; }
+pre { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; min-width: 0; }
+.level { font-size: .65rem; text-transform: uppercase; color: #94a3b8; }
+[data-level='error'] { color: #fda4af; } [data-level='warning'] { color: #fde68a; }
+[data-level='success'] { color: #86efac; } [data-level='command'] { color: #7dd3fc; }
+details { margin-top: .65rem; } summary { cursor: pointer; } .raw { max-height: 16rem; overflow: auto; padding: .5rem; font-size: .75rem; }
+@media (max-width: 600px) { .line { grid-template-columns: 4.5rem minmax(0, 1fr); gap: 0 .4rem; margin-bottom: .4rem; } .line .level { display: none; } .line pre { grid-column: 1 / -1; } }

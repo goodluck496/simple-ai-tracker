@@ -39,7 +39,15 @@ export class AgentRunRepository {
       .run([run.id, run.taskId, run.status, JSON.stringify(run), run.updatedAt]);
   }
   public event(runId: string, kind: string, text: string, at: string): void {
-    this.db.prepare('INSERT INTO agent_run_events(run_id, at, kind, text) VALUES(?,?,?,?)').run([runId, at, kind, text.slice(0, AUTOMATION_LIMITS.eventTextLength)]);
+    const insert = this.db.prepare('INSERT INTO agent_run_events(run_id, at, kind, text) VALUES(?,?,?,?)');
+    if (kind !== 'progress') { insert.run([runId, at, kind, text.slice(0, AUTOMATION_LIMITS.eventTextLength)]); return; }
+    for (let offset = 0; offset < text.length; offset += AUTOMATION_LIMITS.eventTextLength) {
+      insert.run([runId, at, kind, text.slice(offset, offset + AUTOMATION_LIMITS.eventTextLength)]);
+    }
+  }
+  public eventPage(runId: string, after: number): RunEvent[] {
+    return this.db.prepare('SELECT id, run_id AS runId, at, kind, text FROM agent_run_events WHERE run_id = ? AND id > ? ORDER BY id ASC LIMIT 200')
+      .all<RunEvent>([runId, after]);
   }
   public events(runId: string): RunEvent[] {
     return this.db.prepare('SELECT id, run_id AS runId, at, kind, text FROM agent_run_events WHERE run_id = ? ORDER BY id DESC LIMIT 200')

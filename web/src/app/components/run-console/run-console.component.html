@@ -1,0 +1,28 @@
+<section class="console" aria-label="Консоль выполнения">
+  <div class="toolbar">
+    <label>Уровень <select aria-label="Уровень журнала" [value]="level()" (change)="level.set($any($event.target).value)">
+      <option value="all">Все</option><option value="error">Ошибки</option><option value="warning">Предупреждения</option>
+      <option value="command">Команды</option><option value="success">Успех</option><option value="info">Сообщения</option>
+    </select></label>
+    <label>Этап <select aria-label="Этап журнала" [value]="stage()" (change)="stage.set($any($event.target).value)">
+      <option value="all">Все этапы</option>@for (value of stages(); track value) { <option [value]="value">{{ value }}</option> }
+    </select></label>
+    <button type="button" (click)="copy()">Копировать вывод</button>
+    <button type="button" [disabled]="downloading()" (click)="download()">Скачать полный исходный журнал</button>
+    <button type="button" (click)="latest()">К последним строкам</button>
+  </div>
+  <p class="hint">Последние {{ limit }} строк из доступного окна событий. Полная сохранённая история — в скачиваемом журнале.
+    @if (view().omitted) { Скрыто строк: {{ view().omitted }}. }
+    @if (!follow()) { Автопрокрутка приостановлена. }
+  </p>
+  @if (view().incomplete) { <p role="status">Получена часть структурированной записи; ожидается продолжение.</p> }
+  <div #viewport class="terminal" role="log" aria-label="Вывод выполнения" tabindex="0" (scroll)="scroll()">
+    @for (line of rows(); track line.id) {
+      <div class="line" [attr.data-level]="line.level"><time>{{ line.at | date:'HH:mm:ss' }}</time><span class="stage">{{ line.stage }}</span><span class="level">{{ line.level }}</span><pre>{{ line.text }}</pre></div>
+    } @empty { <p>Нет строк для выбранного фильтра. Запуск может ожидать worker.</p> }
+  </div>
+  @if (message()) { <p role="status">{{ message() }}</p> }
+  <details (toggle)="rawOpen.set($any($event.target).open)"><summary>Исходные события текущего окна</summary>
+    @if (rawOpen()) { <pre class="raw">{{ raw() }}</pre> }
+  </details>
+</section>
