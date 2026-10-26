@@ -64,7 +64,7 @@ test('pipeline advances through plan, tests and review, bounded revision and can
   const app = createContainer({ config: { dbPath: ':memory:' }, logger: new SilentLogger() });
   try {
     const service = app.automationService;
-    service.configure({ ...exampleSettings(), maxRevisions: 1 });
+    service.configure({ ...exampleSettings(), maxRevisions: 1, maxAgentCalls: 10 });
     const task = app.taskService.createTask({ title: 'Full lifecycle' });
     const queued = service.enqueue(task.id);
     const run = service.claim('worker')!;

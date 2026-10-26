@@ -49,6 +49,12 @@ export class AutomationSettingsValidator {
     if (!Number.isInteger(settings.timeoutMinutes) || settings.timeoutMinutes < AUTOMATION_LIMITS.timeoutMinutes.min || settings.timeoutMinutes > AUTOMATION_LIMITS.timeoutMinutes.max
       || !Number.isInteger(settings.maxRevisions) || settings.maxRevisions < AUTOMATION_LIMITS.revisions.min || settings.maxRevisions > AUTOMATION_LIMITS.revisions.max) return fail('Invalid run limits.');
     if (!MERGE_POLICIES.includes(settings.mergePolicy)) return fail('Invalid merge policy.');
+    const maxAgentCalls = settings.maxAgentCalls ?? 6;
+    const maxInputTokens = settings.maxInputTokens ?? 500000;
+    const maxRunMinutes = settings.maxRunMinutes ?? 20;
+    if (!Number.isSafeInteger(maxAgentCalls) || maxAgentCalls < 1 || maxAgentCalls > 100
+      || !Number.isSafeInteger(maxInputTokens) || maxInputTokens < 1 || maxInputTokens > 100000000
+      || !Number.isSafeInteger(maxRunMinutes) || maxRunMinutes < 1 || maxRunMinutes > 240) return fail('Invalid run budget.');
     // Reconstruct persisted objects so unknown fields cannot carry credentials.
     return {
       repositoryPath: settings.repositoryPath, baseBranch: settings.baseBranch,
@@ -56,6 +62,7 @@ export class AutomationSettingsValidator {
       agents: settings.agents.map(({ id, role, runner, connectionId, model, instructions, nativeProfile, command, args }) => ({ id, role, runner, connectionId, model, instructions, nativeProfile, command, args })),
       pipeline: settings.pipeline, checks: settings.checks.map(({ command, args }) => ({ command, args })), setup: settings.setup.map(({ command, args }) => ({ command, args })), artifactPaths: settings.artifactPaths,
       timeoutMinutes: settings.timeoutMinutes, maxRevisions: settings.maxRevisions, mergePolicy: settings.mergePolicy,
+      maxAgentCalls, maxInputTokens, maxRunMinutes,
     };
   }
 }

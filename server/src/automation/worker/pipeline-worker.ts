@@ -12,6 +12,7 @@ import { WorktreePreparation } from './worktree-preparation.js';
 import { StageCheckpoint, type StageResult } from './stage-checkpoint.js';
 import { AgentHandoff } from '../../../../shared/automation/handoff.js';
 import { ProgressBuffer } from '../../../../shared/automation/progress-buffer.js';
+import { RunBudget } from '../../../../shared/automation/budget.js';
 
 export class PipelineWorker {
   private activeController?: AbortController;
@@ -26,7 +27,10 @@ export class PipelineWorker {
     const controller = new AbortController();
     this.activeController = controller;
     let finished = false;
-    const timeout = setTimeout(() => controller.abort(), run.settings.timeoutMinutes * 60_000);
+    let budgetError: string | undefined;
+    const remainingMs = RunBudget.limits(run).minutes * 60000 - RunBudget.elapsed(run, Date.now());
+    const timeout = setTimeout(() => { budgetError = 'Run stopped: execution time budget exhausted.'; controller.abort(); },
+      Math.max(0, Math.min(run.settings.timeoutMinutes * 60_000, remainingMs)));
     const pending = new ProgressBuffer(); let channelError: unknown;
     let heartbeatBusy = false;
     let metering: { attemptId: string; usage?: TokenUsage } | undefined;
@@ -98,12 +102,24 @@ export class PipelineWorker {
           outcome = this.parseOutcome(JSON.stringify(saved.outcome));
           await phase(RunPhase.Preparing, 'Результат агента восстановлен из checkpoint; повторный вызов модели не нужен.');
         } else {
+        const reason = RunBudget.reason(run, Date.now(), true);
+        if (reason) throw new Error(reason);
         const started = await this.channel.call<{ attemptId?: string }>(AutomationTool.BeginStage, { id: run.id, leaseToken: token });
         metering = started.attemptId ? { attemptId: started.attemptId } : undefined;
         let usageComplete = false;
         try {
           const result = await this.registry.get(profile.runner).run({ runId: run.id, cwd, prompt, profile, connection, settings: run.settings, signal: controller.signal,
-            onUsage: (usage) => { if (metering) metering = { ...metering, usage }; } }, progress);
+            onUsage: (usage) => {
+              if (metering) {
+                metering = { ...metering, usage };
+                const previous = (run!.usageAttempts ?? []).filter(a => a.id !== metering!.attemptId);
+                const total = previous.reduce((sum, a) => sum + (a.usage?.inputTokens ?? 0), 0) + usage.inputTokens;
+                if (total >= RunBudget.limits(run!).input) {
+                  budgetError = `Run stopped: input token budget exhausted (${total}; cached included).`;
+                  controller.abort();
+                }
+              }
+            } }, progress);
           if (result.usage && metering) metering = { ...metering, usage: result.usage };
           usageComplete = true;
           outcome = this.parseOutcome(result.text);
@@ -157,7 +173,7 @@ export class PipelineWorker {
         await this.channel.call(AutomationTool.Merged, { id: run.id, leaseToken: token });
       }
     } catch (error) {
-      const message = redact(`${channelError ? 'Tracker connection/lease lost. ' : ''}${error instanceof Error ? error.message : String(error)}`);
+      const message = redact(budgetError ?? `${channelError ? 'Tracker connection/lease lost. ' : ''}${error instanceof Error ? error.message : String(error)}`);
       try { await this.channel.call(AutomationTool.Fail, { id: run.id, leaseToken: token, text: message }); }
       catch { process.stderr.write(`${message}\n`); }
     } finally {
@@ -191,7 +207,7 @@ export class PipelineWorker {
       + `Only developer/designer may edit files. Do not change branches, commit, merge, publish or alter tracker data directly; the worker handles commits. `
       + `The worker prepared dependencies before this invocation. Reuse that environment; only change/install dependencies when required by the task's manifest changes. Do not repeatedly reinstall packages for an unchanged infrastructure failure. `
       + `For visual validation inspect the actual artifacts; if absent return questions. `
-      + `Return ONLY one JSON object, for example {"verdict":"pass","summary":"evidence and findings","questions":[],"plan":"markdown plan for analyst"}. Allowed verdicts are pass, changes_requested, questions. `
+      + `Return ONLY one JSON object, for example {"verdict":"pass","summary":"evidence and findings","questions":[],"plan":"markdown plan for analyst"}. Allowed verdicts are pass, changes_requested, questions, blocked. Return blocked for unavailable tools, permissions, infrastructure or environment failures; do not request code revisions to bypass them. `
       + `Analyst must include plan on pass. Do not claim checks passed without evidence. Never mark a task done.`;
   }
 }

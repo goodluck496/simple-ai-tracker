@@ -18,7 +18,7 @@ export type MergePolicy = typeof MergePolicy[keyof typeof MergePolicy];
 export const MERGE_POLICIES = Object.values(MergePolicy);
 export const RunStatus = { Queued: 'queued', Running: 'running', Waiting: 'waiting', Review: 'review', Failed: 'failed', Cancelled: 'cancelled', Interrupted: 'interrupted', Merged: 'merged' } as const;
 export type RunStatus = typeof RunStatus[keyof typeof RunStatus];
-export const AgentVerdict = { Pass: 'pass', ChangesRequested: 'changes_requested', Questions: 'questions' } as const;
+export const AgentVerdict = { Pass: 'pass', ChangesRequested: 'changes_requested', Questions: 'questions', Blocked: 'blocked' } as const;
 export type AgentVerdict = typeof AgentVerdict[keyof typeof AgentVerdict];
 export const AGENT_VERDICTS = Object.values(AgentVerdict);
 export const AUTOMATION_START_TASK_STATUSES: readonly TaskStatus[] = [TaskStatus.Backlog, TaskStatus.Planning, TaskStatus.Ready];
@@ -31,7 +31,7 @@ export const WRITABLE_AGENT_ROLES: readonly AgentRole[] = [AgentRole.Developer, 
 export const READ_ONLY_AGENT_ROLES: readonly AgentRole[] = [AgentRole.Analyst, AgentRole.Tester, AgentRole.Reviewer, AgentRole.VisualValidator];
 export const EVIDENCE_AGENT_ROLES: readonly AgentRole[] = [AgentRole.Tester, AgentRole.Reviewer, AgentRole.VisualValidator];
 export const REQUIRED_PIPELINE_ROLES: readonly AgentRole[] = [AgentRole.Developer, AgentRole.Tester, AgentRole.Reviewer];
-export const AUTOMATION_LIMITS = { timeoutMinutes: { min: 1, max: 240, default: 30 }, revisions: { min: 0, max: 10, default: 2 }, modelToolTurns: 40, imageBytes: 4 * 1024 * 1024, eventTextLength: 12000 } as const;
+export const AUTOMATION_LIMITS = { timeoutMinutes: { min: 1, max: 240, default: 30 }, revisions: { min: 0, max: 10, default: 1 }, modelToolTurns: 40, imageBytes: 4 * 1024 * 1024, eventTextLength: 12000 } as const;
 export const AUTOMATION_TIMING = { pollMs: 5000, heartbeatMs: 15000, leaseMs: 90000 } as const;
 
 export interface ModelConnection {
@@ -72,16 +72,21 @@ export interface AutomationSettings {
   artifactPaths: string[];
   timeoutMinutes: number;
   maxRevisions: number;
+  maxAgentCalls?: number;
+  maxInputTokens?: number;
+  maxRunMinutes?: number;
   mergePolicy: MergePolicy;
 }
 
 export const DEFAULT_AUTOMATION_SETTINGS: AutomationSettings = {
   repositoryPath: '', baseBranch: 'main', connections: [], agents: [], pipeline: [], checks: [], setup: [],
-  artifactPaths: [], timeoutMinutes: AUTOMATION_LIMITS.timeoutMinutes.default, maxRevisions: AUTOMATION_LIMITS.revisions.default, mergePolicy: MergePolicy.Manual,
+  artifactPaths: [], timeoutMinutes: AUTOMATION_LIMITS.timeoutMinutes.default, maxRevisions: 1, maxAgentCalls: 6, maxInputTokens: 500000, maxRunMinutes: 20, mergePolicy: MergePolicy.Manual,
 };
 export const DEFAULT_CHECK_COMMAND: CheckCommand = { command: 'npm', args: ['test'] };
 export const DEFAULT_SETUP_COMMAND: CheckCommand = { command: 'npm', args: ['ci'] };
 export interface AgentRun {
+  budgetElapsedMs?: number;
+  budgetUpdatedAt?: string;
   usageAttempts?: import('./token-usage.js').UsageAttempt[];
   usageIncomplete?: boolean;
   attemptStartedAt?: string;

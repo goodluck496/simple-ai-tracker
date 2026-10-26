@@ -36,7 +36,7 @@ process.stdout.write(JSON.stringify({verdict,summary:role+': '+verdict,plan}));`
       connections: [{ id: 'fixture', label: 'Deterministic fixture', kind: 'native', supportsImages: false }],
       agents: roles.map((role) => ({ id: role, role, runner: 'custom', connectionId: 'fixture', model: 'fixture-only', instructions: '', command: process.execPath, args: [bridge, '{role}'] })),
       pipeline: [...roles], checks: [{ command: process.execPath, args: ['-e', "require('node:assert').ok(Number(require('node:fs').readFileSync('answer.txt','utf8'))>0)"] }] };
-    app.automationService.configure(settings);
+    app.automationService.configure({ ...settings, maxAgentCalls: 10 });
     const task = app.taskService.createTask({ title: 'Implement fixture answer' });
     const run = app.automationService.enqueue(task.id);
     const registry = new TrackerToolRegistry(app);

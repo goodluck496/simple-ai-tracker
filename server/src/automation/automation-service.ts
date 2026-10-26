@@ -11,6 +11,7 @@ import { AgentRunRepository } from './run-repository.js';
 import { ProjectRequests } from './project-requests.js';
 import { RunPhase, RUN_PHASES, RunProgressText, type QueueItem, type QueueSnapshot } from '../../../shared/automation/queue.js';
 import { TokenMeter, type TokenUsage, type UsageAttempt } from '../../../shared/automation/token-usage.js';
+import { RunBudget } from '../../../shared/automation/budget.js';
 
 const SETTINGS_KEY = 'automation_settings_v1';
 const LEASE_MS = AUTOMATION_TIMING.leaseMs;
@@ -22,7 +23,7 @@ export class AutomationService {
 
   public settings(): AutomationSettings {
     const value = this.repos.meta.get(SETTINGS_KEY);
-    return value ? JSON.parse(value) as AutomationSettings : structuredClone(DEFAULT_AUTOMATION_SETTINGS);
+    return value ? { ...structuredClone(DEFAULT_AUTOMATION_SETTINGS), ...JSON.parse(value) } as AutomationSettings : structuredClone(DEFAULT_AUTOMATION_SETTINGS);
   }
   public configure(input: unknown): AutomationSettings {
     const settings = new AutomationSettingsValidator().validate(input);
@@ -115,7 +116,7 @@ export class AutomationService {
       if (!run) return null;
       const claimed: AgentRun = { ...run, status: RunStatus.Running, workerId, leaseToken: randomUUID(),
         leaseUntil: new Date(new Date(now).getTime() + LEASE_MS).toISOString(), updatedAt: now, heartbeatAt: now, phase: RunPhase.Preparing,
-        phaseStartedAt: now, attemptStartedAt: now, progressAt: undefined, lastMessage: '' };
+        phaseStartedAt: now, attemptStartedAt: now, budgetUpdatedAt: now, progressAt: undefined, lastMessage: '' };
       this.runs.save(claimed);
       return claimed;
     });
@@ -124,7 +125,10 @@ export class AutomationService {
     return this.runs.db.transaction(() => {
     const run = this.owned(id, token);
     const now = this.clock.now();
-    const updated = { ...run, updatedAt: now, heartbeatAt: now, leaseUntil: new Date(new Date(now).getTime() + LEASE_MS).toISOString() };
+    const reason = RunBudget.reason(run, Date.parse(now));
+    if (reason) throw new TrackerError('CONFLICT', reason);
+    const updated = { ...run, budgetElapsedMs: RunBudget.elapsed(run, Date.parse(now)), budgetUpdatedAt: now,
+      updatedAt: now, heartbeatAt: now, leaseUntil: new Date(new Date(now).getTime() + LEASE_MS).toISOString() };
     this.runs.save(updated);
     return updated;
     });
@@ -145,6 +149,8 @@ export class AutomationService {
   public beginStage(id: string, token: string): string {
     return this.runs.db.transaction(() => {
     const run = this.owned(id, token);
+    const reason = RunBudget.reason(run, Date.parse(this.clock.now()), true);
+    if (reason) throw new TrackerError('CONFLICT', reason);
     const agent = run.settings.agents.find((entry) => entry.id === run.settings.pipeline[run.stage]);
     if (!agent) throw new TrackerError('CONFLICT', 'Pipeline has no current stage.');
     const task = this.tasks.getTaskCard(run.taskId);
@@ -190,12 +196,18 @@ export class AutomationService {
       if (!/^[a-f0-9]{40,64}$/.test(commitSha) || !/^sat\/[\w-]+$/.test(branch)) throw new TrackerError('VALIDATION_FAILED', 'Worker must provide branch and commit SHA.');
       const profile = run.settings.agents.find((agent) => agent.id === run.settings.pipeline[run.stage])!;
       const now = this.clock.now();
-      let updated: AgentRun = { ...run, branch, commitSha, updatedAt: now, summary: outcome.summary };
+      let updated: AgentRun = { ...run, branch, commitSha, updatedAt: now, summary: outcome.summary,
+        budgetElapsedMs: RunBudget.elapsed(run, Date.parse(now)), budgetUpdatedAt: now };
       if (EVIDENCE_AGENT_ROLES.includes(profile.role)) {
         this.tasks.addAttachment(run.taskId, { kind: 'report', name: `${profile.role}-${run.id}-${run.revision}.md`,
           content: `# ${profile.role}\n\nVerdict: ${outcome.verdict}\nCommit: ${commitSha}\nBranch: ${branch}\n\n${outcome.summary}\n\n## Worker evidence\n${this.runs.events(id).filter((event) => event.kind === 'progress').slice(-10).map((event) => event.text).join('\n')}` });
       }
-      if (outcome.verdict === AgentVerdict.Questions) {
+      const budgetReason = RunBudget.reason(run, Date.parse(now));
+      if (budgetReason || outcome.verdict === AgentVerdict.Blocked
+        || (outcome.verdict === AgentVerdict.ChangesRequested && WRITABLE_AGENT_ROLES.includes(profile.role))) {
+        updated = { ...updated, status: RunStatus.Failed, leaseToken: null,
+          summary: budgetReason ?? `Execution blocked; no automatic retry: ${outcome.summary}` };
+      } else if (outcome.verdict === AgentVerdict.Questions) {
         if (!Array.isArray(outcome.questions) || !outcome.questions.length || !outcome.questions.every((question) => typeof question === 'string' && question.trim())) throw new TrackerError('VALIDATION_FAILED', 'Questions verdict requires questions.');
         this.tasks.askQuestions({ id: run.taskId, questions: outcome.questions, actor: 'agent' });
         updated = { ...updated, status: RunStatus.Waiting, leaseToken: null };
@@ -216,7 +228,7 @@ export class AutomationService {
         }
       }
       this.runs.save(updated);
-      this.runs.event(id, outcome.verdict, outcome.summary, now);
+      this.runs.event(id, updated.status === RunStatus.Failed ? 'failed' : outcome.verdict, updated.summary, now);
       this.tasks.addComment({ id: run.taskId, text: `[AGENT ${profile.role}] ${outcome.summary}\nBranch: ${branch}\nCommit: ${commitSha}`, kind: 'note', actor: 'agent' });
       return updated;
     });
@@ -226,7 +238,8 @@ export class AutomationService {
     const run = this.requireRun(id);
     if (!token || run.leaseToken !== token || !OWNED_RUN_STATUSES.includes(run.status)) throw new TrackerError('CONFLICT', 'Run is no longer owned by this worker.');
     const now = this.clock.now();
-    this.runs.save({ ...run, status: RunStatus.Failed, leaseToken: null, updatedAt: now, summary: message });
+    this.runs.save({ ...run, budgetElapsedMs: RunBudget.elapsed(run, Date.parse(now)), budgetUpdatedAt: now,
+      status: RunStatus.Failed, leaseToken: null, updatedAt: now, summary: message });
     this.runs.event(id, RunStatus.Failed, message, now);
     this.tasks.addComment({ id: run.taskId, text: `[AUTOMATION FAILED] ${message}`, actor: 'agent' });
     });
@@ -235,7 +248,8 @@ export class AutomationService {
     return this.runs.db.transaction(() => {
     const run = this.requireRun(id);
     if (!ACTIVE_RUN_STATUSES.includes(run.status)) throw new TrackerError('CONFLICT', 'Run is not active.');
-    this.runs.save({ ...run, status: RunStatus.Cancelled, leaseToken: null, updatedAt: this.clock.now() });
+    this.runs.save({ ...run, budgetElapsedMs: RunBudget.elapsed(run, Date.parse(this.clock.now())), budgetUpdatedAt: this.clock.now(),
+      status: RunStatus.Cancelled, leaseToken: null, updatedAt: this.clock.now() });
     this.runs.event(id, RunStatus.Cancelled, 'Остановлено пользователем. Worker отменит текущую операцию после проверки lease.', this.clock.now());
     });
   }
@@ -252,6 +266,8 @@ export class AutomationService {
     return this.runs.db.transaction(() => {
     const run = this.requireRun(id);
     if (!RESUMABLE_RUN_STATUSES.includes(run.status)) throw new TrackerError('CONFLICT', 'Run cannot be resumed.');
+    const budgetReason = RunBudget.reason(run, Date.parse(this.clock.now()));
+    if (budgetReason) throw new TrackerError('CONFLICT', `${budgetReason} Start a separate new run explicitly.`);
     if (run.stage >= run.settings.pipeline.length) throw new TrackerError('CONFLICT', 'All stages finished; resolve the merge manually.');
     const task = this.tasks.getTaskCard(run.taskId);
     if (task.openQuestionsCount) throw new TrackerError('CONFLICT', 'Answer task questions first.');
@@ -284,7 +300,8 @@ export class AutomationService {
     const now = this.clock.now();
     for (const run of this.runs.running()) {
       if (run.status === RunStatus.Running && run.leaseUntil && run.leaseUntil < now) {
-        this.runs.save({ ...run, status: RunStatus.Interrupted, leaseToken: null, updatedAt: now, summary: 'Worker lease expired. Resume explicitly after checking its process.' });
+        this.runs.save({ ...run, budgetElapsedMs: RunBudget.elapsed(run, Date.parse(run.leaseUntil)), budgetUpdatedAt: now,
+          status: RunStatus.Interrupted, leaseToken: null, updatedAt: now, summary: 'Worker lease expired. Resume explicitly after checking its process.' });
         this.runs.event(run.id, RunStatus.Interrupted, 'Worker lease expired; no automatic duplicate execution.', now);
       }
     }
