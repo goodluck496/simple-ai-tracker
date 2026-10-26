@@ -88,3 +88,25 @@ test('pipeline advances through plan, tests and review, bounded revision and can
     assert.throws(() => service.heartbeat(cancelled.id, owned.leaseToken!), /lease/);
   } finally { app.close(); }
 });
+
+test('queued cancellation is atomic with claim, keeps task and journal, and permits a new run', () => {
+  const app = createContainer({ config: { dbPath: ':memory:' }, logger: new SilentLogger() });
+  try {
+    const service = app.automationService; service.configure(exampleSettings());
+    const task = app.taskService.createTask({ title: 'Dequeue preserves this task' });
+    const queued = service.enqueue(task.id);
+    service.dequeue(queued.id);
+    assert.equal(service.detail(queued.id).run.status, 'cancelled');
+    assert.equal(service.claim('worker'), null);
+    assert.equal(app.taskService.getTaskCard(task.id).title, 'Dequeue preserves this task');
+    assert.ok(service.detail(queued.id).events.some((event) => event.text.includes('Убрано из очереди')));
+    const next = service.enqueue(task.id);
+    assert.notEqual(next.id, queued.id);
+    const running = service.claim('worker')!;
+    assert.equal(running.id, next.id);
+    assert.throws(() => service.dequeue(running.id), /покинул очередь/);
+    assert.equal(service.detail(running.id).run.status, 'running');
+    service.cancel(running.id);
+    assert.equal(service.detail(running.id).run.status, 'cancelled');
+  } finally { app.close(); }
+});

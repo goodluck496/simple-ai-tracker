@@ -3,6 +3,7 @@
     <button type="button" (click)="configure.emit()">Настройки команды и подключение worker</button></div>
   <p role="status">Worker: {{ snapshot().host.online ? 'подключён' : 'не подключён' }}. Показаны все активные и последние {{ recentLimit }} завершённых запусков.</p>
   @if (error()) { <p role="alert" class="error">{{ error() }}</p> }
+  @if (notice()) { <p role="status">{{ notice() }}</p> }
   <div class="lanes">
     @for (lane of lanes; track lane.id) {
       <section class="lane" [attr.aria-label]="lane.title"><h3>{{ lane.title }} · {{ items(lane.id).length }}</h3>
@@ -13,6 +14,7 @@
             @if (item.tokenUsage; as usage) { <span>{{ tokenMeter.label(usage) }}</span> }
             <small>{{ item.status === runStatus.Running ? item.lastMessage || health(item) : item.summary || item.lastMessage || health(item) }}</small>
           </button>
+          @if (item.status === runStatus.Queued) { <button type="button" class="dequeue-action" [disabled]="busy()" (click)="dequeue(item)">Убрать из очереди</button> }
         } @empty { <p class="muted">Нет запусков</p> }
       </section>
     }
@@ -56,7 +58,8 @@
       }
       @if (item.lastMessage) { <p class="summary">{{ item.lastMessage }}</p> }
       <div class="actions"><button type="button" (click)="openTask.emit(item.taskId)">Открыть задачу {{ item.openQuestions ? 'и ответить на вопросы' : '' }}</button>
-        @if (item.status === runStatus.Queued || item.status === runStatus.Running || item.status === runStatus.Waiting) { <button type="button" [disabled]="busy()" (click)="action(item, runAction.Cancel)">Остановить</button> }
+        @if (item.status === runStatus.Queued) { <button type="button" class="dequeue-action" [disabled]="busy()" (click)="dequeue(item)">Убрать из очереди</button> }
+        @if (item.status === runStatus.Running || item.status === runStatus.Waiting) { <button type="button" [disabled]="busy()" (click)="action(item, runAction.Cancel)">Остановить</button> }
         @if (item.canResume) { <button type="button" [disabled]="busy()" (click)="action(item, runAction.Resume)">Продолжить с места остановки</button> }
         @if (item.canRestart) { <button type="button" [disabled]="busy()" (click)="action(item, runAction.Restart)">Начать заново</button> }
       </div>

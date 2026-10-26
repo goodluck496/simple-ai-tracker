@@ -21,5 +21,6 @@ export function registerAutomationRoutes(router: Router, app: AppContainer): voi
   router.get('/api/automation/runs/:id', ({ params, res }) => sendJson(res, 200, app.automationService.detail(params.id)));
   router.post('/api/automation/runs', ({ body, res }) => sendJson(res, 201, { run: app.automationService.enqueue(requireBodyField<string>(body, 'taskId'), bodyField(body, 'settings')) }));
   router.post('/api/automation/runs/:id/cancel', ({ params, res }) => { app.automationService.cancel(params.id); sendJson(res, 200, { ok: true }); });
+  router.post('/api/automation/runs/:id/dequeue', ({ params, res }) => { app.automationService.dequeue(params.id); sendJson(res, 200, { ok: true }); });
   router.post('/api/automation/runs/:id/resume', ({ params, res }) => sendJson(res, 200, { run: app.automationService.resume(params.id) }));
 }

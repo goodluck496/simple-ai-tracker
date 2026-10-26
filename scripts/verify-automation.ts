@@ -70,7 +70,7 @@ try {
   const queueDialog = page.getByRole('dialog', { name: 'Очередь агентов' });
   const stopQueuedRun = async () => {
     await queueDialog.waitFor();
-    await queueDialog.getByRole('button', { name: 'Остановить', exact: true }).click();
+    await queueDialog.getByRole('button', { name: 'Убрать из очереди', exact: true }).click();
     await queueDialog.locator('.run-detail').getByText(/^Остановлен · карточка:/).waitFor();
     await queueDialog.locator('.p-dialog-close-button').click();
     await queueDialog.waitFor({ state: 'hidden' });

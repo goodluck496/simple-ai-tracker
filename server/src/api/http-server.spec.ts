@@ -6,6 +6,8 @@ import { createContainer, type AppContainer } from '../bootstrap/container.js';
 import { createApiServer } from './http-server.js';
 import { NodeSqliteDatabase } from '../db/node-sqlite-database.js';
 import { SilentLogger } from '../core/logger.js';
+import { DEFAULT_AUTOMATION_SETTINGS } from '../../../shared/automation/contracts.js';
+import { STANDARD_TEAM_ROLES } from '../../../shared/automation/presets.js';
 
 let app: AppContainer;
 let server: Server;
@@ -166,6 +168,27 @@ describe('HTTP API', () => {
 
     const missingRoute = await request<{ error: { code: string } }>('/api/nope');
     assert.equal(missingRoute.status, 404);
+  });
+
+  it('cancels only queued runs through the dequeue endpoint and reports claim conflicts', async () => {
+    app.automationService.configure({ ...structuredClone(DEFAULT_AUTOMATION_SETTINGS), repositoryPath: '/fixture',
+      connections: [{ id: 'native', kind: 'native', label: 'Codex', supportsImages: false }],
+      agents: STANDARD_TEAM_ROLES.map((role) => ({ id: role, role, runner: 'codex' as const, model: 'fixture', connectionId: 'native', instructions: '' })),
+      pipeline: [...STANDARD_TEAM_ROLES], checks: [{ command: 'npm', args: ['test'] }] });
+    const task = app.taskService.createTask({ title: 'API dequeue' });
+    const queued = app.automationService.enqueue(task.id);
+    const cancelled = await request(`/api/automation/runs/${queued.id}/dequeue`, { method: 'POST', body: '{}' });
+    assert.equal(cancelled.status, 200);
+    assert.equal(app.automationService.detail(queued.id).run.status, 'cancelled');
+    assert.equal(app.automationService.claim('api-worker'), null);
+    const another = app.taskService.createTask({ title: 'API claim conflict' });
+    const pending = app.automationService.enqueue(another.id);
+    const claimed = app.automationService.claim('api-worker')!;
+    assert.equal(claimed.id, pending.id);
+    const conflict = await request<{ error: { code: string } }>(`/api/automation/runs/${pending.id}/dequeue`, { method: 'POST', body: '{}' });
+    assert.equal(conflict.status, 409);
+    assert.equal(conflict.body.error.code, 'CONFLICT');
+    assert.equal(app.automationService.detail(pending.id).run.status, 'running');
   });
 
   it('отдаёт markdown-инструкцию для агента', async () => {

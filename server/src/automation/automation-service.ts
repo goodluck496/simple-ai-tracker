@@ -238,6 +238,15 @@ export class AutomationService {
     this.runs.event(id, RunStatus.Cancelled, 'Остановлено пользователем. Worker отменит текущую операцию после проверки lease.', this.clock.now());
     });
   }
+  public dequeue(id: string): void {
+    return this.runs.db.transaction(() => {
+      const run = this.requireRun(id);
+      if (run.status !== RunStatus.Queued) throw new TrackerError('CONFLICT', 'Запуск уже покинул очередь. Обновите состояние; выполняющийся запуск можно остановить отдельно.');
+      const now = this.clock.now();
+      this.runs.save({ ...run, status: RunStatus.Cancelled, leaseToken: null, summary: 'Убрано из очереди. Задача и журнал сохранены.', updatedAt: now });
+      this.runs.event(id, RunStatus.Cancelled, 'Убрано из очереди пользователем. Задача и журнал сохранены.', now);
+    });
+  }
   public resume(id: string): AgentRun {
     return this.runs.db.transaction(() => {
     const run = this.requireRun(id);

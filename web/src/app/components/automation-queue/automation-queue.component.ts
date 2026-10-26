@@ -24,6 +24,7 @@ export class AutomationQueueComponent {
   @Output() public readonly configure = new EventEmitter<void>();
   @Output() public readonly changed = new EventEmitter<void>();
   public readonly error = signal('');
+  public readonly notice = signal('');
   public readonly busy = signal(false);
   public readonly statusTitles = RUN_STATUS_TITLES;
   public readonly taskTitles = TASK_STATUS_TITLES;
@@ -54,10 +55,19 @@ export class AutomationQueueComponent {
   public select(id: string): void { this.selectedId.set(id); this.error.set(''); }
   public action(item: QueueItem, action: RunAction): void {
     if (this.busy()) return;
-    this.busy.set(true); this.error.set('');
+    this.busy.set(true); this.error.set(''); this.notice.set('');
     this.http.post<{ run?: AgentRun }>(`/api/automation/runs/${item.id}/${action}`, {}).pipe(
       tap((result) => { if (result.run) this.selectedId.set(result.run.id); this.refresh.next(); this.changed.emit(); }),
       catchError((error: unknown) => { this.error.set(this.message(error)); return EMPTY; }),
+      finalize(() => this.busy.set(false)), takeUntilDestroyed(this.destroyRef),
+    ).subscribe();
+  }
+  public dequeue(item: QueueItem): void {
+    if (this.busy()) return;
+    this.busy.set(true); this.error.set(''); this.notice.set('');
+    this.http.post('/api/automation/runs/' + item.id + '/dequeue', {}).pipe(
+      tap(() => { this.notice.set('Убрано из очереди. Задача и журнал сохранены.'); this.refresh.next(); this.changed.emit(); }),
+      catchError((error: unknown) => { this.error.set(this.message(error)); this.refresh.next(); return EMPTY; }),
       finalize(() => this.busy.set(false)), takeUntilDestroyed(this.destroyRef),
     ).subscribe();
   }

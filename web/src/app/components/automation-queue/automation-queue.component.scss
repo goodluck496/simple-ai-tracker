@@ -26,3 +26,4 @@ button { cursor: pointer; }
 button:disabled { cursor: default; opacity: .6; }
 @media (max-width: 900px) { .lanes { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (max-width: 550px) { .lanes { grid-template-columns: minmax(0, 1fr); } }
+.dequeue-action { font-weight: 700; border: 2px solid var(--p-primary-color); }
