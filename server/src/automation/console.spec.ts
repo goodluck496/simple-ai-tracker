@@ -35,6 +35,11 @@ test('console preserves ordinary partial lines, strips ANSI/OSC and exposes raw 
   const unknown = RunConsoleDecoder.render([event(1, '{"type":"custom","secret":"payload"}\n')]);
   assert.equal(unknown.lines[0].text, 'Служебное событие: custom');
   assert.doesNotMatch(JSON.stringify(unknown), /payload/);
+  const oversized = RunConsoleDecoder.render([event(1, '{"type":"item.completed","payload":"' + 'x'.repeat(CONSOLE_LIMITS.pendingChars)),
+    event(2, 'HIDDEN_TAIL"}\nhealthy after oversized record\n')]);
+  assert.equal(oversized.incomplete, false);
+  assert.match(oversized.lines.map((line) => line.text).join('\n'), /healthy after oversized record/);
+  assert.doesNotMatch(oversized.lines.map((line) => line.text).join('\n'), /HIDDEN_TAIL/);
   const stream = [event(1, JSON.stringify({ type: 'item.updated', item: { id: 'stream', aggregated_output: 'при' } }) + '\n'),
     event(2, JSON.stringify({ type: 'item.completed', item: { id: 'stream', aggregated_output: 'привет\nnext\n', exit_code: 0 } }) + '\n')];
   assert.deepEqual(RunConsoleDecoder.render(stream).lines.map((line) => line.text), ['привет', 'next', 'exit 0']);

@@ -17,6 +17,7 @@ export class RunConsoleDecoder {
   private origin?: RunEvent;
   private stage = 'Подготовка';
   private sequence = 0;
+  private skipRecord = false;
   private readonly items = new Map<string, ItemState>();
 
   public static render(events: readonly RunEvent[]): ConsoleView {
@@ -27,7 +28,7 @@ export class RunConsoleDecoder {
       if (seen.has(event.id)) continue; seen.add(event.id); decoder.consume(event);
     }
     if (decoder.buffer && !decoder.buffer.trimStart().startsWith('{')) decoder.emit(decoder.origin!, decoder.buffer);
-    return { lines: decoder.lines, omitted: decoder.omitted, incomplete: !!decoder.buffer.trimStart().startsWith('{') };
+    return { lines: decoder.lines, omitted: decoder.omitted, incomplete: decoder.skipRecord || !!decoder.buffer.trimStart().startsWith('{') };
   }
 
   public static clean(text: string): string {
@@ -37,6 +38,7 @@ export class RunConsoleDecoder {
 
   private consume(event: RunEvent): void {
     if (event.kind !== 'progress') {
+      this.skipRecord = false;
       if (this.buffer) {
         if (!this.buffer.trimStart().startsWith('{')) this.emit(this.origin!, this.buffer);
         else this.emit(event, 'Неполная структурированная запись; исходник доступен отдельно.', 'warning');
@@ -53,7 +55,12 @@ export class RunConsoleDecoder {
       }
       return;
     }
-    this.origin ??= event; this.buffer += event.text;
+    let text = event.text;
+    if (this.skipRecord) {
+      const end = text.indexOf('\n'); if (end < 0) return;
+      text = text.slice(end + 1); this.skipRecord = false;
+    }
+    this.origin ??= event; this.buffer += text;
     let newline: number;
     while ((newline = this.buffer.indexOf('\n')) >= 0) {
       const line = this.buffer.slice(0, newline); this.buffer = this.buffer.slice(newline + 1);
@@ -65,6 +72,7 @@ export class RunConsoleDecoder {
     }
     if (this.buffer.length > CONSOLE_LIMITS.pendingChars) {
       this.buffer = ''; this.origin = undefined;
+      this.skipRecord = true;
       this.emit(event, 'Слишком длинная незавершённая запись пропущена; скачайте исходный журнал.', 'warning');
     }
   }
