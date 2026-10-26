@@ -18,9 +18,14 @@
       </div>
     </div>
 
+    <!-- Переключатель пространств -->
+    <sat-workspace-selector />
+
     <sat-toolbar />
 
     <div class="header-actions">
+      <p-button label="Очередь" ariaLabel="Очередь" icon="pi pi-list" severity="secondary" [text]="true" size="small" (onClick)="openQueue(null)" />
+      <p-button icon="pi pi-bolt" severity="secondary" [text]="true" [rounded]="true" size="small" ariaLabel="Команда агентов" pTooltip="Агенты" (onClick)="openAutomation()" />
       <p-button
         icon="pi pi-tags"
         severity="secondary"
@@ -114,6 +119,7 @@
   <!-- Канбан-доска -->
   <main class="board-wrapper">
     <sat-board
+      [automationPending]="automationLauncher.pending()" (startRequested)="launchTask($event)"
       (addRequested)="onQuickAdd($event.status)"
       (addSubtaskRequested)="onAddSubtask($event)"
       (deleteRequested)="onDeleteTask($event.id)"
@@ -142,4 +148,14 @@
   }
 
   <sat-instructions-dialog [(visible)]="showInstructions" />
+  <p-dialog header="Команда агентов" [(visible)]="showAutomation" [modal]="true" [style]="{ width: '1100px', maxWidth: '96vw' }" [contentStyle]="{ overflow: 'auto' }">
+    @if (showAutomation) { <sat-automation-panel [tasks]="store.tasks()" [initialTaskId]="automationTaskId" [initialMessage]="automationMessage" (openQueue)="openQueue($event)" /> }
+  </p-dialog>
+  <p-dialog header="Очередь агентов" [(visible)]="showQueue" [modal]="true" [style]="{ width: '1400px', maxWidth: '96vw' }" [contentStyle]="{ overflow: 'auto' }">
+    @if (showQueue) {
+      @defer (on immediate) {
+        <sat-automation-queue [runId]="queueRunId" (openTask)="openQueueTask($event)" (configure)="showQueue = false; openAutomation()" (changed)="store.refresh(true)" />
+      } @placeholder { <p>Загрузка очереди…</p> }
+    }
+  </p-dialog>
 </div>

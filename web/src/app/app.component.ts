@@ -1,12 +1,12 @@
 import { CommonModule } from '@angular/common';
-import { ChangeDetectionStrategy, Component, OnDestroy, OnInit, computed, inject, signal } from '@angular/core';
-import { toObservable, toSignal } from '@angular/core/rxjs-interop';
+import { ChangeDetectionStrategy, Component, DestroyRef, OnInit, computed, inject, signal } from '@angular/core';
+import { takeUntilDestroyed, toObservable, toSignal } from '@angular/core/rxjs-interop';
 import { ButtonModule } from 'primeng/button';
 import { PopoverModule } from 'primeng/popover';
 import { ProgressBarModule } from 'primeng/progressbar';
 import { TagModule } from 'primeng/tag';
 import { TooltipModule } from 'primeng/tooltip';
-import { delay, of, switchMap } from 'rxjs';
+import { EMPTY, catchError, delay, exhaustMap, filter, of, switchMap, tap, timer } from 'rxjs';
 import type { TaskStatus, TaskType } from './models/tracker.models';
 import { TrackerStore } from './services/tracker-store.service';
 import { ToolbarComponent } from './components/toolbar/toolbar.component';
@@ -15,6 +15,11 @@ import { TaskDialogComponent } from './components/task-dialog/task-dialog.compon
 import { TagsPanelComponent } from './components/tags-panel/tags-panel.component';
 import { BackupPanelComponent } from './components/backup-panel/backup-panel.component';
 import { InstructionsDialogComponent } from './components/instructions-dialog/instructions-dialog.component';
+import { WorkspaceSelectorComponent } from './components/workspace-selector/workspace-selector.component';
+import { AutomationPanelComponent } from './components/automation-panel/automation-panel.component';
+import { AutomationQueueComponent } from './components/automation-queue/automation-queue.component';
+import { AutomationLaunchService } from './services/automation-launch.service';
+import { DialogModule } from 'primeng/dialog';
 
 /** Задержка перед показом полосы загрузки: быстрые ответы не мигают. */
 const PROGRESS_DELAY_MS = 140;
@@ -36,17 +41,43 @@ const PROGRESS_DELAY_MS = 140;
     TagsPanelComponent,
     BackupPanelComponent,
     InstructionsDialogComponent,
+    WorkspaceSelectorComponent,
+    AutomationPanelComponent,
+    AutomationQueueComponent,
+    DialogModule,
   ],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './app.component.html',
   styleUrl: './app.component.scss',
 })
-export class AppComponent implements OnInit, OnDestroy {
+export class AppComponent implements OnInit {
+  public readonly automationLauncher = inject(AutomationLaunchService);
+  private readonly destroyRef = inject(DestroyRef);
   public readonly store = inject(TrackerStore);
 
   public readonly showTags = signal(false);
   public readonly showBackups = signal(false);
   public readonly showInstructions = signal(false);
+  public showAutomation = false;
+  public automationTaskId: string | null = null;
+  public automationMessage = '';
+  public openAutomation(taskId: string | null = null, message = ''): void {
+    this.automationTaskId = taskId; this.automationMessage = message; this.showAutomation = true;
+  }
+  public launchTask(id: string): void {
+    this.automationLauncher.start(id).pipe(
+      tap((runId) => this.openQueue(runId)),
+      catchError((error: unknown) => {
+        const value = error as { error?: { error?: { message?: string } }; message?: string };
+        this.openAutomation(id, `Не удалось поставить задачу в очередь: ${value.error?.error?.message ?? value.message ?? 'проверьте настройки команды'}`);
+        return EMPTY;
+      }), takeUntilDestroyed(this.destroyRef),
+    ).subscribe();
+  }
+  public showQueue = false;
+  public queueRunId: string | null = null;
+  public openQueue(id: string | null): void { this.queueRunId = id; this.showQueue = true; }
+  public openQueueTask(id: string): void { this.showQueue = false; this.showAutomation = false; void this.store.openCard(id); }
   public readonly createMode = signal(false);
   public readonly createType = signal<TaskType>('task');
   public readonly createStatus = signal<TaskStatus>('backlog');
@@ -68,22 +99,13 @@ export class AppComponent implements OnInit, OnDestroy {
 
   /** Автообновление доски раз в 4 секунды (как в прежней версии). */
   private readonly POLL_INTERVAL_MS = 4000;
-  private pollTimer: ReturnType<typeof setInterval> | null = null;
 
   public ngOnInit(): void {
     void this.store.init();
-    this.pollTimer = setInterval(() => {
-      // Пока пользователь редактирует карточку или тащит её по доске, опрос замирает:
-      // любой тик в этот момент виден как рывок.
-      if (this.createMode() || this.store.dragging()) return;
-      // Тихий опрос: не включаем индикатор загрузки и не перерисовываем доску зря.
-      void this.store.refresh(true);
-    }, this.POLL_INTERVAL_MS);
-  }
-
-  public ngOnDestroy(): void {
-    if (this.pollTimer) clearInterval(this.pollTimer);
-    this.pollTimer = null;
+    timer(this.POLL_INTERVAL_MS, this.POLL_INTERVAL_MS).pipe(
+      filter(() => !this.createMode() && !this.store.dragging()),
+      exhaustMap(() => this.store.refresh(true)), takeUntilDestroyed(this.destroyRef),
+    ).subscribe();
   }
 
   /** Количество задач в статусе (0, если таких нет). */

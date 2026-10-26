@@ -7,8 +7,13 @@ import { TASK_STATUSES, assertTaskStatus } from '../domain/task-status.js';
 import { TASK_TYPES, isTaskType } from '../domain/task-type.js';
 import { LINK_RELATIONS, QUESTION_PHASES, SEARCH_SCOPES, type LinkRelation, type QuestionPhase } from '../domain/entities.js';
 import type { SearchScope, TaskFilters } from '../domain/entities.js';
+import type { AgentOutcome } from '../../../shared/automation/contracts.js';
+import { AutomationTool, AUTOMATION_TOOLS, AUTOMATION_TOOL_PREFIX } from '../../../shared/automation/protocol.js';
+import { AGENT_TRACKER_READ_TOOLS } from '../../../shared/automation/tracker-access.js';
+import type { RunPhase } from '../../../shared/automation/queue.js';
 
 export interface McpToolDefinition {
+  readonly annotations?: { readOnlyHint: boolean; destructiveHint?: boolean; openWorldHint?: boolean };
   readonly name: string;
   readonly description: string;
   readonly inputSchema: {
@@ -68,10 +73,23 @@ function requireString(args: Args, key: string): string {
  * не содержит правил жизненного цикла.
  */
 export class TrackerToolRegistry {
-  public constructor(private readonly app: AppContainer) {}
+  private readonly workspace: string;
+  public constructor(private readonly app: AppContainer) {
+    this.workspace = process.env.SAT_WORKSPACE ?? 'default';
+  }
 
   public definitions(): McpToolDefinition[] {
     return [
+      ...AUTOMATION_TOOLS.map((name): McpToolDefinition => ({
+        name, description: `Automation ${name}. Operates only in the selected workspace. Worker mutations require an active leaseToken.`,
+        inputSchema: { type: 'object', properties: { id: { type: 'string' }, taskId: { type: 'string' }, workerId: { type: 'string' },
+          leaseToken: { type: 'string' }, text: { type: 'string' }, branch: { type: 'string' }, commitSha: { type: 'string' },
+          attemptId: { type: 'string' }, usage: { type: 'object', additionalProperties: true }, finished: { type: 'boolean' },
+          settings: { type: 'object', additionalProperties: true }, outcome: { type: 'object', additionalProperties: true },
+          result: { type: 'object', additionalProperties: true }, error: { type: 'string' }, platform: { type: 'string' }, phase: { type: 'string' } } },
+      })),
+      { name: 'tracker_list_workspaces', description: 'List project workspaces and the workspace pinned to this MCP session.',
+        inputSchema: { type: 'object', properties: {} } },
       {
         name: 'tracker_get_instructions',
         description:
@@ -359,12 +377,17 @@ export class TrackerToolRegistry {
           required: ['id'],
         },
       },
-    ];
+    ].map((definition) => ({ ...definition,
+      annotations: (AGENT_TRACKER_READ_TOOLS as readonly string[]).includes(definition.name)
+        ? { readOnlyHint: true, destructiveHint: false, openWorldHint: false } : { readOnlyHint: false },
+      inputSchema: { ...definition.inputSchema,
+      properties: { ...definition.inputSchema.properties, workspace: { type: 'string', description: 'Explicit project workspace. Defaults to SAT_WORKSPACE or default.' } } } })) as McpToolDefinition[];
   }
 
   public async call(name: string, args: Args): Promise<McpTextResult> {
     try {
-      return this.dispatch(name, args);
+      if (name === 'tracker_list_workspaces') return json({ workspaces: this.app.workspaceManager.list(), current: this.workspace });
+      return this.app.workspaceManager.within(asString(args, 'workspace') ?? this.workspace, () => this.dispatch(name, args));
     } catch (error) {
       if (isTrackerError(error)) {
         return text(`Ошибка (${error.code}): ${error.message}`, true);
@@ -374,6 +397,30 @@ export class TrackerToolRegistry {
   }
 
   private dispatch(name: string, args: Args): McpTextResult {
+    if (name.startsWith(AUTOMATION_TOOL_PREFIX)) {
+      const service = this.app.automationService;
+      const id = () => requireString(args, 'id');
+      const token = () => requireString(args, 'leaseToken');
+      switch (name) {
+        case AutomationTool.Configure: return json(service.configure(args['settings']));
+        case AutomationTool.Settings: return json(service.settings());
+        case AutomationTool.HostPoll: return json(service.projects.poll(requireString(args, 'workerId'), asString(args, 'platform')));
+        case AutomationTool.HostComplete: service.projects.complete(id(), token(), args['result'] as import('../../../shared/automation/project.js').ProjectResult | undefined, asString(args, 'error')); return json({ ok: true });
+        case AutomationTool.ListRuns: return json(service.list(asString(args, 'taskId')));
+        case AutomationTool.GetRun: return json(service.detail(id()));
+        case AutomationTool.Enqueue: return json(service.enqueue(requireString(args, 'taskId')));
+        case AutomationTool.Claim: return json(service.claim(requireString(args, 'workerId')));
+        case AutomationTool.Heartbeat: return json(service.heartbeat(id(), token()));
+        case AutomationTool.Progress: service.progress(id(), token(), requireString(args, 'text'), asString(args, 'phase') as RunPhase | undefined); return json({ ok: true });
+        case AutomationTool.BeginStage: return json({ ok: true, attemptId: service.beginStage(id(), token()) });
+        case AutomationTool.Usage: service.usage(id(), token(), requireString(args, 'attemptId'), args['usage'], args['finished'] === true); return json({ ok: true });
+        case AutomationTool.CompleteStage: return json(service.completeStage(id(), token(), args['outcome'] as AgentOutcome, requireString(args, 'branch'), requireString(args, 'commitSha')));
+        case AutomationTool.Fail: service.fail(id(), token(), requireString(args, 'text')); return json({ ok: true });
+        case AutomationTool.Cancel: service.cancel(id()); return json({ ok: true });
+        case AutomationTool.Resume: return json(service.resume(id()));
+        case AutomationTool.Merged: service.merged(id(), token()); return json({ ok: true });
+      }
+    }
     const { taskService, contextService, tagService, verificationService, instructionsService } = this.app;
 
     switch (name) {

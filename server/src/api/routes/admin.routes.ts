@@ -8,33 +8,32 @@ import { sendJson } from '../router.js';
  * Доступ рассчитан на локальный запуск (трекер — личный инструмент).
  */
 export function registerAdminRoutes(router: Router, app: AppContainer): void {
-  const { backupService, config } = app;
 
   router.get('/api/admin/backups', ({ res }) => {
-    const backups = backupService.list();
+    const backups = app.backupService.list();
     sendJson(res, 200, {
       backups,
-      directory: backupService.directory,
-      keep: config.backupKeep,
-      autoEnabled: config.backupEnabled,
-      intervalHours: config.backupIntervalHours,
-      maxPerDay: config.backupMaxPerDay,
+      directory: app.backupService.directory,
+      keep: app.config.backupKeep,
+      autoEnabled: app.config.backupEnabled,
+      intervalHours: app.config.backupIntervalHours,
+      maxPerDay: app.config.backupMaxPerDay,
     });
   });
 
   router.post('/api/admin/backup', ({ res }) => {
-    const backup = backupService.create('manual');
-    const removed = backupService.prune(config.backupKeep);
-    sendJson(res, 201, { backup, removedByRotation: removed, keep: config.backupKeep });
+    const backup = app.backupService.create('manual');
+    const removed = app.backupService.prune(app.config.backupKeep);
+    sendJson(res, 201, { backup, removedByRotation: removed, keep: app.config.backupKeep });
   });
 
   router.delete('/api/admin/backups/:name', ({ params, res }) => {
-    const removed = backupService.remove(params.name);
+    const removed = app.backupService.remove(params.name);
     sendJson(res, removed ? 200 : 404, { success: removed, name: params.name });
   });
 
   router.get('/api/admin/backups/:name/download', ({ params, res }) => {
-    const record = backupService.require(params.name);
+    const record = app.backupService.require(params.name);
     res.writeHead(200, {
       'Content-Type': 'application/octet-stream',
       'Content-Length': record.size,

@@ -82,12 +82,17 @@ describe('BackupScheduler', () => {
       keep: 20,
     });
 
-    assert.ok(scheduler.runOnce('startup'));
-    ageBackups(fixture.backupDir, 10);
-    assert.ok(scheduler.runOnce('scheduled'));
-    ageBackups(fixture.backupDir, 10);
-
-    assert.equal(scheduler.runOnce('scheduled'), null, 'третий бэкап за сутки запрещён');
+    fixture.app.backupService.create('manual');
+    fixture.app.backupService.create('manual');
+    // Do not age across local midnight: that would test yesterday's quota.
+    const startOfToday = new Date();
+    startOfToday.setHours(0, 0, 0, 0);
+    for (const file of fs.readdirSync(fixture.backupDir)) {
+      fs.utimesSync(path.join(fixture.backupDir, file), startOfToday, startOfToday);
+    }
+    const endOfToday = new Date(startOfToday);
+    endOfToday.setHours(23, 59, 59, 999);
+    assert.equal(scheduler.shouldCreate(endOfToday), false, 'третий бэкап за сутки запрещён');
     assert.equal(fixture.app.backupService.list().length, 2);
   });
 

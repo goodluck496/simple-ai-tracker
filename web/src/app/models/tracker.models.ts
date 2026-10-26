@@ -1,14 +1,7 @@
 /** Модели Simple AI Tracker (зеркало серверного домена). */
 
-export type TaskStatus =
-  | 'backlog'
-  | 'planning'
-  | 'questions'
-  | 'ready'
-  | 'in_progress'
-  | 'testing'
-  | 'review'
-  | 'done';
+import type { TaskStatus } from '../../../../shared/tasks/status';
+export { TaskStatus } from '../../../../shared/tasks/status';
 
 export type TaskType = 'feature' | 'task' | 'bug';
 

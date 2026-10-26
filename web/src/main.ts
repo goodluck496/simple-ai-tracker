@@ -1,6 +1,7 @@
 import 'zone.js';
 import { bootstrapApplication } from '@angular/platform-browser';
-import { provideHttpClient } from '@angular/common/http';
+import { provideHttpClient, withInterceptors } from '@angular/common/http';
+import { workspaceInterceptor } from './app/services/workspace.interceptor';
 import { provideAnimationsAsync } from '@angular/platform-browser/animations/async';
 import { provideZoneChangeDetection } from '@angular/core';
 import { providePrimeNG } from 'primeng/config';
@@ -10,7 +11,7 @@ import { AppComponent } from './app/app.component';
 bootstrapApplication(AppComponent, {
   providers: [
     provideZoneChangeDetection({ eventCoalescing: true }),
-    provideHttpClient(),
+    provideHttpClient(withInterceptors([workspaceInterceptor])),
     provideAnimationsAsync(),
     // Тема PrimeNG: тёмная, активируется классом .p-dark на <html> (см. index.html).
     providePrimeNG({

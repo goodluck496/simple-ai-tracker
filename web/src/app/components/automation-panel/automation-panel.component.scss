@@ -1,0 +1,29 @@
+.automation-panel { display: grid; gap: .75rem; color: var(--p-text-color); }
+.tab-content { display: grid; gap: .75rem; min-width: 0; }
+:host ::ng-deep .p-tabs, :host ::ng-deep .p-tabpanels { min-width: 0; max-width: 100%; }
+:host ::ng-deep .p-tablist { position: sticky; top: 0; z-index: 2; background: var(--p-content-background); }
+.settings-footer { position: sticky; bottom: 0; padding: .6rem 0; background: var(--p-content-background); border-top: 1px solid var(--p-content-border-color); z-index: 2; }
+.row { display: flex; flex-wrap: wrap; align-items: end; gap: .65rem; }
+label { display: grid; gap: .35rem; font-size: .85rem; min-width: 0; }
+:host ::ng-deep .p-select { max-width: 100%; }
+:host ::ng-deep .p-select-label { overflow: hidden; text-overflow: ellipsis; }
+input, textarea { min-width: 0; max-width: 100%; }
+textarea { width: 100%; padding: .65rem; border-radius: .4rem; background: var(--p-inputtext-background); color: inherit; border: 1px solid var(--p-inputtext-border-color); }
+.grow { flex: 1; min-width: 12rem; }
+fieldset, article { min-width: 0; padding: .8rem; border: 1px solid var(--p-content-border-color); border-radius: .6rem; display: grid; gap: .65rem; }
+.hint { font-size: .8rem; color: var(--p-text-muted-color); margin: .2rem 0; }
+.error { color: var(--p-red-400); }
+pre { max-height: 20rem; overflow: auto; white-space: pre-wrap; word-break: break-word; padding: 1rem; background: var(--p-content-background); }
+h3 { margin: .75rem 0 0; }
+button { cursor: pointer; }
+.task-option { display: grid; gap: .3rem; max-width: min(60rem, 80vw); white-space: normal; overflow-wrap: anywhere; }
+.launch-feedback { padding: .7rem; border: 1px solid var(--p-content-border-color); border-radius: .4rem; overflow-wrap: anywhere; }
+.launch-feedback p { margin: .3rem 0; }
+.chips, .selected-commands { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; }
+.chip { border: 1px solid var(--p-content-border-color); border-radius: 2rem; padding: .4rem .8rem; background: var(--p-content-background); color: inherit; }
+.chip.selected { border-color: var(--p-primary-color); background: var(--p-highlight-background); color: var(--p-highlight-color); }
+.directories { display: grid; gap: .3rem; max-height: 15rem; overflow-y: auto; }
+.directories button { text-align: left; padding: .4rem; background: var(--p-content-background); color: inherit; border: 1px solid var(--p-content-border-color); }
+code, strong { overflow-wrap: anywhere; }
+summary { cursor: pointer; }
+@media (max-width: 600px) { .row > label, .row > p-select { width: 100%; } }

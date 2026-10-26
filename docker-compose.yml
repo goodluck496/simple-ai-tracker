@@ -1,0 +1,19 @@
+services:
+  simple-ai-tracker:
+    build: .
+    container_name: simple-ai-tracker
+    ports:
+      - "4317:4317"
+    volumes:
+      # Bind mount: SQLite DB, backups и картинки лежат прямо в ./data
+      # Можно подменять tracker.db, делать экспорт/импорт, не заходя в контейнер
+      - ./data:/app/data
+    restart: unless-stopped
+#    environment:
+      # Override if needed:
+      # - SAT_PORT=4317
+      # - SAT_HOST=0.0.0.0
+      # - SAT_BACKUP_ENABLED=true
+      # - SAT_BACKUP_INTERVAL_HOURS=12
+      # - SAT_BACKUP_MAX_PER_DAY=2
+      # - SAT_BACKUP_KEEP=20

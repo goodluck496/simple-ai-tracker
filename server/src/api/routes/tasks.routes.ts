@@ -27,7 +27,6 @@ import { assertTaskType, isTaskType } from '../../domain/task-type.js';
  * задачи в done; агент работает через MCP и такого права не имеет.
  */
 export function registerTaskRoutes(router: Router, app: AppContainer): void {
-  const { taskService, contextService } = app;
 
   router.get('/api/tasks', ({ query, res }) => {
     const filters: TaskFilters = {
@@ -39,24 +38,24 @@ export function registerTaskRoutes(router: Router, app: AppContainer): void {
       scopes: parseScopes(query),
       limit: query.get('limit') ? Number(query.get('limit')) : undefined,
     };
-    const tasks = taskService.listTasks(filters);
+    const tasks = app.taskService.listTasks(filters);
     sendJson(res, 200, { tasks, total: tasks.length });
   });
 
   router.get('/api/tasks/:id', ({ params, res, query }) => {
     if (query.get('context') === '1') {
-      sendJson(res, 200, contextService.build(params.id));
+      sendJson(res, 200, app.contextService.build(params.id));
       return;
     }
-    sendJson(res, 200, { task: taskService.getTaskCard(params.id) });
+    sendJson(res, 200, { task: app.taskService.getTaskCard(params.id) });
   });
 
   router.get('/api/tasks/:id/context', ({ params, res }) => {
-    sendJson(res, 200, contextService.build(params.id));
+    sendJson(res, 200, app.contextService.build(params.id));
   });
 
   router.post('/api/tasks', ({ body, res }) => {
-    const card = taskService.createTask({
+    const card = app.taskService.createTask({
       title: requireBodyField<string>(body, 'title'),
       type: bodyField<string>(body, 'type') && isTaskType(bodyField<string>(body, 'type'))
         ? assertTaskType(bodyField<string>(body, 'type'))
@@ -75,7 +74,7 @@ export function registerTaskRoutes(router: Router, app: AppContainer): void {
   });
 
   router.patch('/api/tasks/:id', ({ params, body, res }) => {
-    const card = taskService.updateTask({
+    const card = app.taskService.updateTask({
       id: params.id,
       title: bodyField<string>(body, 'title'),
       description: bodyField<string>(body, 'description'),
@@ -94,12 +93,12 @@ export function registerTaskRoutes(router: Router, app: AppContainer): void {
   });
 
   router.delete('/api/tasks/:id', ({ params, res }) => {
-    const deleted = taskService.deleteTask(params.id, 'user');
+    const deleted = app.taskService.deleteTask(params.id, 'user');
     sendJson(res, deleted ? 200 : 404, { success: deleted, deleted: params.id });
   });
 
   router.post('/api/tasks/:id/status', ({ params, body, res }) => {
-    const card = taskService.setStatus({
+    const card = app.taskService.setStatus({
       id: params.id,
       status: assertTaskStatus(bodyField<string>(body, 'status')),
       comment: bodyField<string>(body, 'comment'),
@@ -110,7 +109,7 @@ export function registerTaskRoutes(router: Router, app: AppContainer): void {
 
   router.post('/api/tasks/:id/move', ({ params, body, res }) => {
     const status = bodyField<string>(body, 'status');
-    const card = taskService.moveTask({
+    const card = app.taskService.moveTask({
       id: params.id,
       status: status ? assertTaskStatus(status) : undefined,
       beforeId: bodyField<string>(body, 'beforeId'),
@@ -122,7 +121,7 @@ export function registerTaskRoutes(router: Router, app: AppContainer): void {
   });
 
   router.post('/api/tasks/:id/comments', ({ params, body, res }) => {
-    const comment = taskService.addComment({
+    const comment = app.taskService.addComment({
       id: params.id,
       text: requireBodyField<string>(body, 'text'),
       author: bodyField<string>(body, 'author') ?? 'User',
@@ -137,7 +136,7 @@ export function registerTaskRoutes(router: Router, app: AppContainer): void {
     if (!Array.isArray(questions) || questions.length === 0) {
       throw new Error('Поле "questions" должно быть непустым массивом.');
     }
-    const result = taskService.askQuestions({
+    const result = app.taskService.askQuestions({
       id: params.id,
       questions,
       phase: (bodyField<string>(body, 'phase') as QuestionPhase | undefined) ?? undefined,
@@ -148,7 +147,7 @@ export function registerTaskRoutes(router: Router, app: AppContainer): void {
   });
 
   router.post('/api/tasks/:id/questions/:questionId/answer', ({ params, body, res }) => {
-    const result = taskService.answerQuestions({
+    const result = app.taskService.answerQuestions({
       id: params.id,
       answers: [{ questionId: Number(params.questionId), answer: requireBodyField<string>(body, 'answer') }],
       answeredBy: bodyField<string>(body, 'answeredBy') ?? 'User',
@@ -167,7 +166,7 @@ export function registerTaskRoutes(router: Router, app: AppContainer): void {
     if (!Array.isArray(answers) || answers.length === 0) {
       throw new Error('Поле "answers" должно быть непустым массивом.');
     }
-    const result = taskService.answerQuestions({
+    const result = app.taskService.answerQuestions({
       id: params.id,
       answers,
       answeredBy: bodyField<string>(body, 'answeredBy') ?? 'User',
@@ -177,7 +176,7 @@ export function registerTaskRoutes(router: Router, app: AppContainer): void {
   });
 
   router.post('/api/tasks/:id/plan', ({ params, body, res }) => {
-    const result = taskService.attachPlan({
+    const result = app.taskService.attachPlan({
       id: params.id,
       planContent: requireBodyField<string>(body, 'content'),
       fileName: bodyField<string>(body, 'name'),
@@ -191,7 +190,7 @@ export function registerTaskRoutes(router: Router, app: AppContainer): void {
   });
 
   router.post('/api/tasks/:id/clarifications', ({ params, body, res }) => {
-    const result = taskService.recordClarification({
+    const result = app.taskService.recordClarification({
       id: params.id,
       clarification: requireBodyField<string>(body, 'clarification'),
       reason: bodyField<string>(body, 'reason'),
@@ -205,7 +204,7 @@ export function registerTaskRoutes(router: Router, app: AppContainer): void {
   });
 
   router.post('/api/tasks/:id/attachments', ({ params, body, res }) => {
-    const attachment = taskService.addAttachment(
+    const attachment = app.taskService.addAttachment(
       params.id,
       {
         name: requireBodyField<string>(body, 'name'),
@@ -229,7 +228,7 @@ export function registerTaskRoutes(router: Router, app: AppContainer): void {
   });
 
   router.post('/api/tasks/:id/links', ({ params, body, res }) => {
-    const card = taskService.linkTasks(
+    const card = app.taskService.linkTasks(
       params.id,
       requireBodyField<string>(body, 'linkedTaskId'),
       (bodyField<string>(body, 'relation') as LinkRelation | undefined) ?? 'related',
@@ -239,7 +238,7 @@ export function registerTaskRoutes(router: Router, app: AppContainer): void {
   });
 
   router.delete('/api/tasks/:id/links/:linkedTaskId', ({ params, res }) => {
-    const card = taskService.unlinkTasks(
+    const card = app.taskService.unlinkTasks(
       params.id,
       params.linkedTaskId,
       undefined,

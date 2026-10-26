@@ -1,0 +1,113 @@
+import assert from 'node:assert/strict';
+import { mkdtempSync, rmSync, mkdirSync } from 'node:fs';
+import path from 'node:path';
+import os from 'node:os';
+import type { AddressInfo } from 'node:net';
+import { chromium } from 'playwright';
+import { createContainer } from '../server/src/bootstrap/container.js';
+import { createApiServer } from '../server/src/api/http-server.js';
+import { SilentLogger } from '../server/src/core/logger.js';
+import { DEFAULT_AUTOMATION_SETTINGS, type AutomationSettings } from '../shared/automation/contracts.js';
+import { STANDARD_TEAM_ROLES } from '../shared/automation/presets.js';
+import { RunPhase } from '../shared/automation/queue.js';
+import { UsageSource } from '../shared/automation/token-usage.js';
+
+const root = mkdtempSync(path.join(os.tmpdir(), 'sat-queue-ui-'));
+const app = createContainer({ config: { appRoot: root, dbPath: path.join(root, 'data', 'tracker.db'),
+  webDistDir: path.resolve(import.meta.dirname, '../dist/web/browser') }, logger: new SilentLogger() });
+const server = createApiServer(app);
+let browser: Awaited<ReturnType<typeof chromium.launch>> | undefined;
+try {
+  const settings: AutomationSettings = { ...structuredClone(DEFAULT_AUTOMATION_SETTINGS), repositoryPath: '/fixture',
+    connections: [{ id: 'native', label: 'Codex', kind: 'native', supportsImages: false }],
+    agents: STANDARD_TEAM_ROLES.map((role) => ({ id: role, role, runner: 'codex', model: 'fixture-model', connectionId: 'native', instructions: '' })),
+    pipeline: [...STANDARD_TEAM_ROLES], checks: [{ command: 'npm', args: ['test'] }] };
+  const service = app.automationService; service.configure(settings);
+  const task = app.taskService.createTask({ title: 'Queue acceptance task' });
+  const initial = service.enqueue(task.id);
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  browser = await chromium.launch({ headless: true });
+  const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } }); page.setDefaultTimeout(15000);
+  const errors: string[] = []; page.on('pageerror', (error) => errors.push(error.message));
+  page.on('console', (message) => { if (message.type() === 'error') errors.push(message.text()); });
+  await page.goto(`http://127.0.0.1:${(server.address() as AddressInfo).port}`);
+  await page.getByRole('button', { name: 'Очередь', exact: true }).click().catch(async (error) => {
+    console.error(JSON.stringify({ errors, buttons: await page.locator('button').allTextContents() })); throw error;
+  });
+  const queue = page.getByRole('dialog', { name: 'Очередь агентов' });
+  await queue.getByRole('button', { name: `Запуск ${task.id} ${initial.id}`, exact: true }).click();
+  const detail = queue.getByRole('article', { name: 'Детали запуска' });
+  await detail.getByText('Нет подключённого worker.', { exact: false }).waitFor();
+  const run = service.claim('fixture')!;
+  const analystAttempt = service.beginStage(run.id, run.leaseToken!);
+  const usage = { inputTokens: 1200, outputTokens: 300, cachedInputTokens: 900, reasoningTokens: 100,
+    source: UsageSource.Codex, reportedRequests: 1, missingRequests: 0 };
+  service.usage(run.id, run.leaseToken!, analystAttempt, usage, false);
+  service.progress(run.id, run.leaseToken!, 'Изучаю требования', RunPhase.Agent);
+  await detail.getByText('Выполняется · карточка: Планирование', { exact: true }).waitFor();
+  const meter = detail.getByRole('region', { name: 'Токенометр', exact: true });
+  await meter.getByText(/Токены:.*частичные данные/).waitFor();
+  service.usage(run.id, run.leaseToken!, analystAttempt, usage, true);
+  await meter.getByText('Токены: 1 500', { exact: true }).waitFor();
+  const planRun = service.completeStage(run.id, run.leaseToken!, { verdict: 'pass', summary: 'Plan ready', plan: '# Plan\nImplement and test.' }, `sat/${run.id}`, 'a'.repeat(40));
+  service.beginStage(run.id, run.leaseToken!);
+  service.progress(run.id, run.leaseToken!, 'Изменяю код', RunPhase.Agent);
+  await detail.getByText('Выполняется · карточка: В работе', { exact: true }).waitFor();
+  assert.equal(planRun.stage, 1);
+  service.fail(run.id, run.leaseToken!, 'Fixture MCP connection failed');
+  await detail.getByText('Ошибка · карточка: В работе', { exact: true }).waitFor();
+  await detail.getByRole('button', { name: 'Продолжить с места остановки', exact: true }).click();
+  await detail.getByText('В очереди · карточка: В работе', { exact: true }).waitFor();
+  assert.equal(service.detail(run.id).run.settings.agents[0].model, 'fixture-model');
+  await meter.getByText('Нет данных', { exact: true }).waitFor();
+  const resumed = service.claim('fixture')!;
+  assert.equal(resumed.lastMessage, '', 'A new attempt must not display progress from the previous attempt');
+  service.fail(resumed.id, resumed.leaseToken!, 'Fixture repeated failure');
+  settings.agents[0].model = 'new-model'; service.configure(settings);
+  await detail.getByText('Ошибка · карточка: В работе', { exact: true }).waitFor();
+  await detail.getByRole('button', { name: 'Начать заново', exact: true }).click();
+  await detail.getByText(/повтор запуска/).waitFor();
+  const restarted = service.list(task.id).find((entry) => entry.restartedFromId === run.id)!;
+  assert.ok(restarted); assert.equal(restarted.settings.agents[0].model, 'new-model'); assert.equal(restarted.stage, 0);
+  assert.equal(service.detail(run.id).run.settings.agents[0].model, 'fixture-model');
+  await detail.getByRole('button', { name: 'Остановить', exact: true }).click();
+  await detail.getByText('Остановлен · карточка: В работе', { exact: true }).waitFor();
+  await detail.getByRole('button', { name: 'Открыть задачу', exact: true }).click();
+  await queue.waitFor({ state: 'hidden' });
+  const taskDialog = page.getByRole('dialog', { name: 'Карточка задачи', exact: true });
+  await taskDialog.waitFor();
+  await page.keyboard.press('Escape');
+  await taskDialog.waitFor({ state: 'hidden' });
+  await page.getByRole('button', { name: 'Очередь', exact: true }).click();
+  await queue.getByRole('button', { name: `Запуск ${task.id} ${restarted.id}`, exact: true }).click();
+  for (const viewport of [{ width: 390, height: 844 }, { width: 844, height: 390 }, { width: 1440, height: 1000 }]) {
+    await page.setViewportSize(viewport); assert.ok(await queue.evaluate((element) => element.scrollWidth <= element.clientWidth + 2));
+  }
+  const waitingTask = app.taskService.createTask({ title: 'Waiting for requirement clarification' });
+  service.enqueue(waitingTask.id);
+  const waitingRun = service.claim('fixture')!;
+  service.beginStage(waitingRun.id, waitingRun.leaseToken!);
+  service.completeStage(waitingRun.id, waitingRun.leaseToken!, { verdict: 'questions', summary: 'Need requirement clarification', questions: ['Which behavior?'] }, `sat/${waitingRun.id}`, 'a'.repeat(40));
+  await queue.getByRole('button', { name: `Запуск ${waitingTask.id} ${waitingRun.id}`, exact: true }).click();
+  await detail.getByRole('button', { name: 'Открыть задачу и ответить на вопросы', exact: true }).waitFor();
+  assert.equal(await detail.getByRole('button', { name: 'Продолжить с места остановки', exact: true }).count(), 0);
+  app.taskService.answerQuestions({ id: waitingTask.id, answers: [{ answer: 'Use the fixture behavior.' }], actor: 'user' });
+  await detail.getByRole('button', { name: 'Начать заново', exact: true }).click();
+  const replacement = service.list(waitingTask.id).find((entry) => entry.restartedFromId === waitingRun.id)!;
+  assert.ok(replacement); assert.equal(service.detail(waitingRun.id).run.status, 'cancelled');
+  await detail.getByText(/повтор запуска/).waitFor();
+  await queue.getByRole('button', { name: `Запуск ${task.id} ${run.id}`, exact: true }).click();
+  await detail.getByText('Fixture repeated failure', { exact: true }).first().waitFor();
+  for (const viewport of [{ width: 390, height: 844 }, { width: 844, height: 390 }, { width: 1440, height: 1000 }]) {
+    await page.setViewportSize(viewport);
+    assert.ok(await queue.evaluate((element) => element.scrollWidth <= element.clientWidth + 2), 'Token table must scroll within the dialog');
+  }
+  assert.deepEqual(errors, []);
+  const artifacts = path.resolve(import.meta.dirname, '../dist/acceptance'); mkdirSync(artifacts, { recursive: true });
+  await meter.scrollIntoViewIfNeeded();
+  await page.screenshot({ path: path.join(artifacts, 'automation-queue.png'), fullPage: true });
+  console.log('PASS: queue live token usage/unknown attempts/cache, phases/task statuses, failure/resume/restart history, cancel, task link, reopen, responsive table and no browser errors.');
+} finally {
+  await browser?.close(); server.closeAllConnections(); await new Promise<void>((resolve) => server.close(() => resolve()));
+  app.close(); rmSync(root, { recursive: true, force: true });
+}

@@ -12,9 +12,12 @@
     "build:server": "node scripts/build-server.mjs",
     "build:web": "ng build",
     "start": "node dist/server/api.mjs",
+    "start:with-build": "npm run build && npm run start",
     "dev:api": "npm run build:server && node --watch dist/server/api.mjs",
     "serve:web": "ng serve --proxy-config web/proxy.conf.json",
     "mcp": "node dist/server/mcp.mjs",
+    "worker": "node dist/server/worker.mjs",
+    "worker:docker": "node scripts/worker-docker.mjs",
     "cli": "node dist/server/cli.mjs",
     "smoke:mcp": "node scripts/smoke-mcp.mjs",
     "doctor": "npm run build:server && node dist/server/cli.mjs doctor",
@@ -31,6 +34,7 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.32.1",
+    "cross-spawn": "^7.0.6",
     "esbuild": "^0.28.0"
   },
   "devDependencies": {
@@ -44,7 +48,9 @@
     "@angular/platform-browser": "^19.0.0",
     "@angular/platform-browser-dynamic": "^19.0.0",
     "@primeng/themes": "^19.1.4",
+    "@types/cross-spawn": "^6.0.6",
     "@types/node": "^22.0.0",
+    "playwright": "^1.64.1",
     "primeicons": "^8.0.2",
     "primeng": "^19.1.4",
     "rxjs": "~7.8.0",

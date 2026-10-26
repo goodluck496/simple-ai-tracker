@@ -9,6 +9,7 @@ import {
   ViewChild,
   computed,
   inject,
+  input,
   output,
   signal,
 } from '@angular/core';
@@ -19,6 +20,7 @@ import { TagModule } from 'primeng/tag';
 import { TooltipModule } from 'primeng/tooltip';
 import type { StatusMeta, TaskStatus, TaskSummary, TaskType } from '../../models/tracker.models';
 import { TrackerStore, type FeatureGroup } from '../../services/tracker-store.service';
+import { AUTOMATION_START_TASK_STATUSES } from '../../../../../shared/automation/contracts';
 
 /** Подписи, иконки и severity типов задач для PrimeNG-бейджа карточки. */
 const TYPE_LABELS: Readonly<Record<TaskType, string>> = {
@@ -133,6 +135,18 @@ export class BoardComponent implements AfterViewInit, OnDestroy {
   public readonly addSubtaskRequested = output<{ parentId: string; type: TaskType }>();
   /** Запрос на удаление карточки с доски. */
   public readonly deleteRequested = output<{ id: string }>();
+  public readonly startRequested = output<string>();
+  public readonly automationPending = input<ReadonlySet<string>>(new Set());
+  public automationReason(task: TaskSummary): string {
+    if (this.automationPending().has(task.id)) return 'Задача отправляется в очередь.';
+    if (task.openQuestionsCount) return 'Сначала ответьте на вопросы в карточке.';
+    if (!AUTOMATION_START_TASK_STATUSES.includes(task.status)) return 'Новый запуск доступен из backlog, planning или ready. Текущий запуск можно продолжить в очереди.';
+    return '';
+  }
+  public onStart(event: Event, task: TaskSummary): void {
+    event.stopPropagation();
+    if (!this.automationReason(task)) this.startRequested.emit(task.id);
+  }
 
   public readonly statuses = this.store.statuses;
   public readonly counts = this.store.counts;

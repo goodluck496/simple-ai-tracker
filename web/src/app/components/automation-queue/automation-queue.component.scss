@@ -1,0 +1,28 @@
+:host { display: block; }
+.queue { display: grid; gap: .8rem; min-width: 0; }
+.queue-toolbar, .facts, .actions { display: flex; flex-wrap: wrap; gap: .7rem; align-items: center; }
+.lanes { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: .7rem; }
+.lane { min-width: 0; padding: .65rem; border-radius: .5rem; background: var(--p-content-background); border: 1px solid var(--p-content-border-color); }
+h3, h4, p { margin: .4rem 0; }
+.run-card { width: 100%; display: grid; text-align: left; gap: .4rem; margin: .7rem 0; padding: .7rem; color: inherit; background: var(--p-content-background); border: 1px solid var(--p-content-border-color); border-radius: .4rem; cursor: pointer; }
+.run-card small { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.run-card.selected, .current { border-color: var(--p-primary-color); background: var(--p-highlight-background); }
+.run-card *, .identifier, .summary, .event p { overflow-wrap: anywhere; white-space: pre-wrap; }
+.run-detail { min-width: 0; border-top: 1px solid var(--p-content-border-color); padding-top: 1rem; }
+.token-meter { min-width: 0; max-width: 100%; margin-block: 1rem; }
+.token-meter small { display: block; overflow-wrap: anywhere; }
+.facts, .muted, time { color: var(--p-text-muted-color); font-size: .85rem; }
+.stages { padding-left: 1.5rem; }
+.stages li { padding: .45rem; border-left: 3px solid var(--p-content-border-color); }
+.stages span { margin-left: .5rem; }
+.error { color: var(--p-red-400); }
+.events { max-height: 24rem; overflow: auto; }
+.event { padding: .6rem; border-bottom: 1px solid var(--p-content-border-color); }
+.event strong { margin-left: .5rem; }
+pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 12rem; overflow: auto; }
+button { cursor: pointer; }
+.queue-toolbar button, .actions button { padding: .5rem .75rem; border-radius: .4rem; border: 1px solid var(--p-content-border-color); background: var(--p-content-background); color: inherit; font: inherit; }
+.queue-toolbar button:hover, .actions button:hover { border-color: var(--p-primary-color); }
+button:disabled { cursor: default; opacity: .6; }
+@media (max-width: 900px) { .lanes { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 550px) { .lanes { grid-template-columns: minmax(0, 1fr); } }

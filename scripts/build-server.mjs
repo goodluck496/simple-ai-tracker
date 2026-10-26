@@ -16,6 +16,7 @@ await build({
     api: path.join(ROOT, 'server/src/bootstrap/api-entry.ts'),
     mcp: path.join(ROOT, 'server/src/bootstrap/mcp-entry.ts'),
     cli: path.join(ROOT, 'server/src/bootstrap/cli-entry.ts'),
+    worker: path.join(ROOT, 'server/src/bootstrap/worker-entry.ts'),
   },
   outdir: path.join(ROOT, 'dist/server'),
   outExtension: { '.js': '.mjs' },
@@ -24,10 +25,18 @@ await build({
   format: 'esm',
   target: 'node22',
   sourcemap: true,
-  external: ['@modelcontextprotocol/sdk'],
+  external: ['@modelcontextprotocol/sdk', 'cross-spawn'],
   loader: { '.md': 'text' },
   tsconfig: path.join(ROOT, 'tsconfig.server.json'),
   logLevel: 'info',
+});
+
+// One portable host file, without node_modules or the tracker checkout.
+await build({
+  entryPoints: [path.join(ROOT, 'server/src/bootstrap/portable-worker-entry.ts')],
+  outfile: path.join(ROOT, 'dist/server/worker-host.cjs'),
+  bundle: true, platform: 'node', format: 'cjs', target: 'node22',
+  tsconfig: path.join(ROOT, 'tsconfig.server.json'), logLevel: 'info',
 });
 
 // stdout может быть занят протоколом MCP (при сборке из mcp-launcher.mjs),

@@ -1,0 +1,23 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+.angular/
+
+# Database and runtime data
+data/
+export/
+
+# Editor / OS
+.DS_Store
+Thumbs.db
+.idea/
+
+# Docker files (not needed inside image)
+docker-compose.yml
+Dockerfile
+.dockerignore
+
+# Git
+.git/

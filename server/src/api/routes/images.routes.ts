@@ -13,9 +13,10 @@ const MIME_BY_EXTENSION: Readonly<Record<string, string>> = {
 
 /** Скриншоты карточек: приём data-URL и раздача файлов. */
 export function registerImageRoutes(router: Router, app: AppContainer): void {
-  router.post('/api/images', ({ body, res }) => {
+  router.post('/api/images', ({ body, res, req }) => {
     const stored = app.imageService.storeDataUrl(requireBodyField<string>(body, 'dataUrl'));
-    sendJson(res, 201, stored);
+    const workspace = req.headers['x-tracker-workspace'];
+    sendJson(res, 201, { ...stored, url: typeof workspace === 'string' ? `${stored.url}?workspace=${encodeURIComponent(workspace)}` : stored.url });
   });
 
   router.get('/api/images/:fileName', ({ params, res }) => {

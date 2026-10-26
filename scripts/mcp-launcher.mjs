@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 
 /**
@@ -12,7 +12,19 @@ import { pathToFileURL } from 'node:url';
  *
  * ВАЖНО: stdout принадлежит протоколу JSON-RPC, поэтому весь вывод сборки
  * перенаправляется в stderr.
+ *
+ * Docker-режим: если трекер запущен в контейнере (`docker compose up`), SQLite-база
+ * лежит на bind-mount внутри контейнера, и второй (хостовый) процесс не может с ней
+ * работать: Docker Desktop отдаёт каталог через virtiofs, блокировки SQLite не
+ * пробрасываются, и запросы падают с `SQLITE_PROTOCOL: locking protocol`.
+ * Поэтому при живом контейнере stdio MCP просто проксируется внутрь него:
+ * `docker exec -i <container> node dist/server/mcp.mjs`. Тогда базу открывает
+ * ровно один процесс — сервер трекера в контейнере.
+ * Отключить проксирование: SAT_MCP_LOCAL=1. Другое имя контейнера: SAT_DOCKER_CONTAINER.
  */
+const dockerContainer = process.env.SAT_DOCKER_CONTAINER ?? 'simple-ai-tracker';
+const useLocal = process.env.SAT_MCP_LOCAL === '1';
+
 const appRoot = path.resolve(import.meta.dirname, '..');
 const entry = path.join(appRoot, 'dist', 'server', 'mcp.mjs');
 const buildScript = path.join(appRoot, 'scripts', 'build-server.mjs');
@@ -70,14 +82,41 @@ function build() {
   logToStderr('Сборка завершена.');
 }
 
-if (needsBuild()) build();
+/** Контейнер трекера реально запущен? `docker inspect` отвечает быстро и не шумит в stdout. */
+function dockerContainerRunning() {
+  if (useLocal || !dockerContainer) return false;
+  const probe = spawnSync('docker', ['inspect', '-f', '{{.State.Running}}', dockerContainer],
+    { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true });
+  return probe.status === 0 && probe.stdout.trim() === 'true';
+}
 
-try {
-  await import(pathToFileURL(entry).href);
-} catch (error) {
-  logToStderr(`Ошибка запуска MCP-сервера: ${error instanceof Error ? error.message : String(error)}`);
-  if (error instanceof Error && error.message.includes('@modelcontextprotocol/sdk')) {
-    logToStderr('Похоже, зависимости не установлены. Выполните: npm install --omit=dev');
+/** Прозрачный stdio-прокси в контейнер: JSON-RPC идёт через `docker exec -i`. */
+function runInDocker(container) {
+  logToStderr(`MCP-сервер запускается внутри контейнера ${container}`);
+  const child = spawn('docker', ['exec', '-i', container, 'node', 'dist/server/mcp.mjs'],
+    { stdio: 'inherit', windowsHide: true });
+  const forward = signal => { try { child.kill(signal); } catch { /* процесс уже завершился */ } };
+  process.on('SIGINT', () => forward('SIGINT'));
+  process.on('SIGTERM', () => forward('SIGTERM'));
+  child.on('error', error => {
+    logToStderr(`Не удалось запустить MCP внутри контейнера: ${error.message}`);
+    process.exit(1);
+  });
+  child.on('exit', code => process.exit(code ?? 1));
+}
+
+if (dockerContainerRunning()) {
+  // Локальная сборка в docker-режиме не нужна: сервер уже собран в образе.
+  runInDocker(dockerContainer);
+} else {
+  if (needsBuild()) build();
+  try {
+    await import(pathToFileURL(entry).href);
+  } catch (error) {
+    logToStderr(`Ошибка запуска MCP-сервера: ${error instanceof Error ? error.message : String(error)}`);
+    if (error instanceof Error && error.message.includes('@modelcontextprotocol/sdk')) {
+      logToStderr('Похоже, зависимости не установлены. Выполните: npm install --omit=dev');
+    }
+    process.exit(1);
   }
-  process.exit(1);
 }

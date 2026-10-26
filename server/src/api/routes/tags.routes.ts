@@ -3,14 +3,13 @@ import type { Router } from '../router.js';
 import { bodyField, requireBodyField, sendJson } from '../router.js';
 
 export function registerTagRoutes(router: Router, app: AppContainer): void {
-  const { tagService } = app;
 
   router.get('/api/tags', ({ res }) => {
-    sendJson(res, 200, { tags: tagService.list() });
+    sendJson(res, 200, { tags: app.tagService.list() });
   });
 
   router.post('/api/tags', ({ body, res }) => {
-    const tag = tagService.add({
+    const tag = app.tagService.add({
       name: requireBodyField<string>(body, 'name'),
       color: bodyField<string>(body, 'color'),
       description: bodyField<string>(body, 'description'),
@@ -24,7 +23,7 @@ export function registerTagRoutes(router: Router, app: AppContainer): void {
       sendJson(res, 404, { error: { code: 'TAG_NOT_FOUND', message: `Тег ${params.name} не найден.` } });
       return;
     }
-    const updated = tagService.update(existing.id, {
+    const updated = app.tagService.update(existing.id, {
       color: bodyField<string>(body, 'color'),
       description: bodyField<string>(body, 'description'),
     });
@@ -32,7 +31,7 @@ export function registerTagRoutes(router: Router, app: AppContainer): void {
   });
 
   router.delete('/api/tags/:name', ({ params, res }) => {
-    const removed = tagService.remove(params.name);
+    const removed = app.tagService.remove(params.name);
     sendJson(res, removed ? 200 : 404, { success: removed, name: params.name });
   });
 }

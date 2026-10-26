@@ -1,4 +1,6 @@
 import { TrackerError } from '../core/errors.js';
+import { TASK_STATUSES, type TaskStatus } from '../../../shared/tasks/status.js';
+export { TASK_STATUSES, TaskStatus } from '../../../shared/tasks/status.js';
 
 /**
  * Статусы карточки Simple AI Tracker.
@@ -6,18 +8,6 @@ import { TrackerError } from '../core/errors.js';
  * Жизненный цикл: backlog → planning → questions → ready → in_progress →
  * testing → review → done.
  */
-export const TASK_STATUSES = [
-  'backlog',
-  'planning',
-  'questions',
-  'ready',
-  'in_progress',
-  'testing',
-  'review',
-  'done',
-] as const;
-
-export type TaskStatus = (typeof TASK_STATUSES)[number];
 
 /** Кто имеет право переводить карточку в статус. */
 export type StatusOwner = 'agent' | 'user' | 'both';

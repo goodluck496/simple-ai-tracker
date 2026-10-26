@@ -1,4 +1,5 @@
 import { name as name001, sql as sql001, version as version001 } from './001-initial.js';
+import { name as name002, sql as sql002, version as version002 } from './002-automation.js';
 
 export interface Migration {
   readonly version: number;
@@ -12,6 +13,7 @@ export interface Migration {
  */
 export const MIGRATIONS: readonly Migration[] = [
   { version: version001, name: name001, sql: sql001 },
+  { version: version002, name: name002, sql: sql002 },
 ];
 
 export const LATEST_SCHEMA_VERSION = MIGRATIONS.reduce((max, migration) => Math.max(max, migration.version), 0);

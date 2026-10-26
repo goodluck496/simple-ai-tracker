@@ -7,6 +7,8 @@ import { registerTagRoutes } from './routes/tags.routes.js';
 import { registerSystemRoutes } from './routes/system.routes.js';
 import { registerAdminRoutes } from './routes/admin.routes.js';
 import { registerImageRoutes } from './routes/images.routes.js';
+import { registerWorkspaceRoutes } from './routes/workspace.routes.js';
+import { registerAutomationRoutes } from './routes/automation.routes.js';
 
 export interface ApiServerOptions {
   readonly cors?: boolean;
@@ -23,6 +25,8 @@ export function createApiServer(app: AppContainer, options: ApiServerOptions = {
   registerTagRoutes(router, app);
   registerAdminRoutes(router, app);
   registerImageRoutes(router, app);
+  registerWorkspaceRoutes(router, app, app.workspaceManager);
+  registerAutomationRoutes(router, app);
 
   const staticServer = new StaticFileServer(app.config.webDistDir);
   const cors = options.cors ?? true;
@@ -33,7 +37,7 @@ export function createApiServer(app: AppContainer, options: ApiServerOptions = {
     if (cors) {
       res.setHeader('Access-Control-Allow-Origin', '*');
       res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PATCH, DELETE, OPTIONS');
-      res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+      res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-Tracker-Workspace');
       if (req.method === 'OPTIONS') {
         res.writeHead(204);
         res.end();
@@ -42,11 +46,21 @@ export function createApiServer(app: AppContainer, options: ApiServerOptions = {
     }
 
     if (url.pathname.startsWith('/api/')) {
-      void router.handle(req, res).then((handled) => {
+      const workspace = url.pathname.startsWith('/api/workspaces') ? 'default'
+        : req.headers['x-tracker-workspace'] ?? url.searchParams.get('workspace') ?? 'default';
+      if (typeof workspace !== 'string') {
+        sendJson(res, 400, { error: { code: 'VALIDATION_FAILED', message: 'Invalid workspace header.' } });
+        return;
+      }
+      try {
+      void app.workspaceManager.within(workspace, () => router.handle(req, res)).then((handled) => {
         if (!handled) {
           sendJson(res, 404, { error: { code: 'NOT_FOUND', message: `Маршрут ${url.pathname} не найден.` } });
         }
       });
+      } catch (error) {
+        sendJson(res, 404, { error: { code: 'WORKSPACE_NOT_FOUND', message: error instanceof Error ? error.message : String(error) } });
+      }
       return;
     }
 

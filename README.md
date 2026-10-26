@@ -13,6 +13,8 @@
 
 ## Что умеет
 
+- Пространства проектов и независимые команды агентов: [настройка и запуск worker](docs/automation.md).
+
 - **Карточки задач** (фича / задача / баг) с описанием, тегами, связями (`related`, `blocks`, `blocked_by`,
   `duplicates`), подзадачами и деревом «фича → подзадачи».
 - **8 стадий жизненного цикла:** `backlog → planning → questions → ready → in_progress → testing → review → done`.
