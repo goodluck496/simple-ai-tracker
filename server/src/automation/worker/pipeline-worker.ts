@@ -8,6 +8,8 @@ import { AutomationTool } from '../../../../shared/automation/protocol.js';
 import { DEFAULT_ROLE_INSTRUCTIONS } from '../../../../shared/automation/team-profiles.js';
 import { RunPhase } from '../../../../shared/automation/queue.js';
 import type { TokenUsage } from '../../../../shared/automation/token-usage.js';
+import { WorktreePreparation } from './worktree-preparation.js';
+import { StageCheckpoint, type StageResult } from './stage-checkpoint.js';
 
 export class PipelineWorker {
   private activeController?: AbortController;
@@ -65,21 +67,10 @@ export class PipelineWorker {
         await git(['worktree', 'add', '-b', branch, cwd, run.settings.baseBranch]);
       }
       if ((await git(['branch', '--show-current'], cwd)).trim() !== branch) throw new Error('Worktree branch does not match run.');
-      const setupMarker = path.join(cwd, '.sat', 'setup-complete');
-      try { await fs.access(setupMarker); }
-      catch {
-        for (const command of run.settings.setup) {
-          await phase(RunPhase.Setup, `Подготовка: ${command.command} ${command.args.join(' ')}`);
-          await this.executor.run({ ...command, cwd, signal: controller.signal, onProgress: progress });
-        }
-        await fs.mkdir(path.dirname(setupMarker), { recursive: true });
-        await fs.writeFile(setupMarker, 'ok', 'utf8');
-      }
-      if (run.commitSha && (await git(['rev-parse', 'HEAD'], cwd)).trim() !== run.commitSha) throw new Error('Worktree HEAD changed after checkpoint; inspect it before resuming.');
+      await phase(RunPhase.Setup, 'Проверка и подготовка зависимостей worktree до запуска агента.');
+      await new WorktreePreparation(this.executor).prepare(cwd, run.settings.setup, controller.signal, progress);
       while (run.status === RunStatus.Running && run.stage < run.settings.pipeline.length) {
         controller.signal.throwIfAborted();
-        const started = await this.channel.call<{ attemptId?: string }>(AutomationTool.BeginStage, { id: run.id, leaseToken: token });
-        metering = started.attemptId ? { attemptId: started.attemptId } : undefined;
         const profileId = run.settings.pipeline[run.stage];
         const profile = run.settings.agents.find((agent) => agent.id === profileId)!;
         const connection = run.settings.connections.find((entry) => entry.id === profile.connectionId)!;
@@ -90,11 +81,23 @@ export class PipelineWorker {
         }
         const pack = await this.channel.call<Record<string, unknown>>('tracker_get_task', { id: run.taskId, commentsLimit: 5 });
         const context = { id: pack.id, title: pack.title, description: pack.description, plan: pack.plan, questions: pack.questions, relations: pack.relations, comments: pack.comments };
+        // Failure comments and run.summary change on infrastructure failure, so they are not cache keys.
+        const checkpoint = new StageCheckpoint(cwd, run.stage, run.revision, (args) => git(args, cwd));
+        const key = StageCheckpoint.key({ id: run.id, stage: run.stage, revision: run.revision, settings: run.settings,
+          task: { id: pack.id, title: pack.title, description: pack.description, plan: pack.plan, questions: pack.questions, relations: pack.relations } });
+        let saved = await checkpoint.load(key);
         const priorSha = (await git(['rev-parse', 'HEAD'], cwd)).trim();
+        if (run.commitSha && priorSha !== run.commitSha && !saved) throw new Error('Worktree HEAD changed after checkpoint; inspect it before resuming.');
         const priorStatus = await git(['status', '--porcelain', '--', '.', ':!.sat'], cwd);
         const diff = await git(['diff', `${run.settings.baseBranch}...HEAD`, '--', '.', ':!.sat'], cwd);
         const prompt = this.prompt(profile.role, profile.instructions, context, run.summary, diff.slice(-60000), run.settings.artifactPaths, run.settings.checks);
         let outcome: AgentOutcome;
+        if (saved) {
+          outcome = this.parseOutcome(JSON.stringify(saved.outcome));
+          await phase(RunPhase.Preparing, 'Результат агента восстановлен из checkpoint; повторный вызов модели не нужен.');
+        } else {
+        const started = await this.channel.call<{ attemptId?: string }>(AutomationTool.BeginStage, { id: run.id, leaseToken: token });
+        metering = started.attemptId ? { attemptId: started.attemptId } : undefined;
         let usageComplete = false;
         try {
           const result = await this.registry.get(profile.runner).run({ runId: run.id, cwd, prompt, profile, connection, settings: run.settings, signal: controller.signal,
@@ -113,14 +116,20 @@ export class PipelineWorker {
             await reportUsage(sample, usageComplete);
           }
         }
+        saved = { key, head: priorSha, fingerprint: '', priorHead: priorSha, priorStatus, outcome };
+        if (outcome.verdict === AgentVerdict.Pass) await checkpoint.save(saved);
+        }
         if (READ_ONLY_AGENT_ROLES.includes(profile.role)) {
-          if ((await git(['rev-parse', 'HEAD'], cwd)).trim() !== priorSha || (await git(['status', '--porcelain', '--', '.', ':!.sat'], cwd)) !== priorStatus) throw new Error('Read-only stage modified the worktree or HEAD.');
+          if ((await git(['rev-parse', 'HEAD'], cwd)).trim() !== saved.priorHead || (await git(['status', '--porcelain', '--', '.', ':!.sat'], cwd)) !== saved.priorStatus) throw new Error('Read-only stage modified the worktree or HEAD.');
         } else if (outcome.verdict === AgentVerdict.Pass) {
-          await git(['add', '-A', '--', '.', ':!.sat'], cwd);
+          // Runtime is ignored through info/exclude. An explicit ignored .sat pathspec can make git add fail.
+          await git(['add', '-A', '--', '.'], cwd);
+          await checkpoint.save(saved);
           if ((await git(['diff', '--cached', '--name-only'], cwd)).trim()) await git(['commit', '-m', `[${run.taskId}] ${profile.role} stage`], cwd);
+          await checkpoint.save(saved);
         }
         let sha = (await git(['rev-parse', 'HEAD'], cwd)).trim();
-        if (profile.role === AgentRole.Tester && outcome.verdict === AgentVerdict.Pass) {
+        if (profile.role === AgentRole.Tester && outcome.verdict === AgentVerdict.Pass && !saved.checksComplete) {
           for (const check of run.settings.checks) {
             try {
               await phase(RunPhase.Checks, `Проверка: ${check.command} ${check.args.join(' ')}`);
@@ -129,6 +138,9 @@ export class PipelineWorker {
             catch (error) { outcome = { verdict: AgentVerdict.ChangesRequested, summary: redact(`Configured check failed: ${error instanceof Error ? error.message : String(error)}`) }; break; }
           }
           if ((await git(['rev-parse', 'HEAD'], cwd)).trim() !== sha || (await git(['status', '--porcelain', '--', '.', ':!.sat'], cwd)).trim()) throw new Error('Checks changed the tested commit or left uncommitted files.');
+          saved.outcome = outcome;
+          saved.checksComplete = outcome.verdict === AgentVerdict.Pass;
+          if (saved.checksComplete) await checkpoint.save(saved);
         }
         if (pending) { await this.channel.call(AutomationTool.Progress, { id: run.id, leaseToken: token, text: redact(pending) }); pending = ''; }
         run = await this.channel.call<AgentRun>(AutomationTool.CompleteStage, { id: run.id, leaseToken: token, outcome, branch, commitSha: sha });
@@ -175,6 +187,7 @@ export class PipelineWorker {
       + `Task context:\n${JSON.stringify(context)}\nPrevious feedback:\n${feedback}\nChanges:\n${diff}\n`
       + `Configured checks: ${JSON.stringify(checks)}\nVisual artifacts: ${JSON.stringify(artifacts)}\n`
       + `Only developer/designer may edit files. Do not change branches, commit, merge, publish or alter tracker data directly; the worker handles commits. `
+      + `The worker prepared dependencies before this invocation. Reuse that environment; only change/install dependencies when required by the task's manifest changes. Do not repeatedly reinstall packages for an unchanged infrastructure failure. `
       + `For visual validation inspect the actual artifacts; if absent return questions. `
       + `Return ONLY one JSON object, for example {"verdict":"pass","summary":"evidence and findings","questions":[],"plan":"markdown plan for analyst"}. Allowed verdicts are pass, changes_requested, questions. `
       + `Analyst must include plan on pass. Do not claim checks passed without evidence. Never mark a task done.`;

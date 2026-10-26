@@ -248,7 +248,7 @@ export class AutomationService {
     if (task.status === TaskStatus.Done || task.status === TaskStatus.Review) throw new TrackerError('CONFLICT', 'Task is already complete or in review.');
     if (this.runs.hasActive(run.taskId) && run.status !== RunStatus.Waiting) throw new TrackerError('CONFLICT', 'Task already has another active run.');
     const role = run.settings.agents.find((agent) => agent.id === run.settings.pipeline[run.stage])!.role;
-    const stage = EVIDENCE_AGENT_ROLES.includes(role)
+    const stage = run.status === RunStatus.Waiting && EVIDENCE_AGENT_ROLES.includes(role)
       ? run.settings.pipeline.findIndex((id) => run.settings.agents.find((agent) => agent.id === id)?.role === AgentRole.Developer) : run.stage;
     const updated: AgentRun = { ...run, stage, status: RunStatus.Queued, leaseToken: null, workerId: null, leaseUntil: null, updatedAt: this.clock.now() };
     this.runs.save(updated);
