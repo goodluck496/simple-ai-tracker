@@ -23,6 +23,12 @@ export class InstructionsService {
     return path.join(this.appRoot, INSTRUCTIONS_FILE);
   }
 
+  /** Initialization is repeated by some clients in every tool description. */
+  public getSessionInstructions(): string {
+    this.get(); // Preserve loading diagnostics and the full document for explicit retrieval.
+    return FALLBACK_INSTRUCTIONS + '\nПолная актуальная инструкция: tracker_get_instructions. Прочитай её перед работой с задачами. Всегда передавай явный workspace. Перед реализацией собери контекст и приложи план. После тестов приложи отчёт и передай в review. Не расширяй область задачи и не отменяй изменения пользователя.\n';
+  }
+
   public get(): string {
     if (this.cached) return this.cached;
     try {

@@ -22,7 +22,11 @@ try {
   await Promise.race([client.connect(transport), new Promise((_, reject) => {
     timeout = setTimeout(() => reject(new Error('MCP packaging check timed out')), 20000);
   })]);
-  assert.equal(client.getInstructions(), expected.toString('utf8'));
+  assert.ok(client.getInstructions().length < 1600);
+  assert.match(client.getInstructions(), /tracker_get_instructions/);
+  const full = await client.callTool({ name: 'tracker_get_instructions', arguments: { workspace: 'default' } });
+  assert.equal(full.isError, undefined);
+  assert.equal(full.content.find(item => item.type === 'text').text, expected.toString('utf8'));
   assert.equal(/ENOENT.*AGENT_INSTRUCTIONS|AGENT_INSTRUCTIONS.*ENOENT/.test(stderr), false);
-  console.log('PASS: runtime instructions byte equality, MCP handshake and no missing-instructions warning');
+  console.log(`PASS: runtime instructions byte equality, MCP handshake and no missing-instructions warning; session=${client.getInstructions().length} chars, full=${expected.toString('utf8').length} chars`);
 } finally { clearTimeout(timeout); await client.close(); }

@@ -26,7 +26,7 @@ export class TrackerMcpServer {
       { name: MCP_SERVER_NAME, version: MCP_SERVER_VERSION },
       {
         capabilities: { tools: {} },
-        instructions: this.app.instructionsService.get(),
+        instructions: this.app.instructionsService.getSessionInstructions(),
       },
     );
 

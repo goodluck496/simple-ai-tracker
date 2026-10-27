@@ -14,6 +14,13 @@ describe('InstructionsService', () => {
     const contents = '# Current instructions\n';
     writeFileSync(path.join(appRoot, 'AGENT_INSTRUCTIONS.md'), contents);
     assert.equal(new InstructionsService(appRoot).get(), contents);
+    const service = new InstructionsService(appRoot);
+    const session = service.getSessionInstructions();
+    assert.ok(session.length < 1600);
+    assert.match(session, /tracker_get_instructions/);
+    assert.match(session, /done/);
+    assert.match(session, /MCP/);
+    assert.equal(service.get(), contents);
   });
 
   it('uses its built-in fallback and warns when the file is missing', () => {
