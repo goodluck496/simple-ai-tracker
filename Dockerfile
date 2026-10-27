@@ -29,6 +29,7 @@ RUN npm install --omit=dev
 
 # Copy built artifacts from the build stage
 COPY --from=build /app/dist ./dist
+COPY --from=build /app/AGENT_INSTRUCTIONS.md ./AGENT_INSTRUCTIONS.md
 
 # Expose HTTP API + UI port
 EXPOSE 4317
