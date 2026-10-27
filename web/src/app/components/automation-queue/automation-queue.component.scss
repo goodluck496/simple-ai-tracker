@@ -3,6 +3,10 @@
 .queue-toolbar, .facts, .actions { display: flex; flex-wrap: wrap; gap: .7rem; align-items: center; }
 .lanes { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: .7rem; }
 .lane { min-width: 0; padding: .65rem; border-radius: .5rem; background: var(--p-content-background); border: 1px solid var(--p-content-border-color); }
+.lane-items { max-height: 34rem; overflow-y: auto; overflow-x: hidden; overscroll-behavior: contain; scrollbar-gutter: stable; }
+.queue-search { display: grid; gap: .35rem; max-width: 32rem; }
+.queue-search input { min-width: 0; width: 100%; padding: .5rem; border: 1px solid var(--p-content-border-color); border-radius: .4rem; font: inherit; }
+.clear-search { justify-self: start; }
 h3, h4, p { margin: .4rem 0; }
 .run-card { width: 100%; display: grid; text-align: left; gap: .4rem; margin: .7rem 0; padding: .7rem; color: inherit; background: var(--p-content-background); border: 1px solid var(--p-content-border-color); border-radius: .4rem; cursor: pointer; }
 .run-card small { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }

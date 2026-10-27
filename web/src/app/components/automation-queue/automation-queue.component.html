@@ -3,11 +3,16 @@
     <button type="button" (click)="configure.emit()">Настройки команды и подключение worker</button><button type="button" (click)="openArchive()">Архив запусков</button></div>
   @if (archived(); as history) { <section aria-label="Архив запусков"><h3>Архив запусков</h3>@for (run of history; track run.id) { <div><button type="button" (click)="openTask.emit(run.taskId)">{{ run.taskId }} · {{ run.id }} · {{ statusTitles[run.status] }}</button><button type="button" [disabled]="busy()" (click)="restore(run.id)">Вернуть в очередь</button></div> } @empty { <p class="muted">Архив пуст</p> }</section> }
   <p role="status">Worker: {{ snapshot().host.online ? 'подключён' : 'не подключён' }}. Показаны все активные и последние {{ recentLimit }} завершённых запусков.</p>
+  <label class="queue-search">Поиск по ID задачи, названию или ID запуска
+    <input type="search" [value]="search()" (input)="search.set($any($event.target).value)" aria-label="Поиск запусков" />
+  </label>
+  @if (search()) { <button type="button" class="clear-search" (click)="clearSearch()">Очистить поиск</button> }
+  <p class="muted">Поиск только по загруженным запускам: все активные и последние {{ recentLimit }} завершённых. Архив не включён.</p>
   @if (error()) { <p role="alert" class="error">{{ error() }}</p> }
   @if (notice()) { <p role="status">{{ notice() }}</p> }
   <div class="lanes">
     @for (lane of lanes; track lane.id) {
-      <section class="lane" [attr.aria-label]="lane.title"><h3>{{ lane.title }} · {{ items(lane.id).length }}</h3>
+      <section class="lane" [attr.aria-label]="lane.title"><h3>{{ lane.title }} · {{ items(lane.id).length }} / {{ total(lane.id) }}</h3><div class="lane-items">
         @for (item of items(lane.id); track item.id) {
           <button type="button" class="run-card" [class.selected]="selectedId() === item.id" (click)="select(item.id)" [attr.aria-label]="'Запуск ' + item.taskId + ' ' + item.id">
             <strong>{{ item.taskId }} · {{ item.title }}</strong><span>{{ statusTitles[item.status] }} @if (item.queuePosition) { · место {{ item.queuePosition }} }</span>
@@ -17,7 +22,8 @@
           </button>
           @if (item.status === runStatus.Queued) { <button type="button" class="dequeue-action" [disabled]="busy()" (click)="dequeue(item)">Убрать из очереди</button> }
           @if (item.status === runStatus.Failed || item.status === runStatus.Cancelled || item.status === runStatus.Interrupted || item.status === runStatus.Review || item.status === runStatus.Merged) { <button type="button" [disabled]="busy()" (click)="hide(item)">Скрыть из списка</button> }
-        } @empty { <p class="muted">Нет запусков</p> }
+        } @empty { <p class="muted">{{ search() ? 'Нет совпадений' : 'Нет запусков' }}</p> }
+        </div>
       </section>
     }
   </div>
