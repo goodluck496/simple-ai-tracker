@@ -5,8 +5,8 @@ import { QUEUE_LIMITS } from '../../../shared/automation/queue.js';
 export class AgentRunRepository {
   public constructor(public readonly db: SqlDatabase) {}
   public list(taskId?: string): AgentRun[] {
-    const rows = taskId ? this.db.prepare('SELECT payload FROM agent_runs WHERE task_id = ? ORDER BY updated_at DESC LIMIT 100').all<{ payload: string }>([taskId])
-      : this.db.prepare('SELECT payload FROM agent_runs ORDER BY updated_at DESC LIMIT 100').all<{ payload: string }>();
+    const rows = taskId ? this.db.prepare('SELECT payload FROM agent_runs WHERE task_id = ? AND id NOT IN (SELECT run_id FROM archived_agent_runs) ORDER BY updated_at DESC LIMIT 100').all<{ payload: string }>([taskId])
+      : this.db.prepare('SELECT payload FROM agent_runs WHERE id NOT IN (SELECT run_id FROM archived_agent_runs) ORDER BY updated_at DESC LIMIT 100').all<{ payload: string }>();
     return rows.map(({ payload }) => JSON.parse(payload) as AgentRun);
   }
   public get(id: string): AgentRun | undefined {
@@ -16,9 +16,15 @@ export class AgentRunRepository {
   public queue(): AgentRun[] {
     const placeholders = ACTIVE_RUN_STATUSES.map(() => '?').join(',');
     return this.db.prepare(`SELECT payload FROM agent_runs WHERE status IN (${placeholders}) OR id IN
-      (SELECT id FROM agent_runs WHERE status NOT IN (${placeholders}) ORDER BY updated_at DESC LIMIT ?)
+      (SELECT id FROM agent_runs WHERE status NOT IN (${placeholders}) AND id NOT IN (SELECT run_id FROM archived_agent_runs) ORDER BY updated_at DESC LIMIT ?)
+      AND id NOT IN (SELECT run_id FROM archived_agent_runs)
       ORDER BY updated_at DESC`).all<{ payload: string }>([...ACTIVE_RUN_STATUSES, ...ACTIVE_RUN_STATUSES, QUEUE_LIMITS.recent]).map(({ payload }) => JSON.parse(payload) as AgentRun);
   }
+  public archived(): AgentRun[] {
+    return this.db.prepare('SELECT r.payload FROM agent_runs r JOIN archived_agent_runs a ON a.run_id = r.id ORDER BY a.archived_at DESC').all<{ payload: string }>().map(({ payload }) => JSON.parse(payload) as AgentRun);
+  }
+  public archive(id: string, at: string): void { this.db.prepare('INSERT INTO archived_agent_runs(run_id, archived_at) VALUES(?, ?) ON CONFLICT(run_id) DO NOTHING').run([id, at]); }
+  public restore(id: string): void { this.db.prepare('DELETE FROM archived_agent_runs WHERE run_id = ?').run([id]); }
   public running(): AgentRun[] {
     return this.db.prepare('SELECT payload FROM agent_runs WHERE status = ?').all<{ payload: string }>([RunStatus.Running]).map(({ payload }) => JSON.parse(payload) as AgentRun);
   }

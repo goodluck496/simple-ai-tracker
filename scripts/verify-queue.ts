@@ -137,6 +137,22 @@ try {
     assert.ok(await queue.evaluate((element) => element.scrollWidth <= element.clientWidth + 2), 'Token table must scroll within the dialog');
   }
   assert.deepEqual(errors, []);
+  const hiddenCard = queue.getByRole('button', { name: `Запуск ${task.id} ${run.id}`, exact: true });
+  await detail.getByRole('button', { name: 'Скрыть из списка', exact: true }).click();
+  await hiddenCard.waitFor({ state: 'hidden' });
+  assert.equal(service.archive().some(entry => entry.id === run.id), true);
+  await page.reload();
+  await page.getByRole('button', { name: 'Очередь', exact: true }).click();
+  assert.equal(await hiddenCard.count(), 0);
+  await queue.getByRole('button', { name: 'Архив запусков', exact: true }).click();
+  const archive = queue.getByRole('region', { name: 'Архив запусков', exact: true });
+  await archive.getByText(new RegExp(run.id)).waitFor();
+  await archive.getByRole('button', { name: 'Вернуть в очередь', exact: true }).click();
+  await hiddenCard.waitFor();
+  assert.equal(service.archive().some(entry => entry.id === run.id), false);
+  await hiddenCard.click();
+  await detail.getByText('Fixture repeated failure', { exact: true }).first().waitFor();
+  assert.deepEqual(errors, []);
   const artifacts = path.resolve(import.meta.dirname, '../dist/acceptance'); mkdirSync(artifacts, { recursive: true });
   await meter.scrollIntoViewIfNeeded();
   await page.screenshot({ path: path.join(artifacts, 'automation-queue.png'), fullPage: true });

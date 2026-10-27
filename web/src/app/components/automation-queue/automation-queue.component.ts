@@ -31,6 +31,7 @@ export class AutomationQueueComponent {
   public readonly phaseTitles = RUN_PHASE_TITLES;
   public readonly lanes = QUEUE_LANES;
   public readonly recentLimit = QUEUE_LIMITS.recent;
+  public readonly archived = signal<AgentRun[] | null>(null);
   public readonly eventTitles = RUN_EVENT_TITLES;
   public readonly runStatus = RunStatus;
   public readonly runAction = RunAction;
@@ -74,5 +75,27 @@ export class AutomationQueueComponent {
   private message(error: unknown): string {
     const value = error as { error?: { error?: { message?: string } }; message?: string };
     return value.error?.error?.message ?? value.message ?? 'Не удалось обновить очередь.';
+  }
+  public openArchive(): void {
+    if (this.archived() !== null) { this.archived.set(null); return; }
+    this.http.get<{ runs: AgentRun[] }>('/api/automation/runs/archive').pipe(takeUntilDestroyed(this.destroyRef)).subscribe({
+      next: ({ runs }) => { this.archived.set(runs); this.error.set(''); }, error: (error: unknown) => this.error.set(this.message(error)),
+    });
+  }
+  public restore(id: string): void {
+    if (this.busy()) return;
+    this.busy.set(true);
+    this.http.post('/api/automation/runs/' + id + '/restore', {}).pipe(finalize(() => this.busy.set(false)), takeUntilDestroyed(this.destroyRef)).subscribe({
+      next: () => { this.archived.set((this.archived() ?? []).filter((run) => run.id !== id)); this.refresh.next(); this.changed.emit(); },
+      error: (error: unknown) => this.error.set(this.message(error)),
+    });
+  }
+  public hide(item: QueueItem): void {
+    if (this.busy()) return;
+    this.busy.set(true);
+    this.http.post('/api/automation/runs/' + item.id + '/hide', {}).pipe(finalize(() => this.busy.set(false)), takeUntilDestroyed(this.destroyRef)).subscribe({
+      next: () => { this.refresh.next(); if (this.selectedId() === item.id) this.selectedId.set(null); this.changed.emit(); },
+      error: (error: unknown) => { this.error.set(this.message(error)); this.refresh.next(); },
+    });
   }
 }

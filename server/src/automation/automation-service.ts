@@ -33,6 +33,16 @@ export class AutomationService {
   public list(taskId?: string): AgentRun[] {
     return this.runs.db.transaction(() => { this.expireLeases(); return this.runs.list(taskId).map((run) => this.publicRun(run)); });
   }
+  public archive(): AgentRun[] { return this.runs.db.transaction(() => { this.expireLeases(); return this.runs.archived().map((run) => this.publicRun(run)); }); }
+  public hide(id: string): void {
+    this.runs.db.transaction(() => {
+      this.expireLeases();
+      const run = this.requireRun(id);
+      if (ACTIVE_RUN_STATUSES.includes(run.status)) throw new TrackerError('CONFLICT', 'Active runs cannot be hidden; remove or stop the run first.');
+      this.runs.archive(id, this.clock.now());
+    });
+  }
+  public restore(id: string): void { this.runs.db.transaction(() => { this.requireRun(id); this.runs.restore(id); }); }
   public logPage(id: string, after = 0) { this.requireRun(id); return this.runs.eventPage(id, after); }
   public detail(id: string) {
     return this.runs.db.transaction(() => { this.expireLeases(); return { run: this.publicRun(this.requireRun(id)), events: this.runs.events(id) }; });
@@ -277,6 +287,7 @@ export class AutomationService {
     const stage = run.status === RunStatus.Waiting && EVIDENCE_AGENT_ROLES.includes(role)
       ? run.settings.pipeline.findIndex((id) => run.settings.agents.find((agent) => agent.id === id)?.role === AgentRole.Developer) : run.stage;
     const updated: AgentRun = { ...run, stage, status: RunStatus.Queued, leaseToken: null, workerId: null, leaseUntil: null, updatedAt: this.clock.now() };
+    this.runs.restore(id);
     this.runs.save(updated);
     this.runs.event(id, 'resumed', 'Продолжение с сохранёнными настройками и checkpoint. Ожидает worker.', this.clock.now());
     return this.publicRun(updated);

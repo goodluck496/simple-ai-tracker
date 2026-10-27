@@ -1,6 +1,7 @@
 <div class="queue">
   <div class="queue-toolbar"><p>Запуски сохраняются в трекере. Можно закрыть окно: подключённый worker продолжит выполнение.</p>
-    <button type="button" (click)="configure.emit()">Настройки команды и подключение worker</button></div>
+    <button type="button" (click)="configure.emit()">Настройки команды и подключение worker</button><button type="button" (click)="openArchive()">Архив запусков</button></div>
+  @if (archived(); as history) { <section aria-label="Архив запусков"><h3>Архив запусков</h3>@for (run of history; track run.id) { <div><button type="button" (click)="openTask.emit(run.taskId)">{{ run.taskId }} · {{ run.id }} · {{ statusTitles[run.status] }}</button><button type="button" [disabled]="busy()" (click)="restore(run.id)">Вернуть в очередь</button></div> } @empty { <p class="muted">Архив пуст</p> }</section> }
   <p role="status">Worker: {{ snapshot().host.online ? 'подключён' : 'не подключён' }}. Показаны все активные и последние {{ recentLimit }} завершённых запусков.</p>
   @if (error()) { <p role="alert" class="error">{{ error() }}</p> }
   @if (notice()) { <p role="status">{{ notice() }}</p> }
@@ -15,6 +16,7 @@
             <small>{{ progress(item.status === runStatus.Running ? item.lastMessage || health(item) : item.summary || item.lastMessage || health(item)) }}</small>
           </button>
           @if (item.status === runStatus.Queued) { <button type="button" class="dequeue-action" [disabled]="busy()" (click)="dequeue(item)">Убрать из очереди</button> }
+          @if (item.status === runStatus.Failed || item.status === runStatus.Cancelled || item.status === runStatus.Interrupted || item.status === runStatus.Review || item.status === runStatus.Merged) { <button type="button" [disabled]="busy()" (click)="hide(item)">Скрыть из списка</button> }
         } @empty { <p class="muted">Нет запусков</p> }
       </section>
     }
@@ -61,6 +63,7 @@
         @if (item.status === runStatus.Running || item.status === runStatus.Waiting) { <button type="button" [disabled]="busy()" (click)="action(item, runAction.Cancel)">Остановить</button> }
         @if (item.canResume) { <button type="button" [disabled]="busy()" (click)="action(item, runAction.Resume)">Продолжить с места остановки</button> }
         @if (item.canRestart) { <button type="button" [disabled]="busy()" (click)="action(item, runAction.Restart)">Начать заново</button> }
+        @if (item.status === runStatus.Failed || item.status === runStatus.Cancelled || item.status === runStatus.Interrupted || item.status === runStatus.Review || item.status === runStatus.Merged) { <button type="button" [disabled]="busy()" (click)="hide(item)">Скрыть из списка</button> }
       </div>
       @if (item.actionReason) { <p class="muted">{{ item.actionReason }}</p> }
       @if (item.canResume || item.canRestart) { <p class="muted">Продолжение использует прежние настройки и рабочую ветку. «Начать заново» создаёт новый запуск и новую ветку от базовой ветки с сохранёнными настройками команды; старый журнал останется.</p> }

@@ -9,6 +9,9 @@ import { RunLogDownload } from '../../automation/run-log-download.js';
 export function registerAutomationRoutes(router: Router, app: AppContainer): void {
   router.get('/api/automation/host', ({ res }) => sendJson(res, 200, app.automationService.projects.status()));
   router.get('/api/automation/queue', ({ res }) => sendJson(res, 200, app.automationService.queue()));
+  router.get('/api/automation/runs/archive', ({ res }) => sendJson(res, 200, { runs: app.automationService.archive() }));
+  router.post('/api/automation/runs/:id/hide', ({ params, res }) => { app.automationService.hide(params.id); sendJson(res, 200, { ok: true }); });
+  router.post('/api/automation/runs/:id/restore', ({ params, res }) => { app.automationService.restore(params.id); sendJson(res, 200, { ok: true }); });
   router.post('/api/automation/runs/:id/restart', ({ params, res }) => sendJson(res, 201, { run: app.automationService.restart(params.id) }));
   router.post('/api/automation/project-requests', ({ body, res }) => sendJson(res, 201, app.automationService.projects.enqueue(body as ProjectInput)));
   router.get('/api/automation/project-requests/:id', ({ params, res }) => sendJson(res, 200, app.automationService.projects.get(params.id)));

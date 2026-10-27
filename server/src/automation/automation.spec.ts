@@ -1,5 +1,8 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { mkdtempSync, rmSync } from 'node:fs';
+import path from 'node:path';
+import os from 'node:os';
 import { createContainer } from '../bootstrap/container.js';
 import { SilentLogger } from '../core/logger.js';
 import { AutomationSettingsValidator } from './settings.js';
@@ -109,4 +112,37 @@ test('queued cancellation is atomic with claim, keeps task and journal, and perm
     service.cancel(running.id);
     assert.equal(service.detail(running.id).run.status, 'cancelled');
   } finally { app.close(); }
+});
+
+test('run archive is persistent, workspace scoped, terminal only, and restores without deleting events', () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), 'sat-archive-'));
+  const config = { appRoot: root, dbPath: path.join(root, 'data', 'tracker.db') };
+  const app = createContainer({ config, logger: new SilentLogger() });
+  try {
+    const service = app.automationService; service.configure(exampleSettings());
+    const task = app.taskService.createTask({ title: 'Archive lifecycle' });
+    const queued = service.enqueue(task.id);
+    assert.throws(() => service.hide(queued.id), /Active runs cannot be hidden/);
+    service.dequeue(queued.id);
+    const before = service.detail(queued.id).events.length;
+    service.hide(queued.id); service.hide(queued.id);
+    assert.equal(service.queue().items.some((item) => item.id === queued.id), false);
+    assert.equal(service.list().some((run) => run.id === queued.id), false);
+    assert.equal(service.archive().length, 1);
+    const reopened = createContainer({ config, logger: new SilentLogger() });
+    try { assert.equal(reopened.automationService.archive()[0].id, queued.id); } finally { reopened.close(); }
+    assert.equal(service.detail(queued.id).events.length, before);
+    const task2 = app.taskService.createTask({ title: 'Workspace isolation' });
+    const other = service.enqueue(task2.id); service.dequeue(other.id);
+    const isolated = 'isolated-' + Date.now(); app.workspaceManager.create(isolated, 'Isolated workspace');
+    app.workspaceManager.within(isolated, () => {
+      const isolatedService = app.workspaceManager.active.automationService;
+      isolatedService.configure(exampleSettings());
+      assert.equal(isolatedService.archive().length, 0);
+      assert.throws(() => isolatedService.restore(queued.id), /not found/i);
+    });
+    service.restore(queued.id); service.restore(queued.id);
+    assert.equal(service.queue().items.some((item) => item.id === queued.id), true);
+    assert.equal(service.archive().length, 0);
+  } finally { app.close(); rmSync(root, { recursive: true, force: true }); }
 });
