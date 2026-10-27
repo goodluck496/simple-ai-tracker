@@ -160,6 +160,24 @@ try {
   await hiddenCard.click();
   await detail.getByText('Fixture repeated failure', { exact: true }).first().waitFor();
   for (const queued of service.list().filter(r => r.status === 'queued')) service.dequeue(queued.id);
+  const budgetTask = app.taskService.createTask({ title: 'Budget approval UI fixture' });
+  const budgetRun = service.enqueue(budgetTask.id, { ...settings, maxAgentCalls: 6 });
+  const budgetLease = service.claim('budget-ui')!;
+  service.beginStage(budgetRun.id, budgetLease.leaseToken!);
+  const waitingBudget = service.completeStage(budgetRun.id, budgetLease.leaseToken!, { verdict: 'pass', summary: 'Analysis completed', plan: '1. Implement two independent deliveries.', decomposition: [
+    { key: 'A', title: 'First', description: 'First change.', plan: '1. Implement first.', dependsOn: [] },
+    { key: 'B', title: 'Second', description: 'Second change.', plan: '1. Implement second.', dependsOn: [] },
+  ] }, `sat/${budgetRun.id}`, 'a'.repeat(40));
+  assert.equal(waitingBudget.status, 'waiting'); assert.equal(waitingBudget.budgetApproval?.requiredCalls, 7);
+  await page.reload(); await page.getByRole('button', { name: 'Очередь', exact: true }).click();
+  await queue.getByRole('button', { name: `Запуск ${budgetTask.id} ${budgetRun.id}`, exact: true }).click();
+  await detail.getByLabel('Согласование бюджета', { exact: true }).waitFor();
+  assert.equal(await detail.getByRole('button', { name: 'Продолжить с места остановки', exact: true }).count(), 0);
+  await detail.getByRole('button', { name: 'Изменить бюджет запуска', exact: true }).click();
+  assert.equal(await detail.getByRole('spinbutton', { name: 'Лимит вызовов', exact: true }).inputValue(), '7');
+  await detail.getByRole('button', { name: 'Сохранить лимиты', exact: true }).click();
+  await detail.getByRole('button', { name: 'Продолжить с места остановки', exact: true }).waitFor();
+  service.cancel(budgetRun.id);
   const featureTask = app.taskService.createTask({ title: 'Feature decomposition UI fixture' });
   const featureRun = service.enqueue(featureTask.id, { ...settings, maxAgentCalls: 12 });
   const featureLease = service.claim('feature-ui')!;

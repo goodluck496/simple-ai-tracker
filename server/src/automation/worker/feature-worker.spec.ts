@@ -93,8 +93,13 @@ test('feature asks before dispatch, preserves budget checkpoint, reviews isolate
     app.taskService.answerQuestions({ id: task.id, answers: [{ questionIndex: 1, answer: 'Yes' }], actor: 'user' });
     app.automationService.resume(run.id); await worker().tick();
     const stopped = app.automationService.detail(run.id).run;
-    assert.equal(stopped.status, 'failed'); assert.match(stopped.summary, /at least 8 total agent calls/);
+    assert.equal(stopped.status, 'waiting'); assert.equal(stopped.budgetApproval?.requiredCalls, 8);
+    assert.match(stopped.summary, /Ожидает согласования бюджета/);
+    assert.throws(() => app.automationService.resume(run.id), /минимум 8/);
+    assert.equal(app.automationService.queue().items.find(i => i.id === run.id)?.canResume, false);
     assert.equal(app.taskService.getTaskCard(task.id).subtasks.length, 0);
+    const diagnostic = app.taskService.createTask({ title: 'Related diagnostic only' });
+    app.taskService.linkTasks(task.id, diagnostic.id, 'related');
     app.automationService.extendBudget(run.id, { maxAgentCalls: 11 });
     assert.throws(() => app.automationService.extendBudget(run.id, { maxAgentCalls: 10 }), /only increase/);
     app.automationService.resume(run.id); await worker().tick();

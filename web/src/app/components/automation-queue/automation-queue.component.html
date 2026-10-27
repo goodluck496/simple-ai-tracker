@@ -65,6 +65,9 @@
           @if (detail()?.run; as run) {
             @let budget = runBudget.explain(run);
             <div aria-label="Диагностика бюджета">
+              @if (run.budgetApproval; as approval) {
+                <p role="status" aria-label="Согласование бюджета">Аналитика завершена. Для разбиения требуется минимум {{ approval.requiredCalls }} вызовов за весь запуск; текущий лимит {{ run.settings.maxAgentCalls ?? 6 }}. План сохранён, разработка не запущена. Минимум не включает запас на исправления.</p>
+              }
               @if (run.status === runStatus.Failed || run.status === runStatus.Interrupted || run.status === runStatus.Waiting || run.status === runStatus.Cancelled || run.status === runStatus.MergeBlocked) {
                 <button pButton type="button" severity="secondary" [disabled]="busy()" (click)="editBudget(run)">Изменить бюджет запуска</button>
                 @if (budgetEditing()) {

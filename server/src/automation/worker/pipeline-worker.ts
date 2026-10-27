@@ -198,7 +198,7 @@ export class PipelineWorker {
         // are operational noise, not new requirements that justify another model call.
         const relations = pack.relations as { parent?: { id: string }; subtasks?: { id: string }[]; links?: { relation: string; task: { id: string } }[] } | undefined;
         const relationKey = { parent: relations?.parent?.id, subtasks: relations?.subtasks?.map(t => t.id).sort(),
-          links: relations?.links?.map(l => `${l.relation}:${l.task.id}`).sort() };
+          links: relations?.links?.filter(l => l.relation === 'blocks' || l.relation === 'blocked_by').map(l => `${l.relation}:${l.task.id}`).sort() };
         const requirementsKey = StageCheckpoint.key({ description: pack.description, plan: pack.plan, questions: pack.questions, relations: relationKey });
         // Failure comments and run.summary change on infrastructure failure, so they are not cache keys.
         const checkpoint = new StageCheckpoint(cwd, run.stage, run.revision, (args) => git(args, cwd));

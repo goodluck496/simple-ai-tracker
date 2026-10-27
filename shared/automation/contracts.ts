@@ -96,6 +96,7 @@ export const DEFAULT_AUTOMATION_SETTINGS: AutomationSettings = {
 export const DEFAULT_CHECK_COMMAND: CheckCommand = { command: 'npm', args: ['test'] };
 export const DEFAULT_SETUP_COMMAND: CheckCommand = { command: 'npm', args: ['ci'] };
 export interface AgentRun {
+  budgetApproval?: { requiredCalls: number; currentCalls: number };
   checkpointBudgets?: Pick<AutomationSettings, 'maxAgentCalls' | 'maxInputTokens' | 'maxRunMinutes' | 'maxStageToolCalls' | 'timeoutMinutes'>;
   feature?: import('./decomposition.js').FeatureExecution;
   integrationSourceSha?: string;

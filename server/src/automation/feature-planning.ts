@@ -4,10 +4,15 @@ import { Decomposition, type FeatureExecution } from '../../../shared/automation
 import { createHash } from 'node:crypto';
 
 export class FeaturePlanning {
+  public static requiredCalls(run: AgentRun, outcome: AgentOutcome): number {
+    const parts = Decomposition.validate(outcome.decomposition);
+    const pipeline = Decomposition.schedule(run.settings, run.stage, parts.length);
+    return (run.usageAttempts?.length ?? 0) + pipeline.length - run.stage - 2;
+  }
   public static apply(run: AgentRun, outcome: AgentOutcome, tasks: TaskService): { feature: FeatureExecution; pipeline: string[] } {
     const parts = Decomposition.validate(outcome.decomposition);
     const pipeline = Decomposition.schedule(run.settings, run.stage, parts.length);
-    const calls = (run.usageAttempts?.length ?? 0) + parts.length * 2 + pipeline.length - (run.stage + 1 + parts.length * 2 + 1);
+    const calls = this.requiredCalls(run, outcome);
     if (calls > (run.settings.maxAgentCalls ?? 6)) throw new Error(`Decomposition needs at least ${calls} total agent calls; current limit is ${run.settings.maxAgentCalls ?? 6}. Increase the run budget explicitly, then resume; no children were dispatched.`);
     const parent = tasks.getTaskCard(run.taskId);
     const children = parts.map((part, i) => {

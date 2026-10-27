@@ -36,7 +36,7 @@ export class AutomationQueueComponent {
   public budgetInput = 500000;
   public budgetMinutes = 20;
   public editBudget(run: AgentRun): void {
-    this.budgetCalls = run.settings.maxAgentCalls ?? 6; this.budgetInput = run.settings.maxInputTokens ?? 500000;
+    this.budgetCalls = Math.max(run.settings.maxAgentCalls ?? 6, run.budgetApproval?.requiredCalls ?? 0); this.budgetInput = run.settings.maxInputTokens ?? 500000;
     this.budgetMinutes = run.settings.maxRunMinutes ?? 20; this.budgetEditing.set(true);
   }
   public saveBudget(run: AgentRun): void {
