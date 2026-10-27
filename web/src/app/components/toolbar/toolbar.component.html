@@ -11,13 +11,13 @@
       (ngModelChange)="onQueryInput($event)"
     />
     @if (store.query()) {
-      <button type="button" class="search-clear" pTooltip="Очистить" tooltipPosition="bottom" (click)="clearQuery()">
+      <button pButton severity="secondary" type="button" class="search-clear" pTooltip="Очистить" tooltipPosition="bottom" (click)="clearQuery()">
         <i class="pi pi-times"></i>
       </button>
     }
 
     <!-- Поля поиска: компактная кнопка + popover с чекбоксами -->
-    <button
+    <button pButton severity="secondary"
       type="button"
       class="scope-trigger"
       [class.scope-trigger--active]="store.searchScopes().length < scopeOptions.length"
@@ -44,8 +44,8 @@
           </label>
         }
         <div class="scope-menu-footer">
-          <button type="button" class="link-btn" (click)="selectAllScopes()">Все</button>
-          <button type="button" class="link-btn" (click)="selectOnlyTitle()">Только название</button>
+          <button pButton severity="secondary" type="button" class="link-btn" (click)="selectAllScopes()">Все</button>
+          <button pButton severity="secondary" type="button" class="link-btn" (click)="selectOnlyTitle()">Только название</button>
         </div>
       </div>
     </p-popover>
@@ -100,7 +100,7 @@
     ></p-select>
 
     @if (store.filtersActive()) {
-      <button type="button" class="reset-btn" pTooltip="Сбросить фильтры" tooltipPosition="bottom" (click)="resetFilters()">
+      <button pButton severity="secondary" type="button" class="reset-btn" pTooltip="Сбросить фильтры" tooltipPosition="bottom" (click)="resetFilters()">
         <i class="pi pi-filter-slash"></i>
         <span>Сбросить</span>
       </button>

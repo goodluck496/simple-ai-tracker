@@ -1,6 +1,7 @@
 import { ChangeDetectionStrategy, Component, DestroyRef, EventEmitter, Input, Output, computed, effect, inject, signal } from '@angular/core';
 import { DatePipe, DecimalPipe } from '@angular/common';
 import { TableModule } from 'primeng/table';
+import { ButtonModule } from 'primeng/button';
 import { TokenMeter } from '../../../../../shared/automation/token-usage';
 import { RunConsoleComponent } from '../run-console/run-console.component';
 import { HttpClient } from '@angular/common/http';
@@ -14,7 +15,7 @@ import { TASK_STATUS_TITLES } from '../../../../../shared/automation/task-readin
 import { WorkspaceService } from '../../services/workspace.service';
 import { filterQueueItems } from './queue-search';
 
-@Component({ selector: 'sat-automation-queue', standalone: true, imports: [DatePipe, DecimalPipe, RunConsoleComponent, TableModule],
+@Component({ selector: 'sat-automation-queue', standalone: true, imports: [DatePipe, DecimalPipe, RunConsoleComponent, TableModule, ButtonModule],
   changeDetection: ChangeDetectionStrategy.OnPush, templateUrl: './automation-queue.component.html', styleUrl: './automation-queue.component.scss' })
 export class AutomationQueueComponent {
   private readonly http = inject(HttpClient);

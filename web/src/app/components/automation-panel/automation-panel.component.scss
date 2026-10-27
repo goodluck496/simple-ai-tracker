@@ -5,6 +5,7 @@
 .settings-footer { position: sticky; bottom: 0; padding: .6rem 0; background: var(--p-content-background); border-top: 1px solid var(--p-content-border-color); z-index: 2; }
 .row { display: flex; flex-wrap: wrap; align-items: end; gap: .65rem; }
 label { display: grid; gap: .35rem; font-size: .85rem; min-width: 0; }
+.checkbox-field { display: flex; align-items: center; gap: .5rem; }
 :host ::ng-deep .p-select { max-width: 100%; }
 :host ::ng-deep .p-select-label { overflow: hidden; text-overflow: ellipsis; }
 input, textarea { min-width: 0; max-width: 100%; }

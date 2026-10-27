@@ -23,7 +23,7 @@
     @if (parentOf(task); as parent) {
       <div class="sat-card__parent" (click)="$event.stopPropagation()">
         <i class="pi pi-bookmark" aria-hidden="true"></i>
-        <button type="button" class="sat-card__parent-name" (click)="onFeatureFilterTrigger($event, parent.id)">
+        <button pButton severity="secondary" type="button" class="sat-card__parent-name" (click)="onFeatureFilterTrigger($event, parent.id)">
           {{ parent.title }}
         </button>
       </div>
@@ -36,7 +36,7 @@
     @if (hasTags(task)) {
       <div class="sat-card__tags" (click)="$event.stopPropagation()">
         @for (tag of task.tags; track tag.id) {
-          <button
+          <button pButton severity="secondary"
             type="button"
             class="sat-card__tag"
             [pTooltip]="'Фильтровать по тегу #' + tag.name"
@@ -184,7 +184,7 @@
         @for (group of visibleFeatureGroups(status.status); track group.feature.id) {
           <div class="sat-feature">
             <div class="sat-feature__head">
-              <button
+              <button pButton severity="secondary"
                 type="button"
                 class="sat-feature__toggle"
                 (click)="onToggleFeature($event, group.feature.id)"
@@ -199,7 +199,7 @@
                 {{ statusShort(group.feature.status) }}
               </span>
 
-              <button
+              <button pButton severity="secondary"
                 type="button"
                 class="sat-feature__title"
                 [pTooltip]="'Открыть фичу: ' + group.feature.title"
@@ -210,7 +210,7 @@
               </button>
 
               <div class="sat-feature__right">
-                <button
+                <button pButton severity="secondary"
                   type="button"
                   class="sat-feature__filter"
                   [class.sat-feature__filter--active]="isFeatureFiltered(group.feature.id)"
@@ -222,7 +222,7 @@
                   <span>{{ doneSubtasks(group) }}/{{ group.subtasks.length }}</span>
                 </button>
 
-                <button
+                <button pButton severity="secondary"
                   type="button"
                   class="sat-feature__quick sat-feature__quick--task"
                   (click)="onAddSubtask($event, group.feature.id, 'task')"
@@ -231,7 +231,7 @@
                 >
                   <i class="pi pi-plus"></i> Таск
                 </button>
-                <button
+                <button pButton severity="secondary"
                   type="button"
                   class="sat-feature__quick sat-feature__quick--bug"
                   (click)="onAddSubtask($event, group.feature.id, 'bug')"
@@ -272,7 +272,7 @@
                 @if (hasTags(group.feature)) {
                   <div class="sat-card__tags">
                     @for (tag of group.feature.tags; track tag.id) {
-                      <button type="button" class="sat-card__tag" (click)="onTagClick($event, tag.name)">#{{ tag.name }}</button>
+                      <button pButton severity="secondary" type="button" class="sat-card__tag" (click)="onTagClick($event, tag.name)">#{{ tag.name }}</button>
                     }
                   </div>
                 }
@@ -307,9 +307,9 @@
                 <div class="sat-feature__empty">
                   <i class="pi pi-info-circle"></i>
                   <span>Нет задач в этом статусе (</span>
-                  <button type="button" class="sat-feature__hint-link" (click)="onAddSubtask($event, group.feature.id, 'task')">+Таск</button>
+                  <button pButton severity="secondary" type="button" class="sat-feature__hint-link" (click)="onAddSubtask($event, group.feature.id, 'task')">+Таск</button>
                   <span>, </span>
-                  <button type="button" class="sat-feature__hint-link" (click)="onAddSubtask($event, group.feature.id, 'bug')">+Баг</button>
+                  <button pButton severity="secondary" type="button" class="sat-feature__hint-link" (click)="onAddSubtask($event, group.feature.id, 'bug')">+Баг</button>
                   <span>)</span>
                 </div>
               }
@@ -348,7 +348,7 @@
       <!-- Догрузка следующей порции карточек (lazy) -->
       @if (hiddenCount(status.status) > 0) {
         <div class="sat-col__more">
-          <button type="button" class="sat-col__more-btn" (click)="loadMore(status.status)">
+          <button pButton severity="secondary" type="button" class="sat-col__more-btn" (click)="loadMore(status.status)">
             <i class="pi pi-angle-double-down"></i>
             Показать ещё {{ hiddenCount(status.status) }}
           </button>

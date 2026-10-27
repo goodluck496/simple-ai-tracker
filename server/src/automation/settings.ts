@@ -29,6 +29,8 @@ export class AutomationSettingsValidator {
       }
     }
     const profiles = new Map<string, typeof settings.agents[number]>();
+    for (const connection of settings.connections) if (connection.nativeRunner !== undefined
+      && (!RUNNER_IDS.includes(connection.nativeRunner) || connection.nativeRunner === RunnerId.ModelApi)) return fail('Invalid native runner.');
     for (const agent of settings.agents) {
       if (!agent || !text(agent.id) || !/^[\w-]+$/.test(agent.id) || profiles.has(agent.id)) return fail('Agent IDs must be unique.');
       profiles.set(agent.id, agent);
@@ -67,7 +69,7 @@ export class AutomationSettingsValidator {
     // Reconstruct persisted objects so unknown fields cannot carry credentials.
     return {
       repositoryPath: settings.repositoryPath, baseBranch: settings.baseBranch,
-      connections: settings.connections.map(({ id, label, kind, baseUrl, credentialEnv, supportsImages, reasoningEffort }) => ({ id, label, kind, baseUrl, credentialEnv, supportsImages, reasoningEffort })),
+      connections: settings.connections.map(({ id, label, kind, baseUrl, credentialEnv, supportsImages, reasoningEffort, nativeRunner }) => ({ id, label, kind, baseUrl, credentialEnv, supportsImages, reasoningEffort, ...(kind === ProviderKind.Native && nativeRunner ? { nativeRunner } : {}) })),
       agents: settings.agents.map(({ id, role, runner, connectionId, model, instructions, nativeProfile, command, args }) => ({ id, role, runner, connectionId, model, instructions, nativeProfile, command, args })),
       pipeline: settings.pipeline, checks: settings.checks.map(({ command, args }) => ({ command, args })), setup: settings.setup.map(({ command, args }) => ({ command, args })), artifactPaths: settings.artifactPaths,
       timeoutMinutes: settings.timeoutMinutes, maxRevisions: settings.maxRevisions, mergePolicy: settings.mergePolicy,

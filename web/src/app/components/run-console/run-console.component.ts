@@ -1,11 +1,14 @@
 import { ChangeDetectionStrategy, Component, ElementRef, afterRenderEffect, computed, effect, inject, input, signal, viewChild } from '@angular/core';
 import { DatePipe } from '@angular/common';
+import { FormsModule } from '@angular/forms';
+import { ButtonModule } from 'primeng/button';
+import { SelectModule } from 'primeng/select';
 import { HttpClient } from '@angular/common/http';
 import { firstValueFrom } from 'rxjs';
 import type { RunEvent } from '../../../../../shared/automation/contracts';
 import { CONSOLE_LIMITS, RunConsoleDecoder } from '../../../../../shared/automation/console';
 
-@Component({ selector: 'sat-run-console', standalone: true, imports: [DatePipe],
+@Component({ selector: 'sat-run-console', standalone: true, imports: [DatePipe, FormsModule, ButtonModule, SelectModule],
   changeDetection: ChangeDetectionStrategy.OnPush, templateUrl: './run-console.component.html', styleUrl: './run-console.component.scss' })
 export class RunConsoleComponent {
   private readonly http = inject(HttpClient);
@@ -14,6 +17,11 @@ export class RunConsoleComponent {
   public readonly view = computed(() => RunConsoleDecoder.render(this.events()));
   public readonly level = signal('all');
   public readonly stage = signal('all');
+  public readonly levelOptions = [
+    { label: 'Все', value: 'all' }, { label: 'Ошибки', value: 'error' }, { label: 'Предупреждения', value: 'warning' },
+    { label: 'Команды', value: 'command' }, { label: 'Успех', value: 'success' }, { label: 'Сообщения', value: 'info' },
+  ];
+  public readonly stageOptions = computed(() => [{ label: 'Все этапы', value: 'all' }, ...this.stages().map(value => ({ label: value, value }))]);
   public readonly follow = signal(true);
   public readonly rawOpen = signal(false);
   public readonly message = signal('');

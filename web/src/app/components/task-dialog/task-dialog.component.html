@@ -533,7 +533,7 @@
                 @for (image of images(); track image; let index = $index) {
                   <div class="image-thumb">
                     <p-image [src]="image" [preview]="true" alt="Скриншот" width="120"></p-image>
-                    <button
+                    <button pButton severity="secondary"
                       type="button"
                       class="image-remove"
                       pTooltip="Удалить скриншот"

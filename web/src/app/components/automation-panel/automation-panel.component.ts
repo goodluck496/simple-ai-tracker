@@ -5,6 +5,7 @@ import { HttpClient } from '@angular/common/http';
 import { exhaustMap, filter, firstValueFrom, last, lastValueFrom, switchMap, takeWhile, timeout, timer } from 'rxjs';
 import { SelectModule } from 'primeng/select';
 import { ButtonModule } from 'primeng/button';
+import { CheckboxModule } from 'primeng/checkbox';
 import { InputTextModule } from 'primeng/inputtext';
 import { TabsModule } from 'primeng/tabs';
 import { AccordionModule } from 'primeng/accordion';
@@ -12,10 +13,10 @@ import { AUTOMATION_TABS, AutomationTab } from './automation-panel.types';
 import { AGENT_ROLES, RUNNER_IDS, DEFAULT_AUTOMATION_SETTINGS, PROVIDER_KINDS, REASONING_EFFORTS, MERGE_POLICIES,
   AUTOMATION_LIMITS, AUTOMATION_TIMING,
   DEFAULT_CHECK_COMMAND, DEFAULT_SETUP_COMMAND, ProviderKind, RunnerId, AgentRole,
-  type AgentRun, type AutomationSettings, type CheckCommand, type AgentProfile } from '../../../../../shared/automation/contracts';
+  type AgentRun, type AutomationSettings, type CheckCommand, type AgentProfile, type ModelConnection } from '../../../../../shared/automation/contracts';
 import { ProjectAction, ProjectRequestStatus, PROJECT_LIMITS, SETUP_PRESETS, CHECK_PRESETS, WorkerPlatform,
   type ProjectInput, type ProjectRequest, type ProjectResult, type HostStatus, type CommandPreset } from '../../../../../shared/automation/project';
-import { CONNECTION_PRESETS, PROVIDER_OPTIONS, ROLE_OPTIONS, STANDARD_TEAM_ROLES, type ConnectionPreset } from '../../../../../shared/automation/presets';
+import { CONNECTION_PRESETS, PROVIDER_OPTIONS, RUNNER_OPTIONS, ROLE_OPTIONS, STANDARD_TEAM_ROLES, type ConnectionPreset } from '../../../../../shared/automation/presets';
 import type { TaskSummary } from '../../models/tracker.models';
 import { WorkspaceService } from '../../services/workspace.service';
 import { WorkerLaunchCommand, DEFAULT_TRACKER_CONTAINER } from '../../../../../shared/automation/launch-command';
@@ -24,7 +25,7 @@ import { TaskAutomationReadiness, TASK_STATUS_TITLES, TASK_SELECTION_LIMIT, type
 import { ModelCatalogKey, type ModelOption } from '../../../../../shared/automation/model-catalog';
 
 @Component({ selector: 'sat-automation-panel', standalone: true,
-  imports: [FormsModule, ReactiveFormsModule, SelectModule, ButtonModule, InputTextModule, TabsModule, AccordionModule],
+  imports: [FormsModule, ReactiveFormsModule, SelectModule, ButtonModule, CheckboxModule, InputTextModule, TabsModule, AccordionModule],
   templateUrl: './automation-panel.component.html', styleUrl: './automation-panel.component.scss' })
 export class AutomationPanelComponent implements OnInit {
   @Output() public readonly openQueue = new EventEmitter<string | null>();
@@ -125,6 +126,10 @@ export class AutomationPanelComponent implements OnInit {
   public error = ''; public notice = ''; public busy = false;
   public readonly roles = [...AGENT_ROLES];
   public readonly runners = [...RUNNER_IDS];
+  public runnerOptions(agent: AgentProfile) {
+    const native = this.settings.connections.find(c => c.id === agent.connectionId)?.kind === ProviderKind.Native;
+    return native ? this.nativeRunnerOptions : this.apiRunnerOptions;
+  }
   public readonly providers = [...PROVIDER_KINDS];
   public readonly reasoningEfforts = [...REASONING_EFFORTS];
   public readonly mergePolicies = [...MERGE_POLICIES];
@@ -135,6 +140,18 @@ export class AutomationPanelComponent implements OnInit {
   public readonly providerOptions = PROVIDER_OPTIONS;
   public readonly roleOptions = ROLE_OPTIONS;
   public readonly connectionPresets = CONNECTION_PRESETS;
+  public readonly nativeRunnerOptions = RUNNER_OPTIONS.filter(option => option.value !== RunnerId.ModelApi);
+  public readonly apiRunnerOptions = RUNNER_OPTIONS.filter(option => option.value === RunnerId.ModelApi);
+  public nativeRunner(connection: ModelConnection): RunnerId {
+    return connection.nativeRunner ?? CONNECTION_PRESETS.find(p => p.connection.kind === ProviderKind.Native && p.connection.label === connection.label)?.runner ?? RunnerId.Codex;
+  }
+  public setNativeRunner(connection: ModelConnection, runner: RunnerId): void {
+    connection.nativeRunner = runner; this.providerChanged(connection);
+  }
+  public providerChanged(connection: ModelConnection): void {
+    if (connection.kind !== ProviderKind.Native) delete connection.nativeRunner;
+    for (const agent of this.settings.agents.filter(agent => agent.connectionId === connection.id)) this.selectConnection(agent);
+  }
   public readonly setupPresets = SETUP_PRESETS;
   public checkPresets: readonly CommandPreset[] = CHECK_PRESETS;
   public host: HostStatus = { online: false };
@@ -190,10 +207,12 @@ export class AutomationPanelComponent implements OnInit {
       filter(() => !this.busy && !this.starting), exhaustMap(() => this.poll()), takeUntilDestroyed(this.destroyRef),
     ).subscribe();
   }
-  public addPresetConnection(id: ConnectionPreset): void {
+  public addPresetConnection(id: ConnectionPreset): string {
     const preset = CONNECTION_PRESETS.find((entry) => entry.id === id)!;
-    this.settings.connections.push({ ...structuredClone(preset.connection), id: crypto.randomUUID() });
+    const connectionId = crypto.randomUUID();
+    this.settings.connections.push({ ...structuredClone(preset.connection), id: connectionId });
     this.notice = `Подключение «${preset.label}» добавлено. Выберите его у нужных агентов.`;
+    return connectionId;
   }
   public commandSelected(value: CheckCommand, setup: boolean): boolean {
     return (setup ? this.settings.setup : this.settings.checks).some((entry) => entry.command === value.command && this.json(entry.args) === this.json(value.args));
@@ -260,7 +279,10 @@ export class AutomationPanelComponent implements OnInit {
     const signature = JSON.stringify(this.settings.connections.map(({ id, label }) => ({ id, label })));
     if (signature !== this.connectionOptionsSignature) {
       this.connectionOptionsSignature = signature;
-      this.connectionOptionsCache = this.settings.connections.map((entry) => ({ label: entry.label || entry.id, value: entry.id }));
+      this.connectionOptionsCache = [
+        ...this.settings.connections.map((entry) => ({ label: entry.label || entry.id, value: entry.id })),
+        ...CONNECTION_PRESETS.map(preset => ({ label: `＋ ${preset.label} — добавить подключение`, value: `preset:${preset.id}` })),
+      ];
     }
     return this.connectionOptionsCache;
   }
@@ -277,9 +299,15 @@ export class AutomationPanelComponent implements OnInit {
     this.notice = 'Четыре роли добавлены. Укажите модель каждой роли; подключение можно менять отдельно.';
   }
   public selectConnection(agent: AgentProfile): void {
+    if (agent.connectionId.startsWith('preset:')) {
+      const presetId = agent.connectionId.slice('preset:'.length) as ConnectionPreset;
+      if (!CONNECTION_PRESETS.some(p => p.id === presetId)) return;
+      agent.connectionId = this.addPresetConnection(presetId);
+    }
     const connection = this.settings.connections.find((entry) => entry.id === agent.connectionId);
     if (!connection) return;
     if (connection.kind !== ProviderKind.Native) { agent.runner = RunnerId.ModelApi; return; }
+    if (connection.nativeRunner) { agent.runner = connection.nativeRunner; return; }
     const preset = CONNECTION_PRESETS.find((entry) => entry.connection.label === connection.label && entry.connection.kind === connection.kind);
     if (preset) agent.runner = preset.runner;
     else if (agent.runner === RunnerId.ModelApi) agent.runner = RunnerId.Codex;

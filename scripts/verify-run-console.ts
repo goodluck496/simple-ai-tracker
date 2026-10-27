@@ -47,16 +47,21 @@ try {
   assert.equal(await log.locator('img').count(), 0);
   assert.ok(!(await log.innerText()).includes('item.completed'));
   assert.ok((await log.innerText()).includes('exit 1'));
-  await consoleView.getByLabel('Уровень журнала').selectOption('error');
+  const select = async (name: string, label: string) => {
+    await consoleView.getByRole('combobox', { name, exact: true }).click();
+    await page.getByRole('option', { name: label, exact: true }).click();
+    await page.getByRole('listbox').waitFor({ state: 'hidden' });
+  };
+  await select('Уровень журнала', 'Ошибки');
   assert.equal(await log.locator('.line:not([data-level="error"])').count(), 0);
   await consoleView.getByRole('button', { name: 'Копировать вывод', exact: true }).click();
   await consoleView.getByRole('status').filter({ hasText: 'скопирован' }).waitFor();
   const copied = await page.evaluate(() => navigator.clipboard.readText());
   assert.match(copied, /fixture stderr/); assert.doesNotMatch(copied, /\$ npm test/);
-  await consoleView.getByLabel('Уровень журнала').selectOption('all');
-  await consoleView.getByLabel('Этап журнала').selectOption('Подготовка');
+  await select('Уровень журнала', 'Все');
+  await select('Этап журнала', 'Подготовка');
   assert.ok(!(await log.innerText()).includes('$ npm test'));
-  await consoleView.getByLabel('Этап журнала').selectOption('all');
+  await select('Этап журнала', 'Все этапы');
   await consoleView.locator('summary').click();
   assert.match(await consoleView.locator('.raw').innerText(), /item.completed/);
   const [download] = await Promise.all([page.waitForEvent('download'), consoleView.getByRole('button', { name: 'Скачать полный исходный журнал', exact: true }).click()]);

@@ -13,7 +13,7 @@
   <p class="hint">Трекер работает отдельно. Копировать его репозиторий в проекты не нужно.</p>
   <div class="row">
     <p-button [label]="host.online ? 'Worker уже подключён' : 'Подключить worker'" [severity]="host.online ? 'secondary' : 'success'" [disabled]="busy || host.online || !launchCommand" (onClick)="copyLaunchCommand()" />
-    <button type="button" (click)="showLaunchCommand = !showLaunchCommand; launchNotice = ''">{{ showLaunchCommand ? 'Скрыть команду' : 'Показать команду' }}</button>
+    <button pButton severity="secondary" type="button" (click)="showLaunchCommand = !showLaunchCommand; launchNotice = ''">{{ showLaunchCommand ? 'Скрыть команду' : 'Показать команду' }}</button>
   </div>
   @if (launchNotice) { <p role="status">{{ launchNotice }}</p> }
   <p-accordion><p-accordion-panel value="connection"><p-accordion-header>Расширенные настройки подключения</p-accordion-header><p-accordion-content>
@@ -33,7 +33,7 @@
   </div>
   @if (pendingFolderPick) {
     <p role="status">Выполните скопированную команду в PowerShell. Когда worker подключится, выбор папки откроется автоматически.</p>
-    <button type="button" (click)="pendingFolderPick = false">Отменить ожидание выбора</button>
+    <button pButton severity="secondary" type="button" (click)="pendingFolderPick = false">Отменить ожидание выбора</button>
   }
   <div class="row">
     <p-button data-project-picker label="Обзор каталогов worker" severity="secondary" [disabled]="projectBusy || !host.online" (onClick)="browse(settings.repositoryPath)" />
@@ -44,10 +44,10 @@
   @if (browserOpen && directory) {
     <fieldset aria-label="Папки на worker">
       <strong>{{ directory.path }}</strong>
-      <div class="row"><button type="button" [disabled]="projectBusy || directory.parent === directory.path" (click)="browse(directory.parent)">↑ На уровень выше</button>
-        <button type="button" [disabled]="projectBusy" (click)="chooseDirectory()">Выбрать эту папку</button>
-        <button type="button" (click)="browserOpen = false">Закрыть выбор</button></div>
-      <div class="directories">@for (entry of directory.directories; track entry.path) { <button type="button" [disabled]="projectBusy" (click)="browse(entry.path)">📁 {{ entry.name }}</button> }</div>
+      <div class="row"><button pButton severity="secondary" type="button" [disabled]="projectBusy || directory.parent === directory.path" (click)="browse(directory.parent)">↑ На уровень выше</button>
+        <button pButton severity="secondary" type="button" [disabled]="projectBusy" (click)="chooseDirectory()">Выбрать эту папку</button>
+        <button pButton severity="secondary" type="button" (click)="browserOpen = false">Закрыть выбор</button></div>
+      <div class="directories">@for (entry of directory.directories; track entry.path) { <button pButton severity="secondary" type="button" [disabled]="projectBusy" (click)="browse(entry.path)">📁 {{ entry.name }}</button> }</div>
       @if (directory.truncated) { <p class="hint">Показаны первые 200 папок. Введите точный путь проекта выше.</p> }
     </fieldset>
   }
@@ -66,7 +66,7 @@
     <label>Параллельных задач <input pInputText type="number" [(ngModel)]="settings.maxParallelRuns" min="1" max="8" /></label>
     <label>Зависимости <p-select [options]="dependencyModes" [(ngModel)]="settings.dependencyMode" /></label>
     @if (settings.mergePolicy === 'local') {
-      <label><input type="checkbox" [(ngModel)]="settings.resolveConflicts" /> Автоматически разрешать конфликты</label>
+      <label class="checkbox-field"><p-checkbox [binary]="true" [(ngModel)]="settings.resolveConflicts" ariaLabel="Автоматически разрешать конфликты" /> Автоматически разрешать конфликты</label>
       <label>Попыток интеграции <input pInputText type="number" [(ngModel)]="settings.maxMergeAttempts" min="1" max="3" /></label>
       <label>Вызовов resolver <input pInputText type="number" [(ngModel)]="settings.maxResolverCalls" min="0" max="3" /></label>
       <label>Минут на resolver <input pInputText type="number" [(ngModel)]="settings.resolverTimeoutMinutes" min="1" max="10" /></label>
@@ -81,30 +81,30 @@
   <p class="hint">Resolver входит в общий бюджет. Для Codex/model-api ограничены шаги; неподдерживаемый runner блокирует автоматическое разрешение. Начатая публикация Git завершается перед остановкой worker; во время неё нет новых вызовов модели. Push и публикация MR автоматически не выполняются.</p>
   <h4>Подготовка рабочей папки</h4>
   <p class="hint">Один раз перед первым этапом: обычно установка зависимостей. Нажмите тег, чтобы включить или убрать команду. Для проекта с package-lock.json выберите npm ci.</p>
-  <div class="chips">@for (preset of setupPresets; track preset.id) { <button type="button" class="chip" [class.selected]="commandSelected(preset.value, true)" [attr.aria-pressed]="commandSelected(preset.value, true)" [title]="preset.description" (click)="toggleCommand(preset.value, true)">{{ preset.label }}</button> }</div>
+  <div class="chips">@for (preset of setupPresets; track preset.id) { <button pButton severity="secondary" type="button" class="chip" [class.selected]="commandSelected(preset.value, true)" [attr.aria-pressed]="commandSelected(preset.value, true)" [title]="preset.description" (click)="toggleCommand(preset.value, true)">{{ preset.label }}</button> }</div>
   <h4>Проверки после изменений</h4>
   <p class="hint">Worker сам выполняет эти команды после разработчика. Ошибка возвращает задачу на доработку. После чтения проекта здесь появляются его scripts из package.json — команды не запускаются при выборе.</p>
-  <div class="chips">@for (preset of checkPresets; track preset.id) { <button type="button" class="chip" [class.selected]="commandSelected(preset.value, false)" [attr.aria-pressed]="commandSelected(preset.value, false)" [title]="preset.description" (click)="toggleCommand(preset.value, false)">{{ preset.label }}</button> }</div>
+  <div class="chips">@for (preset of checkPresets; track preset.id) { <button pButton severity="secondary" type="button" class="chip" [class.selected]="commandSelected(preset.value, false)" [attr.aria-pressed]="commandSelected(preset.value, false)" [title]="preset.description" (click)="toggleCommand(preset.value, false)">{{ preset.label }}</button> }</div>
   <div class="selected-commands"><strong>Выбрано:</strong>
-    @for (command of settings.setup; track $index; let i = $index) { <button type="button" class="chip selected" (click)="settings.setup.splice(i, 1)">Подготовка: {{ commandLabel(command) }} ×</button> }
-    @for (command of settings.checks; track $index; let i = $index) { <button type="button" class="chip selected" (click)="settings.checks.splice(i, 1)">Проверка: {{ commandLabel(command) }} ×</button> }
+    @for (command of settings.setup; track $index; let i = $index) { <button pButton severity="secondary" type="button" class="chip selected" (click)="settings.setup.splice(i, 1)">Подготовка: {{ commandLabel(command) }} ×</button> }
+    @for (command of settings.checks; track $index; let i = $index) { <button pButton severity="secondary" type="button" class="chip selected" (click)="settings.checks.splice(i, 1)">Проверка: {{ commandLabel(command) }} ×</button> }
     @if (!settings.setup.length && !settings.checks.length) { <span class="hint">Пока ничего. Для запуска нужна хотя бы одна проверка.</span> }
   </div>
-  <label><span><input type="checkbox" [(ngModel)]="advancedCommands" /> Свои команды (расширенная настройка)</span></label>
+  <label class="checkbox-field"><p-checkbox [binary]="true" [(ngModel)]="advancedCommands" ariaLabel="Свои команды (расширенная настройка)" /> Свои команды (расширенная настройка)</label>
   @if (advancedCommands) {
   <p class="hint">Команда — имя программы, аргументы — JSON-массив. Например npm и ["run","test:e2e"].</p>
   <h4>Команды подготовки</h4>
   @for (check of settings.setup; track $index; let i = $index) {
     <div class="row"><input pInputText aria-label="Команда подготовки" [(ngModel)]="check.command" />
       <input pInputText class="grow" aria-label="Аргументы подготовки" [ngModel]="json(check.args)" (ngModelChange)="setArgs(i, $event, false, true)" />
-      <button type="button" (click)="settings.setup.splice(i, 1)">Убрать</button></div>
+      <button pButton severity="secondary" type="button" (click)="settings.setup.splice(i, 1)">Убрать</button></div>
   }
   <p-button label="Добавить подготовку" severity="secondary" size="small" (onClick)="addSetup()" />
   <h4>Обязательные проверки</h4>
   @for (check of settings.checks; track $index; let i = $index) {
     <div class="row"><input pInputText aria-label="Команда проверки" [(ngModel)]="check.command" />
       <input pInputText class="grow" aria-label="Аргументы проверки" [ngModel]="json(check.args)" (ngModelChange)="setArgs(i, $event)" />
-      <button type="button" (click)="settings.checks.splice(i, 1)">Убрать</button></div>
+      <button pButton severity="secondary" type="button" (click)="settings.checks.splice(i, 1)">Убрать</button></div>
   }
   <p-button label="Добавить проверку" severity="secondary" size="small" (onClick)="addCheck()" />
   }
@@ -116,32 +116,35 @@
     </div></p-tabpanel><p-tabpanel [value]="tab.Models"><div class="tab-content">
   <h3>3. Подключения моделей</h3>
   <p class="hint">Codex/Claude/OpenCode — установленный CLI. DeepSeek API — совместимый API. DeepSeek Harness — отдельный установленный CLI. Выберите готовое подключение:</p>
-  <div class="chips">@for (preset of connectionPresets; track preset.id) { <button type="button" class="chip" (click)="addPresetConnection(preset.id)">+ {{ preset.label }}</button> }</div>
+  <div class="chips">@for (preset of connectionPresets; track preset.id) { <button pButton severity="secondary" type="button" class="chip" (click)="addPresetConnection(preset.id)">+ {{ preset.label }}</button> }</div>
   @for (connection of settings.connections; track $index; let i = $index) {
     <fieldset><div class="row">
       <label>Имя <input pInputText [(ngModel)]="connection.label" /></label>
-      <label>Тип <p-select [options]="providerOptions" optionLabel="label" optionValue="value" [(ngModel)]="connection.kind" /></label>
-      <label><input type="checkbox" [(ngModel)]="connection.supportsImages" /> Поддержка изображений</label>
-      <button type="button" (click)="settings.connections.splice(i, 1)">Убрать</button>
+      <label>Тип <p-select [options]="providerOptions" optionLabel="label" optionValue="value" [(ngModel)]="connection.kind" (onChange)="providerChanged(connection)" appendTo="body" /></label>
+      <label class="checkbox-field"><p-checkbox [binary]="true" [(ngModel)]="connection.supportsImages" [ariaLabel]="'Поддержка изображений: ' + connection.label" /> Поддержка изображений</label>
+      <button pButton severity="secondary" type="button" (click)="settings.connections.splice(i, 1)">Убрать</button>
     </div>
     @if (connection.kind !== providerKind.Native) {
       <div class="row"><label class="grow">Адрес API <input pInputText [(ngModel)]="connection.baseUrl" placeholder="http://localhost:11434" /></label>
         <label>Reasoning effort <p-select [options]="reasoningEfforts" [(ngModel)]="connection.reasoningEffort" [showClear]="true" placeholder="По умолчанию модели" /></label>
         <label>Имя переменной с API-ключом на worker <input pInputText [(ngModel)]="connection.credentialEnv" placeholder="DEEPSEEK_API_KEY" /></label></div>
       <p class="hint">Укажите имя переменной, не сам секрет. Она должна быть задана в окружении запущенного worker. Модель выбирается отдельно у каждой роли.</p>
-    } @else { <p class="hint">Используется вход и конфигурация выбранного CLI на worker.</p> }
+    } @else {
+      <label>CLI подключения <p-select [options]="nativeRunnerOptions" optionLabel="label" optionValue="value" [ngModel]="nativeRunner(connection)" (ngModelChange)="setNativeRunner(connection, $event)" [ariaLabel]="'CLI подключения: ' + connection.label" appendTo="body" /></label>
+      <p class="hint">Используется вход и конфигурация выбранного CLI на worker. Наличие установленного CLI проверяется при запуске, а не при добавлении подключения.</p>
+    }
     </fieldset>
   }
   <p-button label="Добавить подключение" severity="secondary" size="small" (onClick)="addConnection()" />
     </div></p-tabpanel><p-tabpanel [value]="tab.Team"><div class="tab-content">
   <h3>4. Команда агентов</h3>
-  <p class="hint">Для Codex: исполнитель codex + подключение Codex CLI. Для DeepSeek API: model-api + DeepSeek API. Для Harness: deepseek-harness + native и его профиль. Модель — точный ID из вашего CLI/API. Инструкции роли можно оставить пустыми: worker добавляет основное задание сам.</p>
+  <p class="hint">В списке «Подключение» можно сразу добавить Ollama, DeepSeek API/Harness, Antigravity, Claude Code, OpenCode и другие варианты. Исполнитель подбирается по типу подключения. Адрес API и переменную с ключом настройте на вкладке «Модели»; CLI должен быть установлен на worker. Модель — точный ID из вашего CLI/API.</p>
   @if (!settings.agents.length) { <p-button label="Добавить стандартную команду: план → код → тест → ревью" severity="secondary" (onClick)="addStandardTeam()" /> }
   @for (agent of settings.agents; track agent.id; let i = $index) {
     <fieldset [attr.aria-label]="'Агент: ' + roleLabel(agent.role)"><legend>{{ roleLabel(agent.role) }}</legend><div class="row">
       <label>Роль <p-select [options]="roleOptions" optionLabel="label" optionValue="value" [ngModel]="agent.role" (ngModelChange)="changeRole(agent, $event)" /></label>
-      <label>Исполнитель <p-select [options]="runners" [(ngModel)]="agent.runner" /></label>
-      <label>Подключение <p-select [options]="connectionOptions" optionLabel="label" optionValue="value" [(ngModel)]="agent.connectionId" (onChange)="selectConnection(agent)" /></label>
+      <label>Исполнитель <p-select [options]="runnerOptions(agent)" optionLabel="label" optionValue="value" [(ngModel)]="agent.runner" ariaLabel="Исполнитель агента" appendTo="body" /></label>
+      <label>Подключение <p-select [options]="connectionOptions" optionLabel="label" optionValue="value" [(ngModel)]="agent.connectionId" (onChange)="selectConnection(agent)" [filter]="true" filterPlaceholder="Поиск подключения" ariaLabel="Подключение агента" appendTo="body" /></label>
       <label class="grow">Модель
         @if (manualModels.has(agent.id)) {
           <input pInputText [formControl]="modelControl(agent)" placeholder="ID модели" />
@@ -150,14 +153,14 @@
             [filter]="true" filterBy="label,id" filterPlaceholder="Поиск модели" placeholder="Выберите модель" ariaLabel="Модель агента" appendTo="body" />
         }
       </label>
-      <button type="button" (click)="loadModels(agent)" [disabled]="!host.online || projectBusy || !agent.connectionId">Обновить модели</button>
-      <button type="button" (click)="toggleManualModel(agent)">{{ manualModels.has(agent.id) ? 'Выбрать из списка' : 'Указать ID вручную' }}</button>
-      <button type="button" (click)="removeAgent(agent.id)">Убрать</button>
+      <button pButton severity="secondary" type="button" (click)="loadModels(agent)" [disabled]="!host.online || projectBusy || !agent.connectionId">Обновить модели</button>
+      <button pButton severity="secondary" type="button" (click)="toggleManualModel(agent)">{{ manualModels.has(agent.id) ? 'Выбрать из списка' : 'Указать ID вручную' }}</button>
+      <button pButton severity="secondary" type="button" (click)="removeAgent(agent.id)">Убрать</button>
     </div>
     <p class="hint">{{ modelMessage(agent) }} @if (!host.online) { Подключите worker в шаге 1. } Сохраняется точный ID модели; выбор автоматически не меняется.</p>
     <p-accordion><p-accordion-panel value="instructions"><p-accordion-header>Инструкции роли</p-accordion-header><p-accordion-content>
     <label>Инструкции роли <textarea rows="4" [(ngModel)]="agent.instructions"></textarea></label>
-    <div><button type="button" (click)="resetInstructions(agent)">Вставить базовую инструкцию</button></div>
+    <div><button pButton severity="secondary" type="button" (click)="resetInstructions(agent)">Вставить базовую инструкцию</button></div>
     <p class="hint">Базовый текст уже описывает работу роли. Его можно дополнить правилами проекта. Кнопка заменит текст базовой инструкцией выбранной роли.</p>
     </p-accordion-content></p-accordion-panel></p-accordion>
     @if (agent.runner === runnerId.DeepSeekHarness) {
@@ -175,8 +178,8 @@
   <h3>5. Порядок этапов</h3>
   @for (id of settings.pipeline; track $index; let i = $index) {
     <div class="row pipeline-stage"><span class="grow">{{ i + 1 }}. {{ agentLabel(id) }}</span>
-      <button type="button" [disabled]="i === 0" (click)="move(i, -1)" aria-label="Этап выше">↑</button>
-      <button type="button" [disabled]="i === settings.pipeline.length - 1" (click)="move(i, 1)" aria-label="Этап ниже">↓</button></div>
+      <button pButton severity="secondary" type="button" [disabled]="i === 0" (click)="move(i, -1)" aria-label="Этап выше">↑</button>
+      <button pButton severity="secondary" type="button" [disabled]="i === settings.pipeline.length - 1" (click)="move(i, 1)" aria-label="Этап ниже">↓</button></div>
   }
     </div></p-tabpanel><p-tabpanel [value]="tab.Launch"><div class="tab-content">
   <h3>6. Запуск задачи</h3>
@@ -209,7 +212,7 @@
     </div>
   }
   @if (pollError) { <p role="alert" class="error">{{ pollError }}</p> }
-  <button type="button" (click)="openQueue.emit(selectedRun)">Открыть очередь выполнения</button>
+  <button pButton severity="secondary" type="button" (click)="openQueue.emit(selectedRun)">Открыть очередь выполнения</button>
   <p class="hint">В очереди видны текущие этапы, связь с worker, журнал, причины остановки и действия для продолжения.</p>
     </div></p-tabpanel></p-tabpanels>
   </p-tabs>

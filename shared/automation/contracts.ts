@@ -35,6 +35,7 @@ export const AUTOMATION_LIMITS = { timeoutMinutes: { min: 1, max: 240, default: 
 export const AUTOMATION_TIMING = { pollMs: 5000, heartbeatMs: 15000, leaseMs: 90000 } as const;
 
 export interface ModelConnection {
+  nativeRunner?: RunnerId;
   id: string;
   label: string;
   kind: ProviderKind;
