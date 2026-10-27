@@ -15,6 +15,12 @@ import { ProgressBuffer } from '../../../../shared/automation/progress-buffer.js
 import { RunBudget } from '../../../../shared/automation/budget.js';
 import { TaskEnvironment } from '../runners/task-environment.js';
 import { CommitMessage } from '../../../../shared/automation/commit-message.js';
+import { RuntimeCoordinator, type RuntimeLease } from './runtime-coordinator.js';
+import { RunWorkspace } from './run-workspace.js';
+import { ExecutionScope } from '../runners/execution-scope.js';
+import { SquashIntegration } from './squash-integration.js';
+import { MergeResolver } from './merge-resolver.js';
+import { TaskRuntime } from './task-runtime.js';
 
 export class PipelineWorker {
   private activeController?: AbortController;
@@ -23,12 +29,17 @@ export class PipelineWorker {
   public stop(): void { this.activeController?.abort(); }
 
   public async tick(): Promise<boolean> {
-    let run = await this.channel.call<AgentRun | null>(AutomationTool.Claim, { workerId: this.workerId });
-    if (!run) return false;
+    const claimed = await this.channel.call<AgentRun | null>(AutomationTool.Claim, { workerId: this.workerId });
+    if (!claimed) return false;
+    let run: AgentRun = claimed;
     const token = run.leaseToken!;
     const controller = new AbortController();
     this.activeController = controller;
     let finished = false;
+    let publishing = false;
+    let coordinator: RuntimeCoordinator | undefined;
+    const leases: RuntimeLease[] = [];
+    let runtime: TaskRuntime | undefined;
     let budgetError: string | undefined;
     const remainingMs = RunBudget.limits(run).minutes * 60000 - RunBudget.elapsed(run, Date.now());
     const timeout = setTimeout(() => { budgetError = 'Run stopped: execution time budget exhausted.'; controller.abort(); },
@@ -47,7 +58,7 @@ export class PipelineWorker {
       return value;
     };
     const heartbeat = setInterval(() => {
-      if (heartbeatBusy) return;
+      if (heartbeatBusy || publishing) return;
       heartbeatBusy = true;
       void (async () => {
         await this.channel.call(AutomationTool.Heartbeat, { id: run!.id, leaseToken: token });
@@ -62,19 +73,39 @@ export class PipelineWorker {
     const phase = async (value: RunPhase, text: string) => { await this.channel.call(AutomationTool.Progress, { id: run!.id, leaseToken: token, phase: value, text }); };
     try {
       await phase(RunPhase.Preparing, 'Создание или проверка отдельной рабочей ветки.');
-      const repository = path.resolve(run.settings.repositoryPath);
       if (!path.isAbsolute(run.settings.repositoryPath)) throw new Error('Repository path must be absolute on the worker host.');
-      const git = (args: string[], cwd = repository) => this.executor.run({ command: 'git', args, cwd, signal: controller.signal });
-      const root = (await git(['rev-parse', '--show-toplevel'])).trim();
-      if (path.resolve(root) !== repository) throw new Error('Repository path must point to the Git root.');
-      const cwd = path.join(path.dirname(repository), '.sat-worktrees', run.id);
-      const branch = `sat/${run.id}`;
+      const location = await RunWorkspace.describe(run.settings.repositoryPath, run.id, process.env.SAT_WORKSPACE ?? 'default', this.executor, controller.signal);
+      const { root: repository, common, directory: cwd, branch, git } = location;
+      coordinator = new RuntimeCoordinator(path.join(common, 'sat-runtime', 'coordination.sqlite'));
+      leases.push(await coordinator.acquire(`run:${run.id}`, controller.signal));
+      await phase(RunPhase.Preparing, 'Ожидание свободного слота проекта.');
+      leases.push(await coordinator.acquire(`slot:${run.id}`, controller.signal, run.settings.maxParallelRuns ?? 2));
+      const execution = { env: undefined as NodeJS.ProcessEnv | undefined,
+        child: (pid: number, active: boolean) => { for (const lease of leases) lease.child(pid, active); runtime?.child(pid, active); } };
+      await ExecutionScope.run(execution, async () => {
+      let newCheckout = false;
       try { await fs.access(cwd); }
       catch {
+        if ((await git(['status', '--porcelain'])).trim()) throw new Error('Repository has local changes; commit or preserve them before starting a new task.');
+        if (run!.settings.mergePolicy === MergePolicy.Local && (await git(['branch', '--show-current'])).trim() !== run!.settings.baseBranch)
+          throw new Error('Target branch must be checked out before automatic integration.');
         await fs.mkdir(path.dirname(cwd), { recursive: true });
-        await git(['worktree', 'add', '-b', branch, cwd, run.settings.baseBranch]);
+        await git(['worktree', 'add', '-b', branch, cwd, run!.settings.baseBranch]);
+        newCheckout = true;
       }
       if ((await git(['branch', '--show-current'], cwd)).trim() !== branch) throw new Error('Worktree branch does not match run.');
+      await RunWorkspace.ignoreRuntime(common);
+      runtime = await TaskRuntime.create(cwd, controller.signal); execution.env = runtime.env;
+      const descriptor = path.join(cwd, '.sat', 'checkout.json');
+      let baseSha: string;
+      try { baseSha = JSON.parse(await fs.readFile(descriptor, 'utf8')).baseSha as string; }
+      catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+        baseSha = run!.checkout?.baseSha ?? (await git(newCheckout ? ['rev-parse', 'HEAD'] : ['merge-base', 'HEAD', run!.settings.baseBranch], cwd)).trim();
+        await RunWorkspace.atomic(descriptor, { baseSha, repository, runId: run!.id });
+      }
+      await this.channel.call(AutomationTool.Checkout, { id: run!.id, leaseToken: token,
+        result: { repositoryRoot: repository, worktreePath: cwd, baseSha, dependencyMode: 'isolated' } });
       await phase(RunPhase.Setup, 'Проверка и подготовка зависимостей worktree до запуска агента.');
       await new WorktreePreparation(this.executor).prepare(cwd, run.settings.setup, controller.signal, progress);
       while (run.status === RunStatus.Running && run.stage < run.settings.pipeline.length) {
@@ -169,23 +200,52 @@ export class PipelineWorker {
         if (pending.length) { await this.channel.call(AutomationTool.Progress, { id: run.id, leaseToken: token, text: redact(pending.take()) }); }
         run = await this.channel.call<AgentRun>(AutomationTool.CompleteStage, { id: run.id, leaseToken: token, outcome, branch, commitSha: sha });
       }
-      finished = true;
-      clearInterval(heartbeat);
-      if (run.status === RunStatus.Review && run.settings.mergePolicy === MergePolicy.Local) {
-        await phase(RunPhase.Merge, 'Проверка базовой ветки перед локальным fast-forward слиянием.');
-        if ((await git(['status', '--porcelain'])).trim()) throw new Error('Cannot merge: base repository has local changes.');
-        if ((await git(['branch', '--show-current'])).trim() !== run.settings.baseBranch) throw new Error('Cannot merge: base branch is not checked out.');
-        await git(['merge', '--ff-only', branch]);
-        await this.channel.call(AutomationTool.Merged, { id: run.id, leaseToken: token });
+      if (run!.status === RunStatus.Integrating) {
+        if ((await git(['rev-parse', 'HEAD'], cwd)).trim() !== run!.commitSha) throw new Error('Source branch changed after review.');
+        const pack = await this.channel.call<Record<string, unknown>>('tracker_get_task', { id: run!.taskId, commentsLimit: 0 });
+        const context = { id: pack.id, title: pack.title, description: pack.description, plan: pack.plan, questions: pack.questions, relations: pack.relations, comments: [] };
+        const resolver = new MergeResolver(this.executor, async (profile, prompt, directory, signal, maxTools) => {
+          const started = await this.channel.call<{ attemptId: string }>(AutomationTool.BeginStage, { id: run!.id, leaseToken: token, phase: 'resolver' });
+          metering = { attemptId: started.attemptId };
+          let complete = false;
+          try {
+            const connection = run!.settings.connections.find(c => c.id === profile.connectionId)!;
+            const result = await this.registry.get(profile.runner).run({ runId: run!.id, cwd: directory, profile, connection,
+              prompt, settings: run!.settings, signal, maxToolCalls: maxTools,
+              onUsage: usage => { if (metering) metering = { ...metering, usage }; } }, progress);
+            if (result.usage && metering) metering = { ...metering, usage: result.usage };
+            const outcome = this.parseOutcome(result.text); outcome.summary = redact(outcome.summary);
+            if (outcome.verdict === AgentVerdict.Questions && outcome.questions?.length) await this.channel.call('tracker_ask_questions', { id: run!.taskId, questions: outcome.questions, phase: 'testing' });
+            complete = true; return outcome;
+          } finally { if (metering) { const sample = metering; metering = undefined; await reportUsage(sample, complete); } }
+        });
+        await new SquashIntegration(this.executor).run({ runId: run!.id, taskId: run!.taskId, repository, common,
+          sourceSha: run!.commitSha!, targetBranch: run!.settings.baseBranch, directory: cwd,
+          message: run!.mergeMessage ?? '', contextKey: StageCheckpoint.key(context), maxAttempts: run!.settings.maxMergeAttempts ?? 2,
+          signal: controller.signal,
+          authorize: async () => { run = await this.channel.call<AgentRun>(AutomationTool.Heartbeat, { id: run!.id, leaseToken: token }); },
+          record: async info => { publishing = info.state === 'publishing'; await this.channel.call(AutomationTool.Integration, { id: run!.id, leaseToken: token, result: info }); },
+          prepare: directory => new WorktreePreparation(this.executor).prepare(directory, run!.settings.setup, controller.signal, progress),
+          checks: async directory => { for (const check of run!.settings.checks) await this.executor.run({ ...check, cwd: directory,
+            env: TaskEnvironment.create(), signal: controller.signal, onProgress: progress }); },
+          resolve: (directory, files, base) => resolver.resolve(run!, context, directory, files, base, controller.signal),
+        });
+        await this.channel.call(AutomationTool.Merged, { id: run!.id, leaseToken: token });
       }
+      });
+      finished = true;
     } catch (error) {
       const message = redact(budgetError ?? `${channelError ? 'Tracker connection/lease lost. ' : ''}${error instanceof Error ? error.message : String(error)}`);
+      if (pending.length) { try { await this.channel.call(AutomationTool.Progress, { id: run.id, leaseToken: token, text: redact(pending.take()) }); } catch { /* Preserve terminal failure even if the lease was lost. */ } }
       try { await this.channel.call(AutomationTool.Fail, { id: run.id, leaseToken: token, text: message }); }
       catch { process.stderr.write(`${message}\n`); }
     } finally {
       finished = true;
       this.activeController = undefined;
       clearTimeout(timeout); clearInterval(heartbeat);
+      for (const lease of leases.reverse()) lease.release();
+      runtime?.close();
+      coordinator?.close();
     }
     return true;
   }

@@ -16,15 +16,15 @@ export const REASONING_EFFORTS = Object.values(ReasoningEffort);
 export const MergePolicy = { Manual: 'manual', Local: 'local' } as const;
 export type MergePolicy = typeof MergePolicy[keyof typeof MergePolicy];
 export const MERGE_POLICIES = Object.values(MergePolicy);
-export const RunStatus = { Queued: 'queued', Running: 'running', Waiting: 'waiting', Review: 'review', Failed: 'failed', Cancelled: 'cancelled', Interrupted: 'interrupted', Merged: 'merged' } as const;
+export const RunStatus = { Queued: 'queued', Running: 'running', Integrating: 'integrating', MergeBlocked: 'merge_blocked', Waiting: 'waiting', Review: 'review', Failed: 'failed', Cancelled: 'cancelled', Interrupted: 'interrupted', Merged: 'merged' } as const;
 export type RunStatus = typeof RunStatus[keyof typeof RunStatus];
 export const AgentVerdict = { Pass: 'pass', ChangesRequested: 'changes_requested', Questions: 'questions', Blocked: 'blocked' } as const;
 export type AgentVerdict = typeof AgentVerdict[keyof typeof AgentVerdict];
 export const AGENT_VERDICTS = Object.values(AgentVerdict);
 export const AUTOMATION_START_TASK_STATUSES: readonly TaskStatus[] = [TaskStatus.Backlog, TaskStatus.Planning, TaskStatus.Ready];
-export const ACTIVE_RUN_STATUSES: readonly RunStatus[] = [RunStatus.Queued, RunStatus.Running, RunStatus.Waiting];
-export const RESUMABLE_RUN_STATUSES: readonly RunStatus[] = [RunStatus.Waiting, RunStatus.Failed, RunStatus.Interrupted, RunStatus.Cancelled];
-export const OWNED_RUN_STATUSES: readonly RunStatus[] = [RunStatus.Running, RunStatus.Review];
+export const ACTIVE_RUN_STATUSES: readonly RunStatus[] = [RunStatus.Queued, RunStatus.Running, RunStatus.Integrating, RunStatus.Waiting];
+export const RESUMABLE_RUN_STATUSES: readonly RunStatus[] = [RunStatus.Waiting, RunStatus.Failed, RunStatus.Interrupted, RunStatus.Cancelled, RunStatus.MergeBlocked];
+export const OWNED_RUN_STATUSES: readonly RunStatus[] = [RunStatus.Running, RunStatus.Integrating, RunStatus.Review];
 export const RunAction = { Cancel: 'cancel', Resume: 'resume', Restart: 'restart' } as const;
 export type RunAction = typeof RunAction[keyof typeof RunAction];
 export const WRITABLE_AGENT_ROLES: readonly AgentRole[] = [AgentRole.Developer, AgentRole.Designer];
@@ -75,16 +75,28 @@ export interface AutomationSettings {
   maxAgentCalls?: number;
   maxInputTokens?: number;
   maxRunMinutes?: number;
+  maxParallelRuns?: number;
+  dependencyMode?: 'isolated' | 'linked';
+  maxMergeAttempts?: number;
+  resolveConflicts?: boolean;
+  maxResolverCalls?: number;
+  resolverTimeoutMinutes?: number;
+  maxResolverToolCalls?: number;
   mergePolicy: MergePolicy;
 }
 
 export const DEFAULT_AUTOMATION_SETTINGS: AutomationSettings = {
   repositoryPath: '', baseBranch: 'main', connections: [], agents: [], pipeline: [], checks: [], setup: [],
   artifactPaths: [], timeoutMinutes: AUTOMATION_LIMITS.timeoutMinutes.default, maxRevisions: 1, maxAgentCalls: 6, maxInputTokens: 500000, maxRunMinutes: 20, mergePolicy: MergePolicy.Manual,
+  maxParallelRuns: 2, dependencyMode: 'isolated', maxMergeAttempts: 2, resolveConflicts: true,
+  maxResolverCalls: 1, resolverTimeoutMinutes: 3, maxResolverToolCalls: 16,
 };
 export const DEFAULT_CHECK_COMMAND: CheckCommand = { command: 'npm', args: ['test'] };
 export const DEFAULT_SETUP_COMMAND: CheckCommand = { command: 'npm', args: ['ci'] };
 export interface AgentRun {
+  checkout?: { repositoryRoot: string; worktreePath: string; baseSha: string; dependencyMode: 'isolated' | 'linked'; dependencyKey?: string };
+  integration?: IntegrationInfo;
+  mergeMessage?: string;
   budgetElapsedMs?: number;
   budgetUpdatedAt?: string;
   usageAttempts?: import('./token-usage.js').UsageAttempt[];
@@ -111,6 +123,11 @@ export interface AgentRun {
   commitSha: string | null;
   summary: string;
 }
+export interface IntegrationInfo {
+  state: 'preparing' | 'resolving' | 'checking' | 'ready' | 'publishing' | 'merged' | 'blocked';
+  sourceSha: string; baseSha: string; candidateSha?: string; targetBranch: string;
+  worktreePath: string; attempt: number; error?: string; noChanges?: boolean;
+}
 export interface RunEvent { id: number; runId: string; at: string; kind: string; text: string; }
 export interface AgentOutcome {
   commitMessage?: string;
@@ -121,6 +138,7 @@ export interface AgentOutcome {
 }
 
 export interface AgentJob {
+  maxToolCalls?: number;
   onUsage?: (usage: import('./token-usage.js').TokenUsage) => void;
   runId: string;
   cwd: string;

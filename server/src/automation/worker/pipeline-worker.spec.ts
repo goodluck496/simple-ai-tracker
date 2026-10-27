@@ -54,9 +54,9 @@ process.stdout.write(JSON.stringify({verdict,summary:role+': '+verdict,plan,comm
     assert.ok(detail.run.usageAttempts!.every((attempt) => attempt.finished && !attempt.usage), 'Custom CLI output without usage remains unknown');
     assert.equal(app.taskService.getTaskCard(task.id).status, 'review');
     assert.equal(await readFile(path.join(repo, 'answer.txt'), 'utf8'), '2');
-    const subjects = (await git(['log', '--format=%s', '-2'])).trim().split(/\r?\n/);
-    assert.equal(subjects.length, 2);
-    assert.ok(subjects.every(subject => subject === '[#SAT-1] - Изменено значение ответа, чтобы проверить ожидаемое поведение'));
+    assert.equal((await git(['log', '--format=%s', '-1'])).trim(), '[#SAT-1] - Изменено значение ответа, чтобы проверить ожидаемое поведение');
+    assert.equal((await git(['rev-list', '--count', 'HEAD'])).trim(), '2', 'One squash commit in target');
+    assert.equal((await git(['rev-list', '--count', `sat/${run.id}`])).trim(), '3', 'Private source commits remain available');
     assert.equal((await git(['status', '--porcelain'])).trim(), '');
     assert.equal(await worker.tick(), false);
   } finally { app.close(); await rm(root, { recursive: true, force: true }); }
@@ -118,7 +118,7 @@ test('worker retries commit and tester acknowledgement without recalling agents 
     await worker.tick();
     assert.equal(app.automationService.detail(run.id).run.status, 'failed');
     assert.match(app.automationService.detail(run.id).run.summary!, /Commit message rejected/);
-    const cwd = path.join(root, '.sat-worktrees', run.id);
+    const cwd = app.automationService.detail(run.id).run.checkout!.worktreePath;
     assert.equal(await readFile(path.join(cwd, 'answer.txt'), 'utf8'), '1');
     assert.equal((await git(['rev-parse', 'HEAD'], cwd)).trim(), (await git(['rev-parse', 'HEAD'], repo)).trim());
     const savedPath = path.join(cwd, '.sat', 'stage-0-0.json');

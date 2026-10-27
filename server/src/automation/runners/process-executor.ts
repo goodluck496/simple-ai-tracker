@@ -1,4 +1,6 @@
 import crossSpawn from 'cross-spawn';
+import { ExecutionScope } from './execution-scope.js';
+import { TaskEnvironment } from './task-environment.js';
 
 export interface ProcessRequest {
   command: string; args: string[]; cwd: string; signal: AbortSignal;
@@ -14,10 +16,13 @@ export class ProcessExecutor {
   public run(request: ProcessRequest): Promise<string> {
     request.signal.throwIfAborted();
     return new Promise((resolve, reject) => {
+      const scope = ExecutionScope.current;
+      const environment = request.env ?? (scope?.env ? TaskEnvironment.create(scope.env) : process.env);
       const child = crossSpawn(request.command, request.args, {
-        cwd: request.cwd, env: request.env ?? process.env, shell: false,
+        cwd: request.cwd, env: /^git(?:\.exe)?$/i.test(request.command) ? TaskEnvironment.git(environment) : environment, shell: false,
         windowsHide: true, detached: process.platform !== 'win32', stdio: ['pipe', 'pipe', 'pipe'],
       });
+      let observerError: unknown;
       let stdout = ''; let stderr = '';
       const abort = () => {
         if (!child.pid) return;
@@ -44,11 +49,14 @@ export class ProcessExecutor {
       child.stdin?.end(request.stdin ?? '');
       child.once('error', (error) => { request.signal.removeEventListener('abort', abort); reject(error); });
       child.once('close', (code) => {
+        try { if (child.pid) scope?.child?.(child.pid, false); } catch (error) { observerError ??= error; }
         request.signal.removeEventListener('abort', abort);
+        if (observerError) { reject(observerError); return; }
         if (request.signal.aborted) { reject(new Error('Execution cancelled or timed out.')); return; }
         if (code !== 0) { reject(new Error(`${request.command} failed (${code}): ${(stderr || stdout).slice(-6000)}`)); return; }
         resolve(stdout);
       });
+      try { if (child.pid) scope?.child?.(child.pid, true); } catch (error) { observerError = error; abort(); }
     });
   }
 }

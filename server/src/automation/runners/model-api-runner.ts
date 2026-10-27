@@ -43,7 +43,8 @@ export class ModelApiRunner implements AgentRunner {
       description: name === ModelTool.RunCheck ? 'Run a configured check by numeric index.' : `${name} relative to the project worktree.`,
       parameters: { type: 'object', properties: { path: { type: 'string' }, content: { type: 'string' }, index: { type: 'integer' } }, additionalProperties: false } } }));
     let usage: TokenUsage | undefined; let missingRequests = 0;
-    for (let turn = 0; turn < MAX_TURNS; turn += 1) {
+    let calls = 0;
+    for (let turn = 0; turn < Math.min(MAX_TURNS, (job.maxToolCalls ?? MAX_TURNS) + 1); turn += 1) {
       job.signal.throwIfAborted();
       const response = await this.request(url, { method: 'POST', signal: job.signal,
         headers: { 'Content-Type': 'application/json', ...(secret ? { Authorization: `Bearer ${secret}` } : {}) },
@@ -62,6 +63,7 @@ export class ModelApiRunner implements AgentRunner {
         return { text: message.content, usage };
       }
       for (const call of message.tool_calls) {
+        if (++calls > (job.maxToolCalls ?? MAX_TURNS)) throw new Error('Model tool-call limit exceeded.');
         if (!names.includes(call.function.name)) throw new Error('Model requested a tool outside its role.');
         let result: unknown;
         try { result = await this.tool(job, call.function.name, JSON.parse(call.function.arguments) as Record<string, unknown>); }

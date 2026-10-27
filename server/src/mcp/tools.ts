@@ -412,7 +412,9 @@ export class TrackerToolRegistry {
         case AutomationTool.Claim: return json(service.claim(requireString(args, 'workerId')));
         case AutomationTool.Heartbeat: return json(service.heartbeat(id(), token()));
         case AutomationTool.Progress: service.progress(id(), token(), requireString(args, 'text'), asString(args, 'phase') as RunPhase | undefined); return json({ ok: true });
-        case AutomationTool.BeginStage: return json({ ok: true, attemptId: service.beginStage(id(), token()) });
+        case AutomationTool.BeginStage: return json({ ok: true, attemptId: service.beginStage(id(), token(), args['phase'] === 'resolver') });
+        case AutomationTool.Checkout: service.checkout(id(), token(), args['result']); return json({ ok: true });
+        case AutomationTool.Integration: service.integration(id(), token(), args['result']); return json({ ok: true });
         case AutomationTool.Usage: service.usage(id(), token(), requireString(args, 'attemptId'), args['usage'], args['finished'] === true); return json({ ok: true });
         case AutomationTool.CompleteStage: return json(service.completeStage(id(), token(), args['outcome'] as AgentOutcome, requireString(args, 'branch'), requireString(args, 'commitSha')));
         case AutomationTool.Fail: service.fail(id(), token(), requireString(args, 'text')); return json({ ok: true });

@@ -26,7 +26,7 @@ export class AgentRunRepository {
   public archive(id: string, at: string): void { this.db.prepare('INSERT INTO archived_agent_runs(run_id, archived_at) VALUES(?, ?) ON CONFLICT(run_id) DO NOTHING').run([id, at]); }
   public restore(id: string): void { this.db.prepare('DELETE FROM archived_agent_runs WHERE run_id = ?').run([id]); }
   public running(): AgentRun[] {
-    return this.db.prepare('SELECT payload FROM agent_runs WHERE status = ?').all<{ payload: string }>([RunStatus.Running]).map(({ payload }) => JSON.parse(payload) as AgentRun);
+    return this.db.prepare('SELECT payload FROM agent_runs WHERE status IN (?,?)').all<{ payload: string }>([RunStatus.Running, RunStatus.Integrating]).map(({ payload }) => JSON.parse(payload) as AgentRun);
   }
   public nextQueued(): AgentRun | undefined {
     const row = this.db.prepare('SELECT payload FROM agent_runs WHERE status = ? ORDER BY updated_at ASC, id ASC LIMIT 1').get<{ payload: string }>([RunStatus.Queued]);

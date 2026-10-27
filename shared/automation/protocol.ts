@@ -8,6 +8,7 @@ export const AutomationTool = {
   BeginStage: `${AUTOMATION_TOOL_PREFIX}begin_stage`, CompleteStage: `${AUTOMATION_TOOL_PREFIX}complete_stage`,
   Fail: `${AUTOMATION_TOOL_PREFIX}fail`, Cancel: `${AUTOMATION_TOOL_PREFIX}cancel`,
   Resume: `${AUTOMATION_TOOL_PREFIX}resume`, Merged: `${AUTOMATION_TOOL_PREFIX}merged`,
+  Checkout: `${AUTOMATION_TOOL_PREFIX}checkout`, Integration: `${AUTOMATION_TOOL_PREFIX}integration`,
   HostPoll: `${AUTOMATION_TOOL_PREFIX}host_poll`, HostComplete: `${AUTOMATION_TOOL_PREFIX}host_complete`,
 } as const;
 export type AutomationTool = typeof AutomationTool[keyof typeof AutomationTool];

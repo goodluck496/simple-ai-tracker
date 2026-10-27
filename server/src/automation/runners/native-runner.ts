@@ -39,9 +39,19 @@ export class NativeAgentRunner implements AgentRunner {
       default: throw new Error(`Not a native runner: ${this.id}`);
     }
     if (this.id !== RunnerId.Custom) args.push(...(job.profile.args ?? []));
-    const meter = new NativeUsageStream(this.id, job.onUsage);
+    const limitController = new AbortController();
+    const toolIds = new Set<string>();
+    const meter = new NativeUsageStream(this.id, job.onUsage, (value) => {
+      const record = value as { type?: string; item?: { id?: string; type?: string } };
+      if (job.maxToolCalls && record.item?.id && ['command_execution', 'mcp_tool_call', 'web_search', 'file_change'].includes(record.item.type ?? '')) {
+        toolIds.add(record.item.id);
+        if (toolIds.size > job.maxToolCalls) limitController.abort(new Error('Conflict resolver tool-call limit exceeded.'));
+      }
+    });
+    const signal = AbortSignal.any([job.signal, limitController.signal]);
     let raw: string;
-    try { raw = await this.executor.run({ command, args, cwd: job.cwd, stdin, env: TaskEnvironment.create(), signal: job.signal, onProgress, onStdout: (text) => meter.push(text) }); }
+    try { raw = await this.executor.run({ command, args, cwd: job.cwd, stdin, env: TaskEnvironment.create(), signal, onProgress, onStdout: (text) => meter.push(text) }); }
+    catch (error) { if (limitController.signal.aborted) throw limitController.signal.reason; throw error; }
     finally { meter.finish(); }
     // Some executors and formatted JSON outputs provide only the final complete document.
     if (!meter.usage) {

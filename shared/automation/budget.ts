@@ -8,7 +8,7 @@ export class RunBudget {
       minutes: run.settings.maxRunMinutes ?? 20 };
   }
   public static elapsed(run: AgentRun, now: number): number {
-    return (run.budgetElapsedMs ?? 0) + (run.status === 'running' && run.budgetUpdatedAt
+    return (run.budgetElapsedMs ?? 0) + ((run.status === 'running' || run.status === 'integrating') && run.budgetUpdatedAt
       ? Math.max(0, now - Date.parse(run.budgetUpdatedAt)) : 0);
   }
   public static reason(run: AgentRun, now: number, beforeCall = false): string | undefined {

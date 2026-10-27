@@ -53,7 +53,7 @@ test('worker aborts on live usage or total active time, persists usage and prese
       const detail = app.automationService.detail(run.id);
       assert.equal(detail.run.status, 'failed'); assert.match(detail.run.summary, /budget exhausted/);
       assert.equal(calls, 1); assert.equal(detail.run.usageAttempts![0].usage!.inputTokens, mode === 'tokens' ? 100 : 1);
-      await access(path.join(root, '.sat-worktrees', run.id, 'source.txt'));
+      await access(path.join(detail.run.checkout!.worktreePath, 'source.txt'));
     } finally { app.close(); await rm(root, { recursive: true, force: true }); }
   }
 });

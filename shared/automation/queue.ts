@@ -8,7 +8,7 @@ export const RunPhase = { Preparing: 'preparing', Setup: 'setup', Agent: 'agent'
 export type RunPhase = typeof RunPhase[keyof typeof RunPhase];
 export const RUN_PHASES = Object.values(RunPhase);
 export const RUN_PHASE_TITLES: Record<RunPhase, string> = { preparing: 'Подготовка рабочей ветки', setup: 'Установка зависимостей', agent: 'Работа агента', checks: 'Проверки worker', merge: 'Локальное слияние' };
-export const RUN_STATUS_TITLES: Record<RunStatus, string> = { queued: 'В очереди', running: 'Выполняется', waiting: 'Ждёт ответа', review: 'Готов к проверке', failed: 'Ошибка', cancelled: 'Остановлен', interrupted: 'Связь потеряна', merged: 'Слит локально' };
+export const RUN_STATUS_TITLES: Record<RunStatus, string> = { queued: 'В очереди', running: 'Выполняется', integrating: 'Squash-интеграция', merge_blocked: 'Слияние заблокировано', waiting: 'Ждёт ответа', review: 'Готов к проверке', failed: 'Ошибка', cancelled: 'Остановлен', interrupted: 'Связь потеряна', merged: 'Слит локально' };
 export const QUEUE_LIMITS = { recent: 100, quietMs: 120000, previewChars: 1200 } as const;
 export const RUN_EVENT_TITLES: Record<string, string> = { queued: 'Поставлен в очередь', stage: 'Начало этапа', phase: 'Операция worker',
   progress: 'Прогресс', pass: 'Этап пройден', changes_requested: 'Нужны исправления', questions: 'Нужен ответ', failed: 'Ошибка',
@@ -20,6 +20,8 @@ export const QUEUE_LANES = [
   { id: QueueLane.Attention, title: 'Требуют внимания' }, { id: QueueLane.Finished, title: 'Завершены' },
 ] as const;
 export interface QueueItem {
+  checkout?: import('./contracts.js').AgentRun['checkout'];
+  integration?: import('./contracts.js').IntegrationInfo;
   tokenUsage?: UsageSummary;
   id: string; taskId: string; title: string; taskStatus: TaskStatus; status: RunStatus; stage: number; revision: number;
   pipeline: { role: AgentRole; runner: RunnerId; model: string }[];
@@ -42,8 +44,8 @@ export class RunProgressText {
 export class QueuePresentation {
   public static lane(item: QueueItem): QueueLane {
     if (item.status === RunStatus.Queued) return QueueLane.Queued;
-    if (item.status === RunStatus.Running) return QueueLane.Running;
-    return item.status === RunStatus.Waiting || item.status === RunStatus.Failed || item.status === RunStatus.Interrupted ? QueueLane.Attention : QueueLane.Finished;
+    if (item.status === RunStatus.Running || item.status === RunStatus.Integrating) return QueueLane.Running;
+    return item.status === RunStatus.Waiting || item.status === RunStatus.Failed || item.status === RunStatus.Interrupted || item.status === RunStatus.MergeBlocked ? QueueLane.Attention : QueueLane.Finished;
   }
   public static health(item: QueueItem, now: number, host: HostStatus): string {
     if (item.status === RunStatus.Queued) return host.online ? 'Ожидает свободного worker. Один worker выполняет один запуск.' : 'Нет подключённого worker. Подключите компьютер в настройках команды.';

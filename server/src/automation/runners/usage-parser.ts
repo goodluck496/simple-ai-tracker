@@ -38,7 +38,8 @@ export class NativeUsageStream {
   private skipping = false;
   private missed = 0;
   public usage?: TokenUsage;
-  public constructor(private readonly runner: RunnerId, private readonly publish?: (usage: TokenUsage) => void) {}
+  public constructor(private readonly runner: RunnerId, private readonly publish?: (usage: TokenUsage) => void,
+    private readonly record?: (value: unknown) => void) {}
   public push(chunk: string): void {
     for (const [index, part] of chunk.split('\n').entries()) {
       if (index) { this.line(); this.skipping = false; }
@@ -53,6 +54,7 @@ export class NativeUsageStream {
     if (!text) return;
     try {
       const value: unknown = JSON.parse(text);
+      this.record?.(value);
       const parsed = UsageParser.native(this.runner, value);
       if (!parsed) {
         const type = object(value).type;

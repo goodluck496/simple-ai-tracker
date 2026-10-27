@@ -52,6 +52,15 @@ export class AutomationSettingsValidator {
     const maxAgentCalls = settings.maxAgentCalls ?? 6;
     const maxInputTokens = settings.maxInputTokens ?? 500000;
     const maxRunMinutes = settings.maxRunMinutes ?? 20;
+    const execution = { maxParallelRuns: settings.maxParallelRuns ?? 2, dependencyMode: settings.dependencyMode ?? 'isolated',
+      maxMergeAttempts: settings.maxMergeAttempts ?? 2, resolveConflicts: settings.resolveConflicts ?? true,
+      maxResolverCalls: settings.maxResolverCalls ?? 1, resolverTimeoutMinutes: settings.resolverTimeoutMinutes ?? 3,
+      maxResolverToolCalls: settings.maxResolverToolCalls ?? 16 };
+    const integer = (n: number, min: number, max: number) => Number.isSafeInteger(n) && n >= min && n <= max;
+    if (!integer(execution.maxParallelRuns, 1, 8) || !integer(execution.maxMergeAttempts, 1, 3)
+      || !integer(execution.maxResolverCalls, 0, 3) || !integer(execution.resolverTimeoutMinutes, 1, 10)
+      || !integer(execution.maxResolverToolCalls, 1, 40) || typeof execution.resolveConflicts !== 'boolean'
+      || !['isolated', 'linked'].includes(execution.dependencyMode)) return fail('Invalid parallel execution or integration settings.');
     if (!Number.isSafeInteger(maxAgentCalls) || maxAgentCalls < 1 || maxAgentCalls > 100
       || !Number.isSafeInteger(maxInputTokens) || maxInputTokens < 1 || maxInputTokens > 100000000
       || !Number.isSafeInteger(maxRunMinutes) || maxRunMinutes < 1 || maxRunMinutes > 240) return fail('Invalid run budget.');
@@ -63,6 +72,7 @@ export class AutomationSettingsValidator {
       pipeline: settings.pipeline, checks: settings.checks.map(({ command, args }) => ({ command, args })), setup: settings.setup.map(({ command, args }) => ({ command, args })), artifactPaths: settings.artifactPaths,
       timeoutMinutes: settings.timeoutMinutes, maxRevisions: settings.maxRevisions, mergePolicy: settings.mergePolicy,
       maxAgentCalls, maxInputTokens, maxRunMinutes,
+      ...execution,
     };
   }
 }
