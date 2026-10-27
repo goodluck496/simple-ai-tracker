@@ -168,16 +168,20 @@ try {
     { key: 'A', title: 'First', description: 'First change.', plan: '1. Implement first.', dependsOn: [] },
     { key: 'B', title: 'Second', description: 'Second change.', plan: '1. Implement second.', dependsOn: [] },
   ] }, `sat/${budgetRun.id}`, 'a'.repeat(40));
-  assert.equal(waitingBudget.status, 'waiting'); assert.equal(waitingBudget.budgetApproval?.requiredCalls, 7);
+  assert.equal(waitingBudget.status, 'running'); assert.equal(waitingBudget.feature?.callBudget?.planned, 7);
+  assert.equal(waitingBudget.settings.maxAgentCalls, 10, 'Manual merge does not reserve conflict resolver calls');
+  service.fail(budgetRun.id, budgetLease.leaseToken!, 'Pause automatic call budget fixture');
   await page.reload(); await page.getByRole('button', { name: 'Очередь', exact: true }).click();
   await queue.getByRole('button', { name: `Запуск ${budgetTask.id} ${budgetRun.id}`, exact: true }).click();
-  await detail.getByLabel('Согласование бюджета', { exact: true }).waitFor();
-  assert.equal(await detail.getByRole('button', { name: 'Продолжить с места остановки', exact: true }).count(), 0);
+  await detail.getByLabel('Бюджет вызовов по плану', { exact: true }).waitFor();
+  await detail.getByRole('button', { name: 'Продолжить с места остановки', exact: true }).waitFor();
   await detail.getByRole('button', { name: 'Изменить бюджет запуска', exact: true }).click();
-  assert.equal(await detail.getByRole('spinbutton', { name: 'Лимит вызовов', exact: true }).inputValue(), '7');
+  assert.equal(await detail.getByRole('spinbutton', { name: 'Лимит вызовов', exact: true }).inputValue(), '10');
+  assert.equal(await detail.getByRole('spinbutton', { name: 'Лимит вызовов', exact: true }).isDisabled(), true);
+  await detail.getByRole('spinbutton', { name: 'Лимит входных токенов', exact: true }).fill('600000');
   await detail.getByRole('button', { name: 'Сохранить лимиты', exact: true }).click();
   await detail.getByRole('button', { name: 'Продолжить с места остановки', exact: true }).waitFor();
-  service.cancel(budgetRun.id);
+  assert.equal(service.detail(budgetRun.id).run.settings.maxAgentCalls, 10);
   const featureTask = app.taskService.createTask({ title: 'Feature decomposition UI fixture' });
   const featureRun = service.enqueue(featureTask.id, { ...settings, maxAgentCalls: 12 });
   const featureLease = service.claim('feature-ui')!;

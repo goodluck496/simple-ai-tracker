@@ -11,15 +11,17 @@ import { AgentRunnerRegistry } from '../runners/registry.js';
 import { PipelineWorker } from './pipeline-worker.js';
 import { DEFAULT_AUTOMATION_SETTINGS, type AgentJob } from '../../../../shared/automation/contracts.js';
 import { Decomposition } from '../../../../shared/automation/decomposition.js';
+import { FeaturePlanning } from '../feature-planning.js';
 
 test('decomposition rejects missing plans, unknown dependencies, duplicates and cycles', () => {
   const a = { key: 'A', title: 'A', description: 'First', plan: '1. Implement A', dependsOn: [] as string[] };
   const b = { ...a, key: 'B', dependsOn: ['A'] };
   assert.deepEqual(Decomposition.validate([b, a]).map(t => t.key), ['A', 'B']);
   for (const parts of [[a], [a, a], [a, { ...b, plan: '' }], [a, { ...b, dependsOn: ['missing'] }], [{ ...a, dependsOn: ['B'] }, b]]) assert.throws(() => Decomposition.validate(parts));
+  assert.throws(() => Decomposition.validate(Array.from({ length: 13 }, (_, i) => ({ ...a, key: `T${i}` }))));
 });
 
-test('feature asks before dispatch, preserves budget checkpoint, reviews isolated children and squash tests the whole feature', async () => {
+test('feature asks before dispatch, resumes legacy budget checkpoint automatically and reviews isolated children without recursion', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'sat-feature-'));
   const repo = path.join(root, 'repo'); await mkdir(repo);
   const executor = new ProcessExecutor();
@@ -40,6 +42,11 @@ test('feature asks before dispatch, preserves budget checkpoint, reviews isolate
       checks: [{ command: process.execPath, args: [check] }] });
     const task = app.taskService.createTask({ title: 'Combined feature', description: 'Preserve the original file and deliver alpha plus beta2.' });
     const run = app.automationService.enqueue(task.id);
+    assert.throws(() => FeaturePlanning.callBudget({ ...run, settings: { ...run.settings, maxRevisions: 10,
+      pipeline: ['analyst', 'developer', ...Array(40).fill('tester'), 'reviewer'] } }, { verdict: 'pass', summary: 'Oversized', decomposition: [
+      { key: 'A', title: 'A', description: 'A', plan: '1. A', dependsOn: [] },
+      { key: 'B', title: 'B', description: 'B', plan: '1. B', dependsOn: [] },
+    ] }), /hard limit of 100/);
     class FixtureRunners extends AgentRunnerRegistry {
       public override get() { return { id: 'codex' as const, async run(job: AgentJob) {
         const order = JSON.parse(await readFile(path.join(job.cwd, '.sat', 'work-order.json'), 'utf8'));
@@ -78,7 +85,12 @@ test('feature asks before dispatch, preserves budget checkpoint, reviews isolate
     }
     const registry = new TrackerToolRegistry(app);
     let interruptDelivery = true;
+    let legacyBudgetStop = true;
     const channel = { async call<T>(name: string, args: Record<string, unknown> = {}): Promise<T> {
+      const outcome = args.outcome as { decomposition?: unknown[]; verdict?: string; questions?: string[] } | undefined;
+      if (name.endsWith('complete_stage') && outcome?.decomposition?.length && outcome.verdict === 'pass' && !outcome.questions?.length && legacyBudgetStop) {
+        legacyBudgetStop = false; throw new Error('Legacy budget failure: need 8 calls, allowed 6');
+      }
       if (name.endsWith('complete_stage') && (args.outcome as { delivery?: unknown } | undefined)?.delivery && interruptDelivery) {
         interruptDelivery = false; throw new Error('Injected child publication acknowledgement failure');
       }
@@ -93,22 +105,23 @@ test('feature asks before dispatch, preserves budget checkpoint, reviews isolate
     app.taskService.answerQuestions({ id: task.id, answers: [{ questionIndex: 1, answer: 'Yes' }], actor: 'user' });
     app.automationService.resume(run.id); await worker().tick();
     const stopped = app.automationService.detail(run.id).run;
-    assert.equal(stopped.status, 'waiting'); assert.equal(stopped.budgetApproval?.requiredCalls, 8);
-    assert.match(stopped.summary, /Ожидает согласования бюджета/);
-    assert.throws(() => app.automationService.resume(run.id), /минимум 8/);
-    assert.equal(app.automationService.queue().items.find(i => i.id === run.id)?.canResume, false);
+    assert.equal(stopped.status, 'failed'); assert.match(stopped.summary, /Legacy budget failure/);
+    assert.equal(stopped.settings.maxAgentCalls, 6);
     assert.equal(app.taskService.getTaskCard(task.id).subtasks.length, 0);
     const diagnostic = app.taskService.createTask({ title: 'Related diagnostic only' });
     app.taskService.linkTasks(task.id, diagnostic.id, 'related');
-    app.automationService.extendBudget(run.id, { maxAgentCalls: 11 });
-    assert.throws(() => app.automationService.extendBudget(run.id, { maxAgentCalls: 10 }), /only increase/);
     app.automationService.resume(run.id); await worker().tick();
     assert.equal(app.automationService.detail(run.id).run.status, 'failed');
     assert.match(app.automationService.detail(run.id).run.summary, /acknowledgement failure/);
     app.automationService.resume(run.id); await worker().tick();
     const result = app.automationService.detail(run.id).run;
     assert.equal(result.status, 'merged', result.summary);
-    assert.equal(analyses, 2, 'Budget extension reuses the completed analyst checkpoint');
+    assert.equal(analyses, 2, 'Automatic call budget reuses the completed analyst checkpoint');
+    assert.deepEqual(result.feature!.callBudget, { planned: 8, revisions: 3, resolver: 1, limit: 12 });
+    assert.equal(result.settings.maxAgentCalls, 12);
+    assert.equal(result.settings.maxInputTokens, 500000); assert.equal(result.settings.maxRunMinutes, 20);
+    assert.equal(result.settings.maxRevisions, 1, 'The repair count is shared by all children and stays unchanged');
+    assert.equal(result.settings.pipeline.filter(id => result.settings.agents.find(a => a.id === id)?.role === 'analyst').length, 1, 'Child schedules cannot introduce recursive analysts');
     assert.equal(childrenDirectories.size, 2); assert.equal(betaDevelopments, 2); assert.equal(reviews, 3); assert.equal(testerCalls, 1);
     assert.equal(result.feature!.children.length, 2);
     for (const child of result.feature!.children) {

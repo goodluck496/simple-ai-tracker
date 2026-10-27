@@ -66,13 +66,16 @@
             @let budget = runBudget.explain(run);
             <div aria-label="Диагностика бюджета">
               @if (run.budgetApproval; as approval) {
-                <p role="status" aria-label="Согласование бюджета">Аналитика завершена. Для разбиения требуется минимум {{ approval.requiredCalls }} вызовов за весь запуск; текущий лимит {{ run.settings.maxAgentCalls ?? 6 }}. План сохранён, разработка не запущена. Минимум не включает запас на исправления.</p>
+                <p role="status" aria-label="Согласование бюджета">Сохранено ожидание старой версии конвейера. Нажмите «Продолжить с места остановки»: число этапов будет рассчитано автоматически по плану. Лимиты токенов и времени сохранятся.</p>
+              }
+              @if (run.feature?.callBudget; as calls) {
+                <p role="status" aria-label="Бюджет вызовов по плану">Вызовы рассчитаны по плану: {{ calls.planned }} плановых, до {{ calls.revisions }} на исправления, до {{ calls.resolver }} на разрешение конфликтов. Общий предел {{ calls.limit }}. Резерв не запускается без необходимости; рекурсивная декомпозиция запрещена.</p>
               }
               @if (run.status === runStatus.Failed || run.status === runStatus.Interrupted || run.status === runStatus.Waiting || run.status === runStatus.Cancelled || run.status === runStatus.MergeBlocked) {
                 <button pButton type="button" severity="secondary" [disabled]="busy()" (click)="editBudget(run)">Изменить бюджет запуска</button>
                 @if (budgetEditing()) {
                   <div aria-label="Изменение бюджета запуска">
-                    <label>Вызовы агентов <input type="number" aria-label="Лимит вызовов" [value]="budgetCalls" (input)="budgetCalls = +$any($event.target).value" /></label>
+                    <label>Вызовы агентов <input type="number" aria-label="Лимит вызовов" [disabled]="!!run.feature?.callBudget" [value]="budgetCalls" (input)="budgetCalls = +$any($event.target).value" /></label>
                     <label>Накопленный вход <input type="number" aria-label="Лимит входных токенов" [value]="budgetInput" (input)="budgetInput = +$any($event.target).value" /></label>
                     <label>Активные минуты <input type="number" aria-label="Лимит минут" [value]="budgetMinutes" (input)="budgetMinutes = +$any($event.target).value" /></label>
                     <p>Потраченные токены, вызовы и время сохраняются. Лимиты можно только увеличить.</p>

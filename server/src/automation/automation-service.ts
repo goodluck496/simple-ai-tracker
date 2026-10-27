@@ -144,8 +144,7 @@ export class AutomationService {
         const otherActive = runs.some((other) => other.taskId === run.taskId && other.id !== run.id && ACTIVE_RUN_STATUSES.includes(other.status));
         const scope = Decomposition.child(run);
         const pendingQuestions = scope ? this.tasks.getTaskCard(scope.taskId).openQuestionsCount : task.openQuestionsCount;
-        const budgetApproval = run.budgetApproval && (run.settings.maxAgentCalls ?? 6) < run.budgetApproval.requiredCalls;
-        const actionReason = budgetApproval ? `Согласуйте бюджет: требуется минимум ${run.budgetApproval!.requiredCalls} вызовов. Результат аналитика сохранён.` : pendingQuestions ? `Ответьте на вопросы в карточке ${scope?.taskId ?? task.id}.` : otherActive ? 'У задачи есть другой активный запуск.'
+        const actionReason = pendingQuestions ? `Ответьте на вопросы в карточке ${scope?.taskId ?? task.id}.` : otherActive ? 'У задачи есть другой активный запуск.'
           : task.status === TaskStatus.Done || (task.status === TaskStatus.Review && !(run.stage >= run.settings.pipeline.length && run.settings.mergePolicy === MergePolicy.Local)) ? 'Задача уже на проверке или завершена.' : '';
         const resumable = RESUMABLE_RUN_STATUSES.includes(run.status) && (run.stage < run.settings.pipeline.length || run.settings.mergePolicy === MergePolicy.Local);
         return { id: run.id, taskId: run.taskId, title: task.title, taskStatus: task.status, status: run.status, stage: run.stage, revision: run.revision,
@@ -271,20 +270,6 @@ export class AutomationService {
       const now = this.clock.now();
       let updated: AgentRun = { ...run, branch, commitSha, updatedAt: now, summary: outcome.summary,
         budgetElapsedMs: RunBudget.elapsed(run, Date.parse(now)), budgetUpdatedAt: now };
-      if (profile.role === AgentRole.Analyst && outcome.verdict === AgentVerdict.Pass && outcome.decomposition?.length) {
-        let requiredCalls: number;
-        try { requiredCalls = FeaturePlanning.requiredCalls(run, outcome); }
-        catch (error) { throw new TrackerError('VALIDATION_FAILED', String(error)); }
-        const currentCalls = run.settings.maxAgentCalls ?? 6;
-        if (requiredCalls > currentCalls) {
-          updated = { ...updated, status: RunStatus.Waiting, leaseToken: null, budgetApproval: { requiredCalls, currentCalls },
-            summary: `Ожидает согласования бюджета: разбиению требуется минимум ${requiredCalls} вызовов за весь запуск, разрешено ${currentCalls}. Результат аналитика сохранён; разработка не запущена. Увеличьте лимит явно и продолжите с места остановки.` };
-          this.tasks.addAttachment(run.taskId, { kind: 'report', name: `analyst-budget-draft-${run.id}.md`,
-            content: `# Предложение аналитика — ожидает бюджета\n\n${updated.summary}\n\n${outcome.plan ?? ''}\n\n## Предложенное разбиение\n${outcome.decomposition.map(c => `### ${c.key}: ${c.title}\n${c.description}\nЗависимости: ${c.dependsOn.join(', ') || 'нет'}\n\n${c.plan}`).join('\n\n')}` });
-          this.runs.save(updated); this.runs.event(id, 'budget', updated.summary, now);
-          return updated;
-        }
-      }
       updated.budgetApproval = undefined;
       if (WRITABLE_AGENT_ROLES.includes(profile.role) && typeof outcome.commitMessage === 'string') {
         if (child) {
@@ -320,7 +305,8 @@ export class AutomationService {
             let planned;
             try { planned = FeaturePlanning.apply(run, outcome, this.tasks); }
             catch (error) { throw new TrackerError('VALIDATION_FAILED', String(error)); }
-            updated = { ...updated, feature: planned.feature, settings: { ...run.settings, pipeline: planned.pipeline } };
+            updated = { ...updated, feature: planned.feature, settings: { ...run.settings, pipeline: planned.pipeline, maxAgentCalls: planned.feature.callBudget!.limit } };
+            this.runs.event(id, 'budget', `Автоматический расчёт: план ${planned.feature.callBudget!.planned}, исправления ${planned.feature.callBudget!.revisions}, resolver ${planned.feature.callBudget!.resolver}, предел ${planned.feature.callBudget!.limit}. Лимиты токенов и времени сохранены.`, now);
             this.tasks.setStatus({ id: run.taskId, status: TaskStatus.InProgress, actor: 'agent' });
             const title = this.tasks.getTaskCard(run.taskId).title.replace(/\s+/g, ' ').slice(0, 120);
             updated.mergeMessage = `[#${run.taskId}] - Объединены изменения «${title}» для реализации общей фичи`;
@@ -383,8 +369,6 @@ export class AutomationService {
     return this.runs.db.transaction(() => {
     const run = this.requireRun(id);
     if (!RESUMABLE_RUN_STATUSES.includes(run.status)) throw new TrackerError('CONFLICT', 'Run cannot be resumed.');
-    if (run.budgetApproval && (run.settings.maxAgentCalls ?? 6) < run.budgetApproval.requiredCalls)
-      throw new TrackerError('CONFLICT', `Сначала согласуйте минимум ${run.budgetApproval.requiredCalls} вызовов через изменение бюджета. Повторная аналитика не требуется.`);
     const mergeOnly = run.stage >= run.settings.pipeline.length && run.settings.mergePolicy === MergePolicy.Local;
     const budgetReason = RunBudget.reason(run, Date.parse(this.clock.now()));
     if (budgetReason && !mergeOnly) throw new TrackerError('CONFLICT', `${budgetReason} Increase this run budget explicitly, then resume. Spent usage is retained.`);
@@ -411,6 +395,7 @@ export class AutomationService {
       if (!RESUMABLE_RUN_STATUSES.includes(run.status)) throw new TrackerError('CONFLICT', 'Stop the run before changing its budget.');
       const value = input as Record<string, unknown>;
       if (!value || typeof value !== 'object' || Object.keys(value).some(k => !['maxAgentCalls', 'maxInputTokens', 'maxRunMinutes'].includes(k))) throw new TrackerError('VALIDATION_FAILED', 'Only run budget limits can be changed.');
+      if (run.feature?.callBudget && value.maxAgentCalls !== undefined && value.maxAgentCalls !== run.settings.maxAgentCalls) throw new TrackerError('VALIDATION_FAILED', 'Feature call count is calculated from the plan; only token and time budgets can be raised.');
       const settings = new AutomationSettingsValidator().validate({ ...run.settings, ...value });
       for (const key of ['maxAgentCalls', 'maxInputTokens', 'maxRunMinutes'] as const) if ((settings[key] ?? 0) < (run.settings[key] ?? 0)) throw new TrackerError('VALIDATION_FAILED', 'Existing run limits can only increase.');
       const { maxAgentCalls, maxInputTokens, maxRunMinutes, maxStageToolCalls, timeoutMinutes } = run.settings;

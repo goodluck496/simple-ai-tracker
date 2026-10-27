@@ -5,7 +5,8 @@ export interface FeatureChild extends DecomposedTask {
   taskId: string; developerStage: number; reviewerStage: number; state: 'ready' | 'review' | 'merged';
   sourceSha?: string; mergedSha?: string; commitMessage?: string;
 }
-export interface FeatureExecution { children: FeatureChild[]; finalDeveloperStage: number; requirementsKey: string; }
+export interface FeatureCallBudget { planned: number; revisions: number; resolver: number; limit: number; }
+export interface FeatureExecution { children: FeatureChild[]; finalDeveloperStage: number; requirementsKey: string; callBudget?: FeatureCallBudget; }
 
 /** Bounded, deterministic DAG: no recursive analysts or independent child budgets. */
 export class Decomposition {
