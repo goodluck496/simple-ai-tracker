@@ -4,6 +4,7 @@ import { RunnerId, type AgentJob, type AgentRunner, type RunnerResult } from '..
 import { ProcessExecutor } from './process-executor.js';
 import { NativeUsageStream, UsageParser } from './usage-parser.js';
 import { AGENT_TRACKER_READ_TOOLS, AGENT_TRACKER_SERVER } from '../../../../shared/automation/tracker-access.js';
+import { TaskEnvironment } from './task-environment.js';
 
 interface Envelope { type?: string; is_error?: boolean; result?: string; response?: string; status?: string; session_id?: string; conversation_id?: string; item?: { type?: string; text?: string }; part?: { type?: string; text?: string }; }
 const NATIVE_SUCCESS_STATUSES = new Set(['SUCCESS', 'success']);
@@ -40,7 +41,7 @@ export class NativeAgentRunner implements AgentRunner {
     if (this.id !== RunnerId.Custom) args.push(...(job.profile.args ?? []));
     const meter = new NativeUsageStream(this.id, job.onUsage);
     let raw: string;
-    try { raw = await this.executor.run({ command, args, cwd: job.cwd, stdin, signal: job.signal, onProgress, onStdout: (text) => meter.push(text) }); }
+    try { raw = await this.executor.run({ command, args, cwd: job.cwd, stdin, env: TaskEnvironment.create(), signal: job.signal, onProgress, onStdout: (text) => meter.push(text) }); }
     finally { meter.finish(); }
     // Some executors and formatted JSON outputs provide only the final complete document.
     if (!meter.usage) {

@@ -13,6 +13,7 @@ import { StageCheckpoint, type StageResult } from './stage-checkpoint.js';
 import { AgentHandoff } from '../../../../shared/automation/handoff.js';
 import { ProgressBuffer } from '../../../../shared/automation/progress-buffer.js';
 import { RunBudget } from '../../../../shared/automation/budget.js';
+import { TaskEnvironment } from '../runners/task-environment.js';
 
 export class PipelineWorker {
   private activeController?: AbortController;
@@ -151,7 +152,7 @@ export class PipelineWorker {
           for (const check of run.settings.checks) {
             try {
               await phase(RunPhase.Checks, `Проверка: ${check.command} ${check.args.join(' ')}`);
-              await this.executor.run({ ...check, cwd, signal: controller.signal, onProgress: progress });
+              await this.executor.run({ ...check, cwd, env: TaskEnvironment.create(), signal: controller.signal, onProgress: progress });
             }
             catch (error) { outcome = { verdict: AgentVerdict.ChangesRequested, summary: redact(`Configured check failed: ${error instanceof Error ? error.message : String(error)}`) }; break; }
           }

@@ -32,6 +32,8 @@ test('native adapters preserve model, prompt and native result/error envelopes',
       const result = await new NativeAgentRunner(runner, executor).run(job, () => undefined);
       assert.ok(result.text.includes('answer'));
       assert.ok(executor.request!.args.includes(runner === 'deepseek-harness' ? 'configured-headless' : 'chosen-model'));
+      assert.equal(executor.request!.env?.SAT_WORKSPACE, undefined);
+      assert.equal(executor.request!.env?.SAT_DB_PATH, undefined);
       if (runner === 'codex' || runner === 'claude-code') assert.equal(executor.request!.stdin, job.prompt);
       if (runner === 'codex') {
         const args = executor.request!.args.join(' ');
