@@ -90,6 +90,13 @@ try {
   assert.equal(planRun.stage, 1);
   service.fail(run.id, run.leaseToken!, 'Fixture MCP connection failed');
   await detail.getByText('Ошибка · карточка: В работе', { exact: true }).waitFor();
+  await detail.getByRole('button', { name: 'Изменить бюджет запуска', exact: true }).click();
+  await detail.getByRole('spinbutton', { name: 'Лимит вызовов', exact: true }).fill('9');
+  await detail.getByRole('spinbutton', { name: 'Лимит входных токенов', exact: true }).fill('600000');
+  await detail.getByRole('button', { name: 'Сохранить лимиты', exact: true }).click();
+  await detail.getByRole('button', { name: 'Сохранить лимиты', exact: true }).waitFor({ state: 'hidden' });
+  assert.equal(service.detail(run.id).run.settings.maxAgentCalls, 9);
+  assert.equal(service.detail(run.id).run.usageAttempts![0].usage!.inputTokens, 1200, 'Budget editing retains spent usage');
   await detail.getByRole('button', { name: 'Продолжить с места остановки', exact: true }).click();
   await detail.getByText('В очереди · карточка: В работе', { exact: true }).waitFor();
   assert.equal(service.detail(run.id).run.settings.agents[0].model, 'fixture-model');
@@ -152,6 +159,27 @@ try {
   assert.equal(service.archive().some(entry => entry.id === run.id), false);
   await hiddenCard.click();
   await detail.getByText('Fixture repeated failure', { exact: true }).first().waitFor();
+  for (const queued of service.list().filter(r => r.status === 'queued')) service.dequeue(queued.id);
+  const featureTask = app.taskService.createTask({ title: 'Feature decomposition UI fixture' });
+  const featureRun = service.enqueue(featureTask.id, { ...settings, maxAgentCalls: 12 });
+  const featureLease = service.claim('feature-ui')!;
+  assert.equal(featureLease.id, featureRun.id);
+  service.beginStage(featureRun.id, featureLease.leaseToken!);
+  const planned = service.completeStage(featureRun.id, featureLease.leaseToken!, { verdict: 'pass', summary: 'Two planned children', plan: '1. Deliver two changes and test together.', decomposition: [
+    { key: 'A', title: 'First delivery', description: 'First isolated change.', plan: '1. Implement first change.', dependsOn: [] },
+    { key: 'B', title: 'Second delivery', description: 'Second isolated change.', plan: '1. Implement second change.', dependsOn: ['A'] },
+  ] }, `sat/${featureRun.id}`, 'a'.repeat(40));
+  service.beginStage(featureRun.id, featureLease.leaseToken!);
+  service.completeStage(featureRun.id, featureLease.leaseToken!, { verdict: 'pass', summary: 'Child developed', commitMessage: `[#${planned.feature!.children[0].taskId}] - Добавлено изменение для проверки дочерней задачи` }, `sat/${featureRun.id}`, 'c'.repeat(40));
+  service.beginStage(featureRun.id, featureLease.leaseToken!);
+  service.completeStage(featureRun.id, featureLease.leaseToken!, { verdict: 'pass', summary: 'Child reviewed and delivered', delivery: { childKey: 'A', sourceSha: 'c'.repeat(40), mergedSha: 'd'.repeat(40) } }, `sat/${featureRun.id}`, 'd'.repeat(40));
+  service.fail(featureRun.id, featureLease.leaseToken!, 'Feature UI paused');
+  await page.reload(); await page.getByRole('button', { name: 'Очередь', exact: true }).click();
+  await queue.getByRole('button', { name: `Запуск ${featureTask.id} ${featureRun.id}`, exact: true }).click();
+  const deliveries = detail.getByLabel('Подзадачи фичи', { exact: true });
+  await deliveries.getByText('Включена в фичу', { exact: false }).waitFor();
+  await deliveries.getByRole('button', { name: `${planned.feature!.children[1].taskId} · Second delivery`, exact: true }).waitFor();
+  assert.equal(await deliveries.getByRole('button').count(), 2);
   assert.deepEqual(errors, []);
   const artifacts = path.resolve(import.meta.dirname, '../dist/acceptance'); mkdirSync(artifacts, { recursive: true });
   await meter.scrollIntoViewIfNeeded();

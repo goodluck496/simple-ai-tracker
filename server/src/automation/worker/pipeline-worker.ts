@@ -24,6 +24,7 @@ import { RunPreparation } from './run-preparation.js';
 import { StageHandoff } from './stage-handoff.js';
 import type { StageEvidence } from '../../../../shared/automation/work-order.js';
 import { WorkOrder } from '../../../../shared/automation/work-order.js';
+import { Decomposition } from '../../../../shared/automation/decomposition.js';
 
 export class PipelineWorker {
   private activeController?: AbortController;
@@ -84,7 +85,8 @@ export class PipelineWorker {
       await phase(RunPhase.Preparing, 'Создание или проверка отдельной рабочей ветки.');
       if (!path.isAbsolute(run.settings.repositoryPath)) throw new Error('Repository path must be absolute on the worker host.');
       const location = await RunWorkspace.describe(run.settings.repositoryPath, run.id, this.channel.workspace ?? process.env.SAT_WORKSPACE ?? 'default', this.executor, controller.signal);
-      const { root: repository, common, directory: cwd, branch, git } = location;
+      const { root: repository, common, branch, git } = location;
+      let cwd = location.directory;
       coordinator = new RuntimeCoordinator(path.join(common, 'sat-runtime', 'coordination.sqlite'));
       leases.push(await coordinator.acquire(`run:${run.id}`, controller.signal));
       await phase(RunPhase.WaitingSlot, 'Ожидание свободного слота проекта.');
@@ -159,10 +161,23 @@ export class PipelineWorker {
         await this.channel.call(AutomationTool.Checkout, { id: run.id, leaseToken: token, result: run.checkout });
       };
       if (run.status === RunStatus.Running) await prepareSource();
+      const featureCwd = cwd;
       let prepared = true;
       while (run.status === RunStatus.Running && run.stage < run.settings.pipeline.length) {
         controller.signal.throwIfAborted();
-        if (!prepared) await prepareSource(); prepared = false;
+        const child = Decomposition.child(run);
+        cwd = child ? `${featureCwd}-child-${child.key}` : featureCwd;
+        if (child) {
+          try { await fs.access(cwd); }
+          catch (error) {
+            if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+            if (run.feature!.children.some(c => child.dependsOn.includes(c.key) && c.state !== 'merged')) throw new Error('Child dependencies have not been reviewed and merged.');
+            await git(['worktree', 'add', '-b', `sat-child/${run.id}-${child.key}`, cwd, branch]);
+          }
+          if ((await git(['branch', '--show-current'], cwd)).trim() !== `sat-child/${run.id}-${child.key}`) throw new Error('Child worktree identity changed.');
+          await preparation!.prepare(cwd, controller.signal, progress);
+        } else if (!prepared) await prepareSource();
+        prepared = false;
         const profileId = run.settings.pipeline[run.stage];
         const profile = run.settings.agents.find((agent) => agent.id === profileId)!;
         const connection = run.settings.connections.find((entry) => entry.id === profile.connectionId)!;
@@ -171,18 +186,32 @@ export class PipelineWorker {
           if (!images.length) throw new Error('Visual validator requires configured image artifacts.');
           for (const file of images) await fs.access(path.join(cwd, file));
         }
-        const pack = await this.channel.call<Record<string, unknown>>('tracker_get_task', { id: run.taskId, commentsLimit: 5 });
+        const stageTaskId = child?.taskId ?? run.taskId;
+        const pack = await this.channel.call<Record<string, unknown>>('tracker_get_task', { id: stageTaskId, commentsLimit: 5 });
+        if (run.feature) {
+          const parent = child ? await this.channel.call<Record<string, unknown>>('tracker_get_task', { id: run.taskId, commentsLimit: 0 }) : pack;
+          if (run.feature.requirementsKey !== StageCheckpoint.key({ description: parent.description, plan: (parent.plan as { content?: string } | undefined)?.content }))
+            throw new Error('Parent feature requirements changed after decomposition; review the split and child plans before starting a new run.');
+        }
         const context = { id: pack.id, title: pack.title, description: pack.description, plan: pack.plan, questions: pack.questions, relations: pack.relations, comments: pack.comments };
-        const requirementsKey = StageCheckpoint.key({ description: pack.description, plan: pack.plan, questions: pack.questions, relations: pack.relations });
+        // Related cards contain timestamps/counts changed by failure reports. Those
+        // are operational noise, not new requirements that justify another model call.
+        const relations = pack.relations as { parent?: { id: string }; subtasks?: { id: string }[]; links?: { relation: string; task: { id: string } }[] } | undefined;
+        const relationKey = { parent: relations?.parent?.id, subtasks: relations?.subtasks?.map(t => t.id).sort(),
+          links: relations?.links?.map(l => `${l.relation}:${l.task.id}`).sort() };
+        const requirementsKey = StageCheckpoint.key({ description: pack.description, plan: pack.plan, questions: pack.questions, relations: relationKey });
         // Failure comments and run.summary change on infrastructure failure, so they are not cache keys.
         const checkpoint = new StageCheckpoint(cwd, run.stage, run.revision, (args) => git(args, cwd));
-        const key = StageCheckpoint.key({ id: run.id, stage: run.stage, revision: run.revision, settings: run.settings,
-          task: { id: pack.id, title: pack.title, description: pack.description, plan: pack.plan, questions: pack.questions, relations: pack.relations } });
-        let saved = await checkpoint.load(key);
+        const { maxAgentCalls, maxInputTokens, maxRunMinutes, maxStageToolCalls, timeoutMinutes, ...semanticSettings } = run.settings;
+        const keyInput = { id: run.id, stage: run.stage, revision: run.revision, settings: semanticSettings,
+          task: { id: pack.id, title: pack.title, description: pack.description, plan: pack.plan, questions: pack.questions, relations: relationKey } };
+        const key = StageCheckpoint.key(keyInput);
+        const legacyKey = StageCheckpoint.key({ ...keyInput, task: { ...keyInput.task, relations: pack.relations }, settings: { ...run.settings, ...run.checkpointBudgets } });
+        let saved = await checkpoint.load([key, legacyKey]);
         const priorSha = (await git(['rev-parse', 'HEAD'], cwd)).trim();
         if (run.commitSha && priorSha !== run.commitSha && !saved) throw new Error('Worktree HEAD changed after checkpoint; inspect it before resuming.');
         const priorStatus = await git(['status', '--porcelain', '--', '.', ':!.sat'], cwd);
-        const baseline = run.checkout?.baseSha ?? run.settings.baseBranch;
+        const baseline = child ? (await git(['merge-base', 'HEAD', branch], cwd)).trim() : run.checkout?.baseSha ?? run.settings.baseBranch;
         const committed = await git(['diff', '--name-only', '-z', `${baseline}...HEAD`, '--', '.', ':!.sat'], cwd);
         const pendingNames = await git(['diff', 'HEAD', '--name-only', '-z', '--', '.', ':!.sat'], cwd);
         const untrackedNames = await git(['ls-files', '--others', '--exclude-standard', '-z'], cwd);
@@ -191,7 +220,9 @@ export class PipelineWorker {
         const previous = await handoff.read(run.stage, run.revision, requirementsKey, priorSha);
         const stepIds = WorkOrder.from(pack.plan)?.steps.filter(s => s.kind === 'step').map(s => s.id) ?? [];
         const workProgress = [AgentRole.Developer, AgentRole.Designer].includes(profile.role as 'developer' | 'designer') ? await handoff.progress(requirementsKey, stepIds) : undefined;
-        const packet = AgentHandoff.forRole(profile.role, context, changedFiles, previous, workProgress);
+        const rolePacket = JSON.parse(AgentHandoff.forRole(profile.role, context, changedFiles, previous, workProgress));
+        if (run.feature && !child) rolePacket.featureDeliveries = run.feature.children.map(c => ({ taskId: c.taskId, key: c.key, state: c.state, sourceSha: c.sourceSha, mergedSha: c.mergedSha }));
+        const packet = JSON.stringify(rolePacket);
         const diff = profile.role === AgentRole.Reviewer ? await git(['diff', `${baseline}...HEAD`, '--', '.', ':!.sat'], cwd) : '';
         const feedback = previous && run.summary.startsWith(previous.summary) ? '' : run.summary;
         const prompt = this.prompt(profile.role, profile.instructions, context, feedback, diff, run.settings.artifactPaths, run.settings.checks, run.checkout, packet);
@@ -230,6 +261,7 @@ export class PipelineWorker {
           if (typeof outcome.commitMessage === 'string') outcome.commitMessage = redact(outcome.commitMessage);
           if (outcome.plan) outcome.plan = redact(outcome.plan);
           if (outcome.questions) outcome.questions = outcome.questions.map(redact);
+          if (outcome.decomposition) outcome.decomposition = outcome.decomposition.map(c => ({ ...c, title: redact(c.title), description: redact(c.description), plan: redact(c.plan) }));
           // Preserve the completed answer before final usage can exhaust the budget.
           if (outcome.verdict === AgentVerdict.Pass) await checkpoint.save({ key, head: priorSha,
             fingerprint: '', priorHead: priorSha, priorStatus, outcome });
@@ -253,7 +285,7 @@ export class PipelineWorker {
           const staged = (await git(['diff', '--cached', '--name-only', '-z'], cwd)).split('\0').filter(Boolean);
           if (staged.some(file => /(^|\/)(?:node_modules|\.sat)(?:\/|$)/.test(file))) throw new Error('Generated dependencies/runtime must not be committed. Fix ignore rules before resuming.');
           if ((await git(['diff', '--cached', '--name-only'], cwd)).trim()) {
-            const message = CommitMessage.validate(outcome.commitMessage, run.taskId);
+            const message = CommitMessage.validate(outcome.commitMessage, stageTaskId);
             await git(['commit', '-m', message], cwd);
             if ((await git(['log', '-1', '--format=%s'], cwd)).trim() !== message) throw new Error('Git hook changed the validated commit subject; inspect the source branch.');
           }
@@ -279,8 +311,22 @@ export class PipelineWorker {
         await handoff.save({ stage: run.stage, revision: run.revision, role: profile.role, sha, requirementsKey,
           verdict: outcome.verdict, summary: outcome.summary, changedFiles: [...new Set([...changedFiles,
             ...(await git(['diff', '--name-only', '-z', `${baseline}...HEAD`, '--', '.', ':!.sat'], cwd)).split('\0').filter(Boolean)])], checks: checksEvidence });
+        if (child && profile.role === AgentRole.Reviewer && outcome.verdict === AgentVerdict.Pass && !outcome.questions?.length) {
+          const sourceSha = sha;
+          const delivered = await new SquashIntegration(this.executor).run({ runId: `${run.id}-child-${child.key}-r${run.revision}`, taskId: child.taskId,
+            repository: featureCwd, common, sourceSha, targetBranch: branch, directory: cwd, message: child.commitMessage ?? '',
+            contextKey: requirementsKey, maxAttempts: 1, signal: controller.signal,
+            authorize: async () => { await this.channel.call(AutomationTool.Heartbeat, { id: run.id, leaseToken: token }); },
+            record: async info => { await phase(RunPhase.Merge, `Child ${child.taskId}: ${info.state}`); },
+            prepare: async () => {}, checks: async () => {},
+            resolve: async () => { throw new Error('Child conflicts require a new development review; automatic publication is stopped.'); },
+          });
+          sha = delivered.candidateSha ?? delivered.baseSha;
+          outcome = { ...outcome, delivery: { childKey: child.key, sourceSha, mergedSha: sha } };
+        }
         run = await this.channel.call<AgentRun>(AutomationTool.CompleteStage, { id: run.id, leaseToken: token, outcome, branch, commitSha: sha });
       }
+      cwd = featureCwd;
       if (run.status === RunStatus.Integrating) await integrate(false);
       });
       finished = true;
@@ -309,7 +355,7 @@ export class PipelineWorker {
   }
   private prompt(role: AgentRole, instructions: string, context: unknown, feedback: string, diff: string, artifacts: string[], checks: unknown, checkout?: AgentRun['checkout'], packet?: string): string {
     const roleInstructions: Record<AgentRole, string> = {
-      [AgentRole.Analyst]: 'Investigate only the affected path. Produce an executable numbered work order: each step names exact files/symbols, the change, dependencies and a focused check. Keep all acceptance criteria and constraints. No vague repeat-the-research steps. Missing implementation and failing pre-change checks are expected. Return pass with the complete markdown plan, or questions for missing requirements. Never return changes_requested.',
+      [AgentRole.Analyst]: 'Investigate only the affected path. Produce an executable numbered work order: each step names exact files/symbols, the change, dependencies and a focused check. Keep all acceptance criteria and constraints. For a feature with separable deliverables, return decomposition of 2–12 small tasks: each has key, title, description, complete numbered plan with focused checks, dependsOn keys. Define shared contracts in the parent plan; do not omit acceptance criteria. Never recursively split children. A small atomic task uses decomposition: []. If boundaries, contracts, or dependencies need a user decision, return questions before any development; include the proposed split in plan. Otherwise pass dispatches developers automatically. No vague repeat-the-research steps. Missing implementation and failing pre-change checks are expected. Never return changes_requested.',
       [AgentRole.Developer]: 'Execute the approved workOrder steps in order, one focused change at a time. Read required repository instructions once; inspect only files/symbols needed for the current step. Do not redo general analysis or replace an agreed plan. If a step is invalid or ambiguous, return questions with the concrete blocker. Add focused regressions, report completed/remaining step IDs, and pass only after implementation.',
       [AgentRole.Designer]: 'Implement the requested visual design in project files, following the accepted plan and supplied references.',
       [AgentRole.Tester]: 'Assess the implemented behavior and test coverage. Use the configured checks when helpful. Return changes_requested for defects or missing coverage. Do not edit files.',
@@ -329,6 +375,6 @@ export class PipelineWorker {
       + `Dependency mode: ${checkout?.dependencyMode ?? 'isolated'}. Managed linked packages are readonly: never run npm install/ci/rebuild on links. If changing manifests, return the source changes; worker detaches and installs private dependencies before the next role. Use the assigned PORT and temporary directories. Do not start unmanaged background processes or use live databases. `
       + `For visual validation inspect the actual artifacts; if absent return questions. `
       + `Return ONLY one JSON object: {"verdict":"pass","summary":"evidence and findings","questions":[],"plan":"markdown plan for analyst, otherwise empty","commitMessage":"${READ_ONLY_AGENT_ROLES.includes(role) ? '' : `[#${(context as { id: string }).id}] - Выполнено изменение по плану, чтобы реализовать требование задачи`}"}. commitMessage is a separate top-level field, never part of summary; describe the actual change and its purpose. Allowed verdicts are pass, changes_requested, questions, blocked. Return blocked for unavailable tools, permissions, infrastructure or environment failures; do not request code revisions to bypass them. `
-      + `Analyst must include plan on pass. Do not claim checks passed without evidence. Never mark a task done.`;
+      + `Include decomposition: [] as a separate top-level JSON field, or the analyst task array described above. Analyst must include plan on pass. Do not claim checks passed without evidence. Never mark a task done.`;
   }
 }

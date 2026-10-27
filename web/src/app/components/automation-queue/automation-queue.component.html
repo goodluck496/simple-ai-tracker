@@ -65,12 +65,36 @@
           @if (detail()?.run; as run) {
             @let budget = runBudget.explain(run);
             <div aria-label="Диагностика бюджета">
+              @if (run.status === runStatus.Failed || run.status === runStatus.Interrupted || run.status === runStatus.Waiting || run.status === runStatus.Cancelled || run.status === runStatus.MergeBlocked) {
+                <button pButton type="button" severity="secondary" [disabled]="busy()" (click)="editBudget(run)">Изменить бюджет запуска</button>
+                @if (budgetEditing()) {
+                  <div aria-label="Изменение бюджета запуска">
+                    <label>Вызовы агентов <input type="number" aria-label="Лимит вызовов" [value]="budgetCalls" (input)="budgetCalls = +$any($event.target).value" /></label>
+                    <label>Накопленный вход <input type="number" aria-label="Лимит входных токенов" [value]="budgetInput" (input)="budgetInput = +$any($event.target).value" /></label>
+                    <label>Активные минуты <input type="number" aria-label="Лимит минут" [value]="budgetMinutes" (input)="budgetMinutes = +$any($event.target).value" /></label>
+                    <p>Потраченные токены, вызовы и время сохраняются. Лимиты можно только увеличить.</p>
+                    <button pButton type="button" [disabled]="busy()" (click)="saveBudget(run)">Сохранить лимиты</button>
+                    <button pButton type="button" severity="secondary" (click)="budgetEditing.set(false)">Отмена</button>
+                  </div>
+                }
+              }
               <p>Накопленный вход: {{ budget.input | number }} / {{ budget.limit | number }} ({{ budget.percent }}%).</p>
               @if (budget.cached !== undefined) {
                 <p>Чтение кеша: {{ budget.cached | number }} · без чтения кеша: {{ budget.nonCached | number }}.</p>
               } @else { <p>Разделение входа по кешу: нет полных данных.</p> }
               <p class="muted">{{ budget.advice }} Native CLI может сообщить расход с задержкой, поэтому остановка не гарантирует точного финансового потолка.</p>
             </div>
+            @if (run.feature; as feature) {
+              <div aria-label="Подзадачи фичи">
+                <p>Подзадачи выполняются по зависимостям; бюджет общий. После их ревью — тестирование всей фичи.</p>
+                @for (child of feature.children; track child.key) {
+                  <p><button pButton type="button" [text]="true" (click)="openTask.emit(child.taskId)">{{ child.taskId }} · {{ child.title }}</button>
+                    {{ child.state === 'merged' ? 'Включена в фичу' : child.state === 'review' ? 'Разработка завершена, ожидает ревью' : 'Готова к разработке' }}
+                    @if (child.mergedSha) { <code>{{ child.mergedSha.slice(0, 8) }}</code> }
+                  </p>
+                }
+              </div>
+            }
           }
           @if (total.measuredAttempts) {
             <p>Вход: {{ total.inputTokens | number }} · выход: {{ total.outputTokens | number }}. Данные есть у {{ total.measuredAttempts }} из {{ total.attempts }} попыток этапов.</p>

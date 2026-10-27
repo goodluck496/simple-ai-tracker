@@ -96,6 +96,8 @@ export const DEFAULT_AUTOMATION_SETTINGS: AutomationSettings = {
 export const DEFAULT_CHECK_COMMAND: CheckCommand = { command: 'npm', args: ['test'] };
 export const DEFAULT_SETUP_COMMAND: CheckCommand = { command: 'npm', args: ['ci'] };
 export interface AgentRun {
+  checkpointBudgets?: Pick<AutomationSettings, 'maxAgentCalls' | 'maxInputTokens' | 'maxRunMinutes' | 'maxStageToolCalls' | 'timeoutMinutes'>;
+  feature?: import('./decomposition.js').FeatureExecution;
   integrationSourceSha?: string;
   mergeReviewRequired?: boolean;
   checkout?: { repositoryRoot: string; worktreePath: string; baseSha: string; dependencyMode: 'isolated' | 'linked'; dependencyKey?: string; dependencyNote?: string };
@@ -134,6 +136,8 @@ export interface IntegrationInfo {
 }
 export interface RunEvent { id: number; runId: string; at: string; kind: string; text: string; }
 export interface AgentOutcome {
+  decomposition?: import('./decomposition.js').DecomposedTask[];
+  delivery?: { childKey: string; sourceSha: string; mergedSha: string };
   commitMessage?: string;
   verdict: AgentVerdict;
   summary: string;

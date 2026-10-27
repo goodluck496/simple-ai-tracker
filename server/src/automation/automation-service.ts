@@ -12,6 +12,8 @@ import { ProjectRequests } from './project-requests.js';
 import { RunPhase, RUN_PHASES, RunProgressText, type QueueItem, type QueueSnapshot } from '../../../shared/automation/queue.js';
 import { TokenMeter, type TokenUsage, type UsageAttempt } from '../../../shared/automation/token-usage.js';
 import { RunBudget } from '../../../shared/automation/budget.js';
+import { Decomposition } from '../../../shared/automation/decomposition.js';
+import { FeaturePlanning } from './feature-planning.js';
 
 const SETTINGS_KEY = 'automation_settings_v1';
 const LEASE_MS = AUTOMATION_TIMING.leaseMs;
@@ -48,7 +50,9 @@ export class AutomationService {
     return this.runs.db.transaction(() => { this.expireLeases(); return { run: this.publicRun(this.requireRun(id)), events: this.runs.events(id) }; });
   }
 
-  public activeTaskIds(): string[] { return this.runs.activeTaskIds(); }
+  public activeTaskIds(): string[] {
+    return [...new Set([...this.runs.activeTaskIds(), ...this.runs.list().filter(r => ![RunStatus.Merged, RunStatus.Cancelled, RunStatus.Review].includes(r.status as 'merged' | 'cancelled' | 'review')).flatMap(r => r.feature?.children.map(c => c.taskId) ?? [])])];
+  }
   public checkout(id: string, token: string, input: unknown): void {
     this.runs.db.transaction(() => {
       const run = this.owned(id, token); const value = input as NonNullable<AgentRun['checkout']>;
@@ -103,7 +107,7 @@ export class AutomationService {
         || (role === AgentRole.VisualValidator && index < lastTester))) throw new TrackerError('VALIDATION_FAILED', 'Development/design must precede tests; review and visual validation must follow tests.');
       if (!task.plan && (roles.indexOf(AgentRole.Analyst) < 0 || roles.indexOf(AgentRole.Analyst) > developer)) throw new TrackerError('VALIDATION_FAILED', 'Task needs an existing plan or an analyst before development.');
       if (!task.plan && roles.some((role, index) => role === AgentRole.Designer && index < roles.indexOf(AgentRole.Analyst))) throw new TrackerError('VALIDATION_FAILED', 'Analyst must precede design changes when the task has no plan.');
-      if (this.runs.hasActive(taskId)) throw new TrackerError('CONFLICT', 'Task already has an active run.');
+      if (this.activeTaskIds().includes(taskId)) throw new TrackerError('CONFLICT', 'Task already has an active run or belongs to an executing feature.');
       const now = this.clock.now();
       const run: AgentRun = { id: randomUUID(), taskId, status: RunStatus.Queued, stage: 0, revision: 0,
         workerId: null, leaseToken: null, leaseUntil: null, settings, createdAt: now, updatedAt: now,
@@ -138,7 +142,9 @@ export class AutomationService {
       const items: QueueItem[] = runs.map((run) => {
         const task = this.tasks.getTaskCard(run.taskId);
         const otherActive = runs.some((other) => other.taskId === run.taskId && other.id !== run.id && ACTIVE_RUN_STATUSES.includes(other.status));
-        const actionReason = task.openQuestionsCount ? 'Ответьте на вопросы в карточке задачи.' : otherActive ? 'У задачи есть другой активный запуск.'
+        const scope = Decomposition.child(run);
+        const pendingQuestions = scope ? this.tasks.getTaskCard(scope.taskId).openQuestionsCount : task.openQuestionsCount;
+        const actionReason = pendingQuestions ? `Ответьте на вопросы в карточке ${scope?.taskId ?? task.id}.` : otherActive ? 'У задачи есть другой активный запуск.'
           : task.status === TaskStatus.Done || (task.status === TaskStatus.Review && !(run.stage >= run.settings.pipeline.length && run.settings.mergePolicy === MergePolicy.Local)) ? 'Задача уже на проверке или завершена.' : '';
         const resumable = RESUMABLE_RUN_STATUSES.includes(run.status) && (run.stage < run.settings.pipeline.length || run.settings.mergePolicy === MergePolicy.Local);
         return { id: run.id, taskId: run.taskId, title: task.title, taskStatus: task.status, status: run.status, stage: run.stage, revision: run.revision,
@@ -211,7 +217,11 @@ export class AutomationService {
     if (resolver && (run.usageAttempts ?? []).filter(a => a.kind === 'resolver').length >= (run.settings.maxResolverCalls ?? 1)) throw new TrackerError('CONFLICT', 'Conflict resolver call budget exhausted.');
     const agent = run.settings.agents.find((entry) => resolver ? entry.role === AgentRole.Developer : entry.id === run.settings.pipeline[run.stage]);
     if (!agent) throw new TrackerError('CONFLICT', 'Pipeline has no current stage.');
-    const task = this.tasks.getTaskCard(run.taskId);
+    if (run.feature) {
+      const parent = this.tasks.getTaskCard(run.taskId);
+      if (parent.openQuestionsCount || parent.status === TaskStatus.Done) throw new TrackerError('CONFLICT', 'Resolve the parent feature state/questions before dispatching children.');
+    }
+    const task = this.tasks.getTaskCard(Decomposition.child(run)?.taskId ?? run.taskId);
     if (task.openQuestionsCount) throw new TrackerError('CONFLICT', 'Task has unanswered questions.');
     if (agent.role === AgentRole.Analyst) this.tasks.setStatus({ id: task.id, status: TaskStatus.Planning, actor: 'agent' });
     if (agent.role === AgentRole.Developer && !resolver) this.tasks.setStatus({ id: task.id, status: TaskStatus.InProgress, actor: 'agent' });
@@ -254,35 +264,62 @@ export class AutomationService {
       if (!outcome || !AGENT_VERDICTS.includes(outcome.verdict) || typeof outcome.summary !== 'string') throw new TrackerError('VALIDATION_FAILED', 'Invalid agent verdict.');
       if (!/^[a-f0-9]{40,64}$/.test(commitSha) || !/^sat\/[\w-]+$/.test(branch)) throw new TrackerError('VALIDATION_FAILED', 'Worker must provide branch and commit SHA.');
       const profile = run.settings.agents.find((agent) => agent.id === run.settings.pipeline[run.stage])!;
+      const child = Decomposition.child(run);
+      const taskId = child?.taskId ?? run.taskId;
+      if (outcome.questions?.some(q => typeof q === 'string' && q.trim())) outcome = { ...outcome, verdict: AgentVerdict.Questions };
       const now = this.clock.now();
       let updated: AgentRun = { ...run, branch, commitSha, updatedAt: now, summary: outcome.summary,
         budgetElapsedMs: RunBudget.elapsed(run, Date.parse(now)), budgetUpdatedAt: now };
-      if (WRITABLE_AGENT_ROLES.includes(profile.role) && typeof outcome.commitMessage === 'string') updated.mergeMessage = outcome.commitMessage;
+      if (WRITABLE_AGENT_ROLES.includes(profile.role) && typeof outcome.commitMessage === 'string') {
+        if (child) {
+          if (outcome.verdict === AgentVerdict.Pass) updated.feature = { ...run.feature!, children: run.feature!.children.map(c => c.key === child.key ? { ...c, commitMessage: outcome.commitMessage, sourceSha: commitSha, state: 'review' } : c) };
+        }
+        else updated.mergeMessage = outcome.commitMessage;
+      }
       if (EVIDENCE_AGENT_ROLES.includes(profile.role)) {
-        this.tasks.addAttachment(run.taskId, { kind: 'report', name: `${profile.role}-${run.id}-${run.revision}.md`,
+        this.tasks.addAttachment(taskId, { kind: 'report', name: `${profile.role}-${run.id}-${run.revision}.md`,
           content: `# ${profile.role}\n\nVerdict: ${outcome.verdict}\nCommit: ${commitSha}\nBranch: ${branch}\n\n${outcome.summary}\n\n## Worker evidence\n${this.runs.events(id).filter((event) => event.kind === 'progress').slice(-10).map((event) => event.text).join('\n')}` });
       }
       const budgetReason = RunBudget.reason(run, Date.parse(now));
-      if (budgetReason || outcome.verdict === AgentVerdict.Blocked
+      if ((budgetReason && outcome.verdict !== AgentVerdict.Questions) || outcome.verdict === AgentVerdict.Blocked
         || (outcome.verdict === AgentVerdict.ChangesRequested && WRITABLE_AGENT_ROLES.includes(profile.role))) {
         updated = { ...updated, status: RunStatus.Failed, leaseToken: null,
           summary: budgetReason ?? `Execution blocked; no automatic retry: ${outcome.summary}` };
       } else if (outcome.verdict === AgentVerdict.Questions) {
         if (!Array.isArray(outcome.questions) || !outcome.questions.length || !outcome.questions.every((question) => typeof question === 'string' && question.trim())) throw new TrackerError('VALIDATION_FAILED', 'Questions verdict requires questions.');
-        this.tasks.askQuestions({ id: run.taskId, questions: outcome.questions, actor: 'agent' });
+        if (profile.role === AgentRole.Analyst && outcome.plan?.trim()) this.tasks.attachPlan({ id: taskId, planContent: outcome.plan, summary: outcome.summary, statusMode: 'none', actor: 'agent' });
+        this.tasks.askQuestions({ id: taskId, questions: outcome.questions, actor: 'agent' });
         updated = { ...updated, status: RunStatus.Waiting, leaseToken: null };
       } else if (outcome.verdict === AgentVerdict.ChangesRequested) {
         if (profile.role === AgentRole.Analyst) throw new TrackerError('VALIDATION_FAILED', 'Analyst must return a plan or questions.');
-        const developer = run.settings.pipeline.findIndex((profileId) => run.settings.agents.find((agent) => agent.id === profileId)?.role === AgentRole.Developer);
+        const developer = child?.developerStage ?? run.feature?.finalDeveloperStage ?? run.settings.pipeline.findIndex((profileId) => run.settings.agents.find((agent) => agent.id === profileId)?.role === AgentRole.Developer);
         updated = run.revision >= run.settings.maxRevisions ? { ...updated, status: RunStatus.Failed, leaseToken: null }
           : { ...updated, stage: developer, revision: run.revision + 1 };
       } else {
         if (profile.role === AgentRole.Analyst) {
           if (!outcome.plan?.trim()) throw new TrackerError('VALIDATION_FAILED', 'Analyst must return a plan.');
           this.tasks.attachPlan({ id: run.taskId, planContent: outcome.plan, summary: outcome.summary, actor: 'agent' });
+          if (outcome.decomposition?.length) {
+            if (run.feature) throw new TrackerError('CONFLICT', 'Feature was already decomposed.');
+            let planned;
+            try { planned = FeaturePlanning.apply(run, outcome, this.tasks); }
+            catch (error) { throw new TrackerError('VALIDATION_FAILED', String(error)); }
+            updated = { ...updated, feature: planned.feature, settings: { ...run.settings, pipeline: planned.pipeline } };
+            this.tasks.setStatus({ id: run.taskId, status: TaskStatus.InProgress, actor: 'agent' });
+            const title = this.tasks.getTaskCard(run.taskId).title.replace(/\s+/g, ' ').slice(0, 120);
+            updated.mergeMessage = `[#${run.taskId}] - Объединены изменения «${title}» для реализации общей фичи`;
+          }
+        }
+        if (child && profile.role === AgentRole.Reviewer) {
+          const delivery = outcome.delivery;
+          if (!delivery || delivery.childKey !== child.key || delivery.sourceSha !== run.commitSha || delivery.mergedSha !== commitSha) throw new TrackerError('VALIDATION_FAILED', 'Reviewed child requires a durable squash delivery.');
+          updated.feature = { ...run.feature!, children: run.feature!.children.map(c => c.key === child.key ? { ...c, state: 'merged', sourceSha: delivery.sourceSha, mergedSha: commitSha } : c) };
+          this.tasks.setStatus({ id: taskId, status: TaskStatus.Testing, actor: 'agent' });
+          this.tasks.setStatus({ id: taskId, status: TaskStatus.Review, actor: 'agent' });
         }
         updated = { ...updated, stage: run.stage + 1 };
-        if (updated.stage >= run.settings.pipeline.length) {
+        if (child && updated.stage === updated.feature?.finalDeveloperStage) updated.stage++;
+        if (updated.stage >= updated.settings.pipeline.length) {
           this.tasks.setStatus({ id: run.taskId, status: TaskStatus.Review, actor: 'agent' });
           updated = { ...updated, status: run.settings.mergePolicy === MergePolicy.Local ? RunStatus.Integrating : RunStatus.Review,
             leaseToken: run.settings.mergePolicy === MergePolicy.Local ? run.leaseToken : null };
@@ -290,7 +327,7 @@ export class AutomationService {
       }
       this.runs.save(updated);
       this.runs.event(id, updated.status === RunStatus.Failed ? 'failed' : outcome.verdict, updated.summary, now);
-      this.tasks.addComment({ id: run.taskId, text: `[AGENT ${profile.role}] ${outcome.summary}\nBranch: ${branch}\nCommit: ${commitSha}`, kind: 'note', actor: 'agent' });
+      this.tasks.addComment({ id: taskId, text: `[AGENT ${profile.role}] ${outcome.summary}\nBranch: ${branch}\nCommit: ${commitSha}`, kind: 'note', actor: 'agent' });
       return updated;
     });
   }
@@ -332,20 +369,36 @@ export class AutomationService {
     if (!RESUMABLE_RUN_STATUSES.includes(run.status)) throw new TrackerError('CONFLICT', 'Run cannot be resumed.');
     const mergeOnly = run.stage >= run.settings.pipeline.length && run.settings.mergePolicy === MergePolicy.Local;
     const budgetReason = RunBudget.reason(run, Date.parse(this.clock.now()));
-    if (budgetReason && !mergeOnly) throw new TrackerError('CONFLICT', `${budgetReason} Start a separate new run explicitly.`);
+    if (budgetReason && !mergeOnly) throw new TrackerError('CONFLICT', `${budgetReason} Increase this run budget explicitly, then resume. Spent usage is retained.`);
     if (run.stage >= run.settings.pipeline.length && !mergeOnly) throw new TrackerError('CONFLICT', 'All stages finished; resolve the merge manually.');
-    const task = this.tasks.getTaskCard(run.taskId);
+    const task = this.tasks.getTaskCard(Decomposition.child(run)?.taskId ?? run.taskId);
     if (task.openQuestionsCount) throw new TrackerError('CONFLICT', 'Answer task questions first.');
     if (task.status === TaskStatus.Done || (task.status === TaskStatus.Review && !mergeOnly)) throw new TrackerError('CONFLICT', 'Task is already complete or in review.');
     if (this.runs.hasActive(run.taskId) && run.status !== RunStatus.Waiting) throw new TrackerError('CONFLICT', 'Task already has another active run.');
+    if (run.feature?.children.some(c => this.runs.hasActive(c.taskId))) throw new TrackerError('CONFLICT', 'A child has an independent active run; stop it before resuming the feature.');
     const role = run.settings.agents.find((agent) => agent.id === run.settings.pipeline[run.stage])?.role;
     const stage = run.status === RunStatus.Waiting && role && EVIDENCE_AGENT_ROLES.includes(role)
-      ? run.settings.pipeline.findIndex((id) => run.settings.agents.find((agent) => agent.id === id)?.role === AgentRole.Developer) : run.stage;
+      ? Decomposition.child(run)?.developerStage ?? run.feature?.finalDeveloperStage ?? run.settings.pipeline.findIndex((id) => run.settings.agents.find((agent) => agent.id === id)?.role === AgentRole.Developer) : run.stage;
     const updated: AgentRun = { ...run, stage, status: RunStatus.Queued, leaseToken: null, workerId: null, leaseUntil: null, updatedAt: this.clock.now() };
     this.runs.restore(id);
     this.runs.save(updated);
     this.runs.event(id, 'resumed', 'Продолжение с сохранёнными настройками и checkpoint. Ожидает worker.', this.clock.now());
     return this.publicRun(updated);
+    });
+  }
+  /** Explicit UI action only: no MCP tool allows agents to raise their budget. */
+  public extendBudget(id: string, input: unknown): AgentRun {
+    return this.runs.db.transaction(() => {
+      const run = this.requireRun(id);
+      if (!RESUMABLE_RUN_STATUSES.includes(run.status)) throw new TrackerError('CONFLICT', 'Stop the run before changing its budget.');
+      const value = input as Record<string, unknown>;
+      if (!value || typeof value !== 'object' || Object.keys(value).some(k => !['maxAgentCalls', 'maxInputTokens', 'maxRunMinutes'].includes(k))) throw new TrackerError('VALIDATION_FAILED', 'Only run budget limits can be changed.');
+      const settings = new AutomationSettingsValidator().validate({ ...run.settings, ...value });
+      for (const key of ['maxAgentCalls', 'maxInputTokens', 'maxRunMinutes'] as const) if ((settings[key] ?? 0) < (run.settings[key] ?? 0)) throw new TrackerError('VALIDATION_FAILED', 'Existing run limits can only increase.');
+      const { maxAgentCalls, maxInputTokens, maxRunMinutes, maxStageToolCalls, timeoutMinutes } = run.settings;
+      const updated = { ...run, settings, checkpointBudgets: run.checkpointBudgets ?? { maxAgentCalls, maxInputTokens, maxRunMinutes, maxStageToolCalls, timeoutMinutes }, updatedAt: this.clock.now() };
+      this.runs.save(updated); this.runs.event(id, 'budget', `User changed limits: calls=${settings.maxAgentCalls}, input=${settings.maxInputTokens}, minutes=${settings.maxRunMinutes}. Spent usage retained.`, this.clock.now());
+      return this.publicRun(updated);
     });
   }
   private owned(id: string, token: string): AgentRun {

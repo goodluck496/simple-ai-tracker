@@ -31,6 +31,23 @@ export class AutomationQueueComponent {
   public readonly error = signal('');
   public readonly notice = signal('');
   public readonly busy = signal(false);
+  public readonly budgetEditing = signal(false);
+  public budgetCalls = 6;
+  public budgetInput = 500000;
+  public budgetMinutes = 20;
+  public editBudget(run: AgentRun): void {
+    this.budgetCalls = run.settings.maxAgentCalls ?? 6; this.budgetInput = run.settings.maxInputTokens ?? 500000;
+    this.budgetMinutes = run.settings.maxRunMinutes ?? 20; this.budgetEditing.set(true);
+  }
+  public saveBudget(run: AgentRun): void {
+    if (this.busy()) return;
+    this.busy.set(true);
+    this.http.post(`/api/automation/runs/${run.id}/budget`, { maxAgentCalls: this.budgetCalls, maxInputTokens: this.budgetInput, maxRunMinutes: this.budgetMinutes })
+      .pipe(finalize(() => this.busy.set(false)), takeUntilDestroyed(this.destroyRef)).subscribe({
+        next: () => { this.budgetEditing.set(false); this.refresh.next(); this.notice.set('Лимиты сохранены. Потраченный бюджет учтён; нажмите «Продолжить с места остановки».'); },
+        error: (error: unknown) => this.error.set(this.message(error)),
+      });
+  }
   public readonly search = signal('');
   public readonly statusTitles = RUN_STATUS_TITLES;
   public readonly taskTitles = TASK_STATUS_TITLES;

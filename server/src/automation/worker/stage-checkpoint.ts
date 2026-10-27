@@ -16,11 +16,11 @@ export class StageCheckpoint {
     this.file = path.join(cwd, '.sat', `stage-${stage}-${revision}.json`);
   }
   public static key(value: unknown): string { return createHash('sha256').update(JSON.stringify(value)).digest('hex'); }
-  public async load(key: string): Promise<StageResult | undefined> {
+  public async load(key: string | string[]): Promise<StageResult | undefined> {
     let saved: StageResult;
     try { saved = JSON.parse(await fs.readFile(this.file, 'utf8')) as StageResult; }
     catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined; throw error; }
-    if (saved.key !== key) return undefined;
+    if (!(Array.isArray(key) ? key : [key]).includes(saved.key)) return undefined;
     if (saved.head !== (await this.git(['rev-parse', 'HEAD'])).trim() || saved.fingerprint !== await this.fingerprint()) {
       throw new Error('Completed stage checkpoint no longer matches worktree files/HEAD. Preserve and inspect the changes before restarting this stage.');
     }
