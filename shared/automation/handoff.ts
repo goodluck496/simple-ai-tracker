@@ -18,5 +18,6 @@ export class AgentHandoff {
   public static readonly instructions = 'Execute only the assigned role and the agreed plan. Do not narrate routine reasoning, reread unchanged evidence, or add meta-planning steps. '
     + 'Keep command output in a local log: on success print one line with command, exit status and test count; on failure print only the relevant error/trace and log path. '
     + 'Use focused source reads and tests. Do not repeat unchanged environment failures or dump whole files/logs. '
+    + 'On Windows the command tool already uses PowerShell: do not nest powershell -Command or cmd /c wrappers. Use npm.cmd/npx.cmd when .ps1 shims are blocked; do not change execution policy. Use apply_patch for edits and simple shell commands instead of nested quoting or string-built replacement scripts. Check an instruction file exists before reading it. '
     + 'Report concrete changed files, validation results and remaining issues in a concise JSON summary (about 1200 characters); keep the analyst plan complete. Full execution logs stay outside the next agent prompt.';
 }
