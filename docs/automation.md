@@ -133,20 +133,25 @@ Reasoning effort оставьте пустым для настроек моде�
 открытым; Ctrl+C останавливает worker. После обновления Docker остановите старый
 worker и выполните заново скопированную команду.
 
-Для разработки из исходников по-прежнему доступно, из папки `apps/simple-ai-tracker`:
+Для разработки из исходников, из корня отдельного репозитория `simple-ai-tracker`:
 
 ```powershell
-npm run worker:docker -- --workspace default
+npm run worker -- --workspace simple-ai-tracker
 ```
 
 Команда собирает host worker и подключается к MCP через `docker exec -i`.
+`worker:docker` сохранён как синоним. Для другого пространства замените `simple-ai-tracker` его ID.
 `SAT_CONTAINER` переопределяет имя контейнера. Для проверки очереди один раз:
 
 ```powershell
-npm run worker:docker -- --workspace default --once
+npm run worker -- --workspace simple-ai-tracker --once
 ```
 
-Для трекера без Docker: `npm run build:server`, затем `npm run worker`.
+Для трекера полностью без Docker: `npm run build:server`, затем `npm run worker:local`.
+Не запускайте `worker:local` на Windows одновременно с Docker API над тем же SQLite-стором:
+он создаёт Windows MCP, тогда как контейнер использует Linux SQLite/WAL. Выбирайте один runtime
+для доступа к данным. Обычная команда `worker` теперь использует Docker, чтобы случайный запуск
+не открывал контейнерную базу из Windows.
 `SAT_WORKSPACE` задаёт пространство. `SAT_MCP_COMMAND` и `SAT_MCP_ARGS`
 (JSON-массив) позволяют подключить другой stdio MCP launcher.
 Процесс можно зарегистрировать в системном диспетчере служб; отдельный cron
