@@ -45,6 +45,19 @@ export class NativeAgentRunner implements AgentRunner {
       default: throw new Error(`Not a native runner: ${this.id}`);
     }
     if (this.id === RunnerId.Codex) {
+      // Match the host worker's transport instead of inheriting an account-wide
+      // tracker configuration which may point to a different store/runtime.
+      const trackerCommand = process.env.SAT_MCP_COMMAND ?? process.execPath;
+      const trackerArgs: unknown = JSON.parse(process.env.SAT_MCP_ARGS ?? JSON.stringify([path.resolve('dist/server/mcp.mjs')]));
+      if (!Array.isArray(trackerArgs) || !trackerArgs.every(arg => typeof arg === 'string')) throw new Error('SAT_MCP_ARGS must be a JSON string array.');
+      const trackerEnv: Record<string, string> = { SAT_WORKSPACE: process.env.SAT_WORKSPACE ?? 'default' };
+      for (const key of ['SAT_HOME', 'SAT_DB_PATH', 'SAT_BACKUP_ENABLED']) {
+        const value = process.env[key]; if (value !== undefined) trackerEnv[key] = value;
+      }
+      args.push('-c', `mcp_servers.${AGENT_TRACKER_SERVER}.command=${JSON.stringify(trackerCommand)}`,
+        '-c', `mcp_servers.${AGENT_TRACKER_SERVER}.args=${JSON.stringify(trackerArgs)}`,
+        '-c', `mcp_servers.${AGENT_TRACKER_SERVER}.env={${Object.entries(trackerEnv).map(([key, value]) => `${JSON.stringify(key)}=${JSON.stringify(value)}`).join(',')}}`,
+        '-c', `mcp_servers.${AGENT_TRACKER_SERVER}.enabled=true`);
       // Task context is already supplied by the worker. Do not inherit unrelated
       // account-wide servers (and their large tool descriptions) in every role.
       const inventory = await this.executor.run({ command, args: ['mcp', 'list', '--json'], cwd: job.cwd,
@@ -66,7 +79,7 @@ export class NativeAgentRunner implements AgentRunner {
           '-c', 'mcp_servers.codegraph.enabled=true', '-c', 'mcp_servers.codegraph.enabled_tools=["codegraph_explore"]', '-c', 'mcp_servers.codegraph.default_tools_approval_mode="auto"');
       }
       // Retain the repository's required code navigation only when it is indexed.
-      for (const server of servers) if (server.enabled !== false && (server.name !== 'codegraph' || !indexed)) {
+      for (const server of servers) if (server.name !== AGENT_TRACKER_SERVER && server.enabled !== false && (server.name !== 'codegraph' || !indexed)) {
         // Desktop-injected servers may not exist in config.toml. An enabled-only
         // override would create a transport-less entry and make Codex refuse startup.
         if (server.transport?.type === 'stdio' && server.transport.command) args.push('-c', `mcp_servers.${server.name}.command=${JSON.stringify(server.transport.command)}`);

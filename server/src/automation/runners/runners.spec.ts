@@ -58,7 +58,11 @@ test('native adapters preserve model, prompt and native result/error envelopes',
         assert.ok(argv.includes('mcp_servers.blender.command="fixture-desktop-bridge"'));
         assert.ok(argv.includes('mcp_servers.http_fixture.url="https://example.invalid/mcp"'));
         assert.ok(argv.includes('mcp_servers.http_fixture.enabled=false'));
-        assert.match(args, /mcp_servers.simple-ai-tracker.enabled=false/);
+        assert.match(args, /mcp_servers.simple-ai-tracker.enabled=true/);
+        assert.equal(argv.includes('mcp_servers.simple-ai-tracker.enabled=false'), false);
+        assert.ok(argv.some(arg => arg.startsWith('mcp_servers.simple-ai-tracker.command=')));
+        assert.ok(argv.some(arg => arg.startsWith('mcp_servers.simple-ai-tracker.args=')));
+        assert.ok(argv.some(arg => arg.startsWith('mcp_servers.simple-ai-tracker.env=') && arg.includes('SAT_WORKSPACE')));
         assert.match(args, /mcp_servers.codegraph.enabled=false/);
         assert.equal(args.includes('mcp_servers.disabled_virtual'), false);
         assert.equal(args.includes('danger-full-access'), false);
