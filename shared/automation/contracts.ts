@@ -113,6 +113,7 @@ export interface AgentRun {
 }
 export interface RunEvent { id: number; runId: string; at: string; kind: string; text: string; }
 export interface AgentOutcome {
+  commitMessage?: string;
   verdict: AgentVerdict;
   summary: string;
   questions?: string[];

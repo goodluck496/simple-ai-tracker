@@ -14,6 +14,7 @@ import { AgentHandoff } from '../../../../shared/automation/handoff.js';
 import { ProgressBuffer } from '../../../../shared/automation/progress-buffer.js';
 import { RunBudget } from '../../../../shared/automation/budget.js';
 import { TaskEnvironment } from '../runners/task-environment.js';
+import { CommitMessage } from '../../../../shared/automation/commit-message.js';
 
 export class PipelineWorker {
   private activeController?: AbortController;
@@ -125,6 +126,7 @@ export class PipelineWorker {
           usageComplete = true;
           outcome = this.parseOutcome(result.text);
           outcome.summary = redact(outcome.summary);
+          if (typeof outcome.commitMessage === 'string') outcome.commitMessage = redact(outcome.commitMessage);
           if (outcome.plan) outcome.plan = redact(outcome.plan);
           if (outcome.questions) outcome.questions = outcome.questions.map(redact);
         } catch (error) {
@@ -144,7 +146,10 @@ export class PipelineWorker {
           // Runtime is ignored through info/exclude. An explicit ignored .sat pathspec can make git add fail.
           await git(['add', '-A', '--', '.'], cwd);
           await checkpoint.save(saved);
-          if ((await git(['diff', '--cached', '--name-only'], cwd)).trim()) await git(['commit', '-m', `[${run.taskId}] ${profile.role} stage`], cwd);
+          if ((await git(['diff', '--cached', '--name-only'], cwd)).trim()) {
+            const message = CommitMessage.validate(outcome.commitMessage, run.taskId);
+            await git(['commit', '-m', message], cwd);
+          }
           await checkpoint.save(saved);
         }
         let sha = (await git(['rev-parse', 'HEAD'], cwd)).trim();
@@ -206,6 +211,7 @@ export class PipelineWorker {
       + `${AgentHandoff.instructions}\nTask context:\n${AgentHandoff.task(context)}\nPrevious feedback:\n${AgentHandoff.feedback(feedback)}\nChanges:\n${AgentHandoff.diff(diff)}\n`
       + `Configured checks: ${JSON.stringify(checks)}\nVisual artifacts: ${JSON.stringify(artifacts)}\n`
       + `Only developer/designer may edit files. Do not change branches, commit, merge, publish or alter tracker data directly; the worker handles commits. `
+      + `When developer/designer changes files, include commitMessage in the JSON result. Exact format: "[#${(context as { id: string }).id}] - описание на русском, что сделано и для чего". Use an explicit purpose clause (для/чтобы/ради), one line, up to ${CommitMessage.maxLength} characters. Technical names may stay in English. A generic role/stage label is forbidden. Worker rejects invalid messages without recalling the model. `
       + `The worker prepared dependencies before this invocation. Reuse that environment; only change/install dependencies when required by the task's manifest changes. Do not repeatedly reinstall packages for an unchanged infrastructure failure. `
       + `For visual validation inspect the actual artifacts; if absent return questions. `
       + `Return ONLY one JSON object, for example {"verdict":"pass","summary":"evidence and findings","questions":[],"plan":"markdown plan for analyst"}. Allowed verdicts are pass, changes_requested, questions, blocked. Return blocked for unavailable tools, permissions, infrastructure or environment failures; do not request code revisions to bypass them. `

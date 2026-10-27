@@ -30,7 +30,7 @@ test('worker runs isolated Git pipeline, executes real checks, fixes review find
 if(role==='analyst') plan='# Plan\\nUpdate answer and verify it.';
 if(role==='developer') fs.writeFileSync('answer.txt',String(Number(fs.readFileSync('answer.txt','utf8'))+1));
 if(role==='reviewer' && fs.readFileSync('answer.txt','utf8')!=='2') verdict='changes_requested';
-process.stdout.write(JSON.stringify({verdict,summary:role+': '+verdict,plan}));`, 'utf8');
+process.stdout.write(JSON.stringify({verdict,summary:role+': '+verdict,plan,commitMessage:'[#SAT-1] - Изменено значение ответа, чтобы проверить ожидаемое поведение'}));`, 'utf8');
     const roles = ['analyst', 'developer', 'tester', 'reviewer'] as const;
     const settings: AutomationSettings = { ...structuredClone(DEFAULT_AUTOMATION_SETTINGS), repositoryPath: repo, mergePolicy: 'local',
       connections: [{ id: 'fixture', label: 'Deterministic fixture', kind: 'native', supportsImages: false }],
@@ -54,6 +54,9 @@ process.stdout.write(JSON.stringify({verdict,summary:role+': '+verdict,plan}));`
     assert.ok(detail.run.usageAttempts!.every((attempt) => attempt.finished && !attempt.usage), 'Custom CLI output without usage remains unknown');
     assert.equal(app.taskService.getTaskCard(task.id).status, 'review');
     assert.equal(await readFile(path.join(repo, 'answer.txt'), 'utf8'), '2');
+    const subjects = (await git(['log', '--format=%s', '-2'])).trim().split(/\r?\n/);
+    assert.equal(subjects.length, 2);
+    assert.ok(subjects.every(subject => subject === '[#SAT-1] - Изменено значение ответа, чтобы проверить ожидаемое поведение'));
     assert.equal((await git(['status', '--porcelain'])).trim(), '');
     assert.equal(await worker.tick(), false);
   } finally { app.close(); await rm(root, { recursive: true, force: true }); }
@@ -92,7 +95,7 @@ test('worker retries commit and tester acknowledgement without recalling agents 
     const bridge = path.join(root, 'agent.cjs'); const counts = path.join(root, 'calls.json'); const setupCount = path.join(root, 'setup-count.txt');
     const checkCount = path.join(root, 'checks.txt'); const setup = path.join(root, 'setup.cjs');
     await writeFile(setup, `const fs=require('node:fs');fs.writeFileSync(${JSON.stringify(setupCount)},'prepared');fs.mkdirSync('node_modules/fixture-dependency',{recursive:true});fs.writeFileSync('node_modules/fixture-dependency/package.json',JSON.stringify({main:'index.js'}));fs.writeFileSync('node_modules/fixture-dependency/index.js','module.exports=1');`);
-    await writeFile(bridge, `const fs=require('node:fs');const role=process.argv[2],file=${JSON.stringify(counts)};const n=fs.existsSync(file)?JSON.parse(fs.readFileSync(file,'utf8')):{};n[role]=(n[role]||0)+1;fs.writeFileSync(file,JSON.stringify(n));if(role==='developer')fs.writeFileSync('answer.txt','1');console.log(JSON.stringify({verdict:'pass',summary:role+' fixture passed'}));`);
+    await writeFile(bridge, `const fs=require('node:fs');const role=process.argv[2],file=${JSON.stringify(counts)};const n=fs.existsSync(file)?JSON.parse(fs.readFileSync(file,'utf8')):{};n[role]=(n[role]||0)+1;fs.writeFileSync(file,JSON.stringify(n));if(role==='developer')fs.writeFileSync('answer.txt','1');console.log(JSON.stringify({verdict:'pass',summary:role+' fixture passed',commitMessage:'developer stage'}));`);
     const roles = ['developer', 'tester', 'reviewer'] as const;
     const settings: AutomationSettings = { ...structuredClone(DEFAULT_AUTOMATION_SETTINGS), repositoryPath: repo,
       connections: [{ id: 'fixture', label: 'fixture', kind: 'native', supportsImages: false }],
@@ -114,6 +117,15 @@ test('worker retries commit and tester acknowledgement without recalling agents 
     } }, 'fixture-worker', executor);
     await worker.tick();
     assert.equal(app.automationService.detail(run.id).run.status, 'failed');
+    assert.match(app.automationService.detail(run.id).run.summary!, /Commit message rejected/);
+    const cwd = path.join(root, '.sat-worktrees', run.id);
+    assert.equal(await readFile(path.join(cwd, 'answer.txt'), 'utf8'), '1');
+    assert.equal((await git(['rev-parse', 'HEAD'], cwd)).trim(), (await git(['rev-parse', 'HEAD'], repo)).trim());
+    const savedPath = path.join(cwd, '.sat', 'stage-0-0.json');
+    const completed = JSON.parse(await readFile(savedPath, 'utf8'));
+    completed.outcome.commitMessage = '[#SAT-1] - Изменено значение ответа, чтобы проверить восстановление этапа';
+    await writeFile(savedPath, JSON.stringify(completed), 'utf8');
+    app.automationService.resume(run.id); await worker.tick();
     assert.match(app.automationService.detail(run.id).run.summary!, /transient commit/);
     app.automationService.resume(run.id); await worker.tick();
     assert.equal(app.automationService.detail(run.id).run.status, 'failed');
@@ -125,7 +137,6 @@ test('worker retries commit and tester acknowledgement without recalling agents 
     assert.equal(detail.run.usageAttempts!.length, 3);
     assert.equal(await readFile(checkCount, 'utf8'), 'checked\n');
     assert.equal(await readFile(setupCount, 'utf8'), 'prepared');
-    const cwd = path.join(root, '.sat-worktrees', run.id);
     assert.equal((await git(['ls-files', '--', '.sat'], cwd)).trim(), '');
     assert.equal((await git(['status', '--porcelain'], cwd)).trim(), '');
     const checkpoint = new StageCheckpoint(cwd, 99, 0, (args) => git(args, cwd));
