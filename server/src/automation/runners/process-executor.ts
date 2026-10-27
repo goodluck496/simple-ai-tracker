@@ -1,12 +1,14 @@
 import crossSpawn from 'cross-spawn';
 import { ExecutionScope } from './execution-scope.js';
 import { TaskEnvironment } from './task-environment.js';
+import { CompactProgress } from '../../../../shared/automation/compact-progress.js';
 
 export interface ProcessRequest {
   command: string; args: string[]; cwd: string; signal: AbortSignal;
   stdin?: string; env?: NodeJS.ProcessEnv; onProgress?: (text: string) => void;
   /** Maximum retained stdout characters; large structured catalogs need more than log tails. */
   maxOutputChars?: number;
+  compactProgress?: boolean;
   onStdout?: (text: string) => void;
 }
 const MAX_OUTPUT = 256 * 1024;
@@ -39,11 +41,11 @@ export class ProcessExecutor {
       child.stdout?.on('data', (value: string) => {
         request.onStdout?.(value);
         stdout = (stdout + value).slice(-(request.maxOutputChars ?? MAX_OUTPUT));
-        request.onProgress?.(value);
+        if (!request.compactProgress) request.onProgress?.(value);
       });
       child.stderr?.on('data', (value: string) => {
         stderr = (stderr + value).slice(-MAX_OUTPUT);
-        request.onProgress?.(value);
+        if (!request.compactProgress) request.onProgress?.(value);
       });
       child.stdin?.on('error', () => undefined);
       child.stdin?.end(request.stdin ?? '');
@@ -53,7 +55,9 @@ export class ProcessExecutor {
         request.signal.removeEventListener('abort', abort);
         if (observerError) { reject(observerError); return; }
         if (request.signal.aborted) { reject(new Error('Execution cancelled or timed out.')); return; }
-        if (code !== 0) { reject(new Error(`${request.command} failed (${code}): ${(stderr || stdout).slice(-6000)}`)); return; }
+        const diagnostic = request.compactProgress ? CompactProgress.diagnostics(stderr || stdout) : (stderr || stdout).slice(-6000);
+        if (request.compactProgress) request.onProgress?.(`Команда завершена: exit ${code}.\n${code !== 0 ? diagnostic + '\n' : ''}`);
+        if (code !== 0) { reject(new Error(`${request.command} failed (${code}): ${diagnostic}`)); return; }
         resolve(stdout);
       });
       try { if (child.pid) scope?.child?.(child.pid, true); } catch (error) { observerError = error; abort(); }

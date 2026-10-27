@@ -29,6 +29,7 @@ export class RunWorkspace {
     let current = '';
     try { current = await fs.readFile(file, 'utf8'); } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
     if (!current.split(/\r?\n/).includes('/.sat/')) await fs.appendFile(file, '\n/.sat/\n', 'utf8');
+    if (!current.split(/\r?\n/).includes('/.codegraph/')) await fs.appendFile(file, '\n/.codegraph/\n', 'utf8');
   }
   public static async atomic(file: string, value: unknown): Promise<void> {
     await fs.mkdir(path.dirname(file), { recursive: true });

@@ -25,11 +25,12 @@ import { StageHandoff } from './stage-handoff.js';
 import type { StageEvidence } from '../../../../shared/automation/work-order.js';
 import { WorkOrder } from '../../../../shared/automation/work-order.js';
 import { Decomposition } from '../../../../shared/automation/decomposition.js';
+import type { WorktreeCodeGraph } from './code-navigation.js';
 
 export class PipelineWorker {
   private activeController?: AbortController;
   public constructor(private readonly channel: TrackerChannel, private readonly workerId: string,
-    private readonly executor = new ProcessExecutor(), private readonly registry = new AgentRunnerRegistry()) {}
+    private readonly executor = new ProcessExecutor(), private readonly registry = new AgentRunnerRegistry(), private readonly navigation?: WorktreeCodeGraph) {}
   public stop(): void { this.activeController?.abort(); }
 
   public async tick(): Promise<boolean> {
@@ -123,7 +124,7 @@ export class PipelineWorker {
           record: async info => { publishing = info.state === 'publishing'; await this.channel.call(AutomationTool.Integration, { id: run!.id, leaseToken: token, result: info }); },
           prepare: async directory => { await preparation!.prepare(directory, controller.signal, progress); },
           checks: async directory => { for (const check of run!.settings.checks) await this.executor.run({ ...check, cwd: directory,
-            env: TaskEnvironment.create(), signal: controller.signal, onProgress: progress }); },
+            env: TaskEnvironment.create(), signal: controller.signal, compactProgress: true, onProgress: progress }); },
           resolve: (directory, files, base) => resolver.resolve(run!, context, directory, files, base, controller.signal),
         });
         await this.channel.call(AutomationTool.Merged, { id: run!.id, leaseToken: token });
@@ -178,6 +179,7 @@ export class PipelineWorker {
           await preparation!.prepare(cwd, controller.signal, progress);
         } else if (!prepared) await prepareSource();
         prepared = false;
+        await this.navigation?.prepare(cwd, controller.signal, progress);
         const profileId = run.settings.pipeline[run.stage];
         const profile = run.settings.agents.find((agent) => agent.id === profileId)!;
         const connection = run.settings.connections.find((entry) => entry.id === profile.connectionId)!;
@@ -236,7 +238,7 @@ export class PipelineWorker {
         const reason = RunBudget.reason(run, Date.now(), true);
         if (reason) throw new Error(reason);
         await RunWorkspace.atomic(path.join(cwd, '.sat', 'work-order.json'), { workOrderKey: requirementsKey, ...JSON.parse(packet) });
-        await phase(RunPhase.Preparing, `[HANDOFF] role=${profile.role} promptChars=${prompt.length} planChars=${String((pack.plan as { content?: string } | undefined)?.content ?? '').length} changedFiles=${changedFiles.length} previous=${previous?.role ?? 'none'}. Values are characters, not tokens.`);
+        await phase(RunPhase.Preparing, `Роль ${profile.role}: выполнение текущего плана.`);
         const started = await this.channel.call<{ attemptId?: string }>(AutomationTool.BeginStage, { id: run.id, leaseToken: token });
         metering = started.attemptId ? { attemptId: started.attemptId } : undefined;
         let usageComplete = false;
@@ -296,7 +298,7 @@ export class PipelineWorker {
           for (const check of run.settings.checks) {
             try {
               await phase(RunPhase.Checks, `Проверка: ${check.command} ${check.args.join(' ')}`);
-              await this.executor.run({ ...check, cwd, env: TaskEnvironment.create(), signal: controller.signal, onProgress: progress });
+              await this.executor.run({ ...check, cwd, env: TaskEnvironment.create(), signal: controller.signal, compactProgress: true, onProgress: progress });
               checksEvidence.push({ command: check.command, args: check.args, exitCode: 0 });
             }
             catch (error) { outcome = { verdict: AgentVerdict.ChangesRequested, summary: redact(`Configured check failed: ${error instanceof Error ? error.message : String(error)}`) }; break; }

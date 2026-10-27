@@ -6,6 +6,7 @@ import os from 'node:os';
 import { NativeAgentRunner } from './native-runner.js';
 import { ModelApiRunner } from './model-api-runner.js';
 import { ProcessExecutor, type ProcessRequest } from './process-executor.js';
+import { NativeExecutable } from './native-executable.js';
 import { DEFAULT_AUTOMATION_SETTINGS, type AgentJob, type RunnerId } from '../../../../shared/automation/contracts.js';
 
 test('native adapters preserve model, prompt and native result/error envelopes', async () => {
@@ -50,7 +51,7 @@ test('native adapters preserve model, prompt and native result/error envelopes',
         assert.equal(schema.properties.commitMessage.type, 'string');
         assert.equal(schema.additionalProperties, false);
         const args = executor.request!.args.join(' ');
-        assert.ok(argv.includes('tool_output_token_limit=1500'));
+        assert.ok(argv.includes('tool_output_token_limit=800'));
         assert.match(args, /enabled_tools=.*tracker_get_task/);
         assert.match(args, /default_tools_approval_mode="auto"/);
         assert.match(args, /mcp_servers.blender.enabled=false/);
@@ -68,6 +69,8 @@ test('native adapters preserve model, prompt and native result/error envelopes',
     executor.output = JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: 'indexed-answer' } });
     await new NativeAgentRunner('codex', executor).run({ cwd, prompt: 'Indexed repository', profile: { model: 'm' }, signal: AbortSignal.timeout(5000) } as AgentJob, () => undefined);
     assert.equal(executor.request!.args.includes('mcp_servers.codegraph.enabled=false'), false);
+    assert.ok(executor.request!.args.includes(`mcp_servers.codegraph.args=${JSON.stringify(NativeExecutable.codegraphMcp(cwd).args)}`));
+    assert.ok(executor.request!.args.includes('mcp_servers.codegraph.enabled_tools=["codegraph_explore"]'));
     assert.ok(executor.request!.args.includes('mcp_servers.blender.enabled=false'));
     executor.output = '{"is_error":true,"result":"auth failed"}';
     await assert.rejects(new NativeAgentRunner('claude-code', executor).run({ cwd, prompt: 'Test error envelope', profile: { model: 'm' }, signal: AbortSignal.timeout(5000) } as AgentJob, () => undefined), /failed/);

@@ -21,11 +21,11 @@ test('console reconstructs split JSONL, commands, cumulative output and exit cod
   const end = JSON.stringify({ type: 'item.completed', item: { id: 'c1', command: 'npm test', aggregated_output: '  первая\r\nошибка 😀\n', exit_code: 1 } });
   const events = [event(1, 'developer: fixture', 'stage'), event(2, command.slice(0, 30)), event(3, command.slice(30) + '\n' + output + '\n'), event(4, end)];
   const view = RunConsoleDecoder.render([...events, events[3]]);
-  assert.deepEqual(view.lines.slice(1).map((line) => line.text), ['$ npm test', '  первая', 'ошибка 😀', 'exit 1']);
+  assert.deepEqual(view.lines.slice(1).map((line) => line.text), ['Команда завершена: exit 1.', 'ошибка 😀']);
   assert.equal(view.lines.at(-1)?.level, 'error'); assert.equal(view.incomplete, false);
   assert.deepEqual(RunConsoleDecoder.render(events), view, 'polling replay is idempotent');
   const twoStages = RunConsoleDecoder.render([...events, event(5, 'tester: fixture', 'stage'), event(6, command)]);
-  assert.equal(twoStages.lines.filter((line) => line.text === '$ npm test').length, 2, 'CLI item IDs are local to each agent stage');
+  assert.equal(twoStages.lines.filter((line) => line.text === 'Команда завершена: exit 1.').length, 1, 'Started/read events do not duplicate progress');
 });
 test('console preserves ordinary partial lines, strips ANSI/OSC and exposes raw only outside readable text', () => {
   const events = [event(1, '\u001b[32mпри'), event(2, 'вет\u001b[0m\r\n\u001b]0;hidden\u0007warn: fixture\n')];
@@ -42,7 +42,7 @@ test('console preserves ordinary partial lines, strips ANSI/OSC and exposes raw 
   assert.doesNotMatch(oversized.lines.map((line) => line.text).join('\n'), /HIDDEN_TAIL/);
   const stream = [event(1, JSON.stringify({ type: 'item.updated', item: { id: 'stream', aggregated_output: 'при' } }) + '\n'),
     event(2, JSON.stringify({ type: 'item.completed', item: { id: 'stream', aggregated_output: 'привет\nnext\n', exit_code: 0 } }) + '\n')];
-  assert.deepEqual(RunConsoleDecoder.render(stream).lines.map((line) => line.text), ['привет', 'next', 'exit 0']);
+  assert.deepEqual(RunConsoleDecoder.render(stream).lines.map((line) => line.text), ['Команда завершена: exit 0.']);
 });
 test('console renders errors and concise outcomes, bounds its window and resets between runs', () => {
   const events = [event(1, JSON.stringify({ type: 'item.completed', item: { id: 'answer', text: JSON.stringify({ verdict: 'pass', summary: 'Готово', plan: 'DO NOT PRINT PLAN' }) } })),
@@ -50,8 +50,8 @@ test('console renders errors and concise outcomes, bounds its window and resets 
     event(3, Array.from({ length: CONSOLE_LIMITS.lines + 20 }, (_, i) => `line ${i}`).join('\n') + '\n')];
   const view = RunConsoleDecoder.render(events);
   assert.equal(view.lines.length, CONSOLE_LIMITS.lines); assert.ok(view.omitted > 0);
-  assert.equal(RunConsoleDecoder.render(events.slice(0, 2)).lines[0].text, 'Готово');
-  assert.equal(RunConsoleDecoder.render(events.slice(0, 2)).lines[1].level, 'error');
+  assert.equal(RunConsoleDecoder.render(events.slice(0, 2)).lines.length, 1, 'Native answer bodies and plans are not console progress');
+  assert.equal(RunConsoleDecoder.render(events.slice(0, 2)).lines[0].level, 'error');
   assert.deepEqual(RunConsoleDecoder.render([]).lines, []);
   const nested = JSON.stringify({ type: 'error', error: { message: 'The fixture model does not exist.' } });
   const failed = RunConsoleDecoder.render([event(1, 'developer/codex failed: ' + JSON.stringify({ type: 'thread.started' }) + '\n'

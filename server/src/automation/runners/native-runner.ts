@@ -3,6 +3,7 @@ import path from 'node:path';
 import { RunnerId, type AgentJob, type AgentRunner, type RunnerResult } from '../../../../shared/automation/contracts.js';
 import { ProcessExecutor } from './process-executor.js';
 import { NativeUsageStream, UsageParser } from './usage-parser.js';
+import { CompactProgress } from '../../../../shared/automation/compact-progress.js';
 import { AGENT_TRACKER_READ_TOOLS, AGENT_TRACKER_SERVER } from '../../../../shared/automation/tracker-access.js';
 import { TaskEnvironment } from './task-environment.js';
 import { AGENT_OUTCOME_SCHEMA } from '../../../../shared/automation/outcome-schema.js';
@@ -25,7 +26,7 @@ export class NativeAgentRunner implements AgentRunner {
     if (this.id === RunnerId.Codex) await fs.writeFile(schemaPath, JSON.stringify(AGENT_OUTCOME_SCHEMA), 'utf8');
     switch (this.id) {
       case RunnerId.Codex: command = RunnerId.Codex; args = ['exec', '--json', '--output-schema', schemaPath, '--sandbox', 'workspace-write', '--model', model,
-        '-c', 'tool_output_token_limit=1500',
+        '-c', 'tool_output_token_limit=800',
         '-c', `mcp_servers.${AGENT_TRACKER_SERVER}.enabled_tools=${JSON.stringify(AGENT_TRACKER_READ_TOOLS)}`,
         '-c', `mcp_servers.${AGENT_TRACKER_SERVER}.default_tools_approval_mode="auto"`, '-']; stdin = job.prompt; break;
       case RunnerId.ClaudeCode: command = 'claude'; args = ['-p', '--output-format', 'json', '--model', model]; stdin = job.prompt; break;
@@ -57,6 +58,13 @@ export class NativeAgentRunner implements AgentRunner {
       let indexed = false;
       try { indexed = (await fs.stat(path.join(job.cwd, '.codegraph'))).isDirectory(); }
       catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
+      if (indexed) {
+        const graph = servers.find(s => s.name === 'codegraph');
+        if (graph?.transport?.type && graph.transport.type !== 'stdio') throw new Error('Worktree CodeGraph requires a local stdio connection.');
+        const executable = NativeExecutable.codegraphMcp(job.cwd);
+        args.push('-c', `mcp_servers.codegraph.command=${JSON.stringify(executable.command)}`, '-c', `mcp_servers.codegraph.args=${JSON.stringify(executable.args)}`,
+          '-c', 'mcp_servers.codegraph.enabled=true', '-c', 'mcp_servers.codegraph.enabled_tools=["codegraph_explore"]', '-c', 'mcp_servers.codegraph.default_tools_approval_mode="auto"');
+      }
       // Retain the repository's required code navigation only when it is indexed.
       for (const server of servers) if (server.enabled !== false && (server.name !== 'codegraph' || !indexed)) {
         // Desktop-injected servers may not exist in config.toml. An enabled-only
@@ -70,6 +78,7 @@ export class NativeAgentRunner implements AgentRunner {
     const limitController = new AbortController();
     const toolIds = new Set<string>();
     const meter = new NativeUsageStream(this.id, sample => job.onUsage?.(sample, { terminal: true }), (value) => {
+      for (const line of CompactProgress.record(value)) onProgress(line + '\n');
       const record = value as { type?: string; item?: { id?: string; type?: string } };
       if (job.maxToolCalls && record.item?.id && ['command_execution', 'mcp_tool_call', 'web_search', 'file_change'].includes(record.item.type ?? '')) {
         toolIds.add(record.item.id);
@@ -78,7 +87,7 @@ export class NativeAgentRunner implements AgentRunner {
     });
     const signal = AbortSignal.any([job.signal, limitController.signal]);
     let raw: string;
-    try { raw = await this.executor.run({ command, args, cwd: job.cwd, stdin, env: TaskEnvironment.create(), signal, onProgress, onStdout: (text) => meter.push(text) }); }
+    try { raw = await this.executor.run({ command, args, cwd: job.cwd, stdin, env: TaskEnvironment.create(), signal, compactProgress: true, onProgress, onStdout: (text) => meter.push(text) }); }
     catch (error) { if (limitController.signal.aborted) throw limitController.signal.reason; throw error; }
     finally { meter.finish(); }
     // Some executors and formatted JSON outputs provide only the final complete document.
@@ -94,7 +103,8 @@ export class NativeAgentRunner implements AgentRunner {
       let envelope: Envelope;
       try { envelope = JSON.parse(line) as Envelope; } catch { continue; }
       if (!envelope || typeof envelope !== 'object' || Array.isArray(envelope)) continue;
-      if (envelope.is_error || envelope.type === 'turn.failed' || (envelope.status && !NATIVE_SUCCESS_STATUSES.has(envelope.status))) throw new Error(`Native agent failed: ${line.slice(0, 2000)}`);
+      if (envelope.is_error || envelope.type === 'turn.failed' || (envelope.status && !NATIVE_SUCCESS_STATUSES.has(envelope.status)))
+        throw new Error(`Native agent failed: ${CompactProgress.record(envelope).join('\n') || CompactProgress.diagnostics(`Error: ${envelope.result ?? envelope.response ?? 'CLI failure'}`)}`);
       sessionId = envelope.session_id ?? envelope.conversation_id ?? sessionId;
       if (typeof envelope.result === 'string') answer = envelope.result;
       if (typeof envelope.response === 'string') answer = envelope.response;

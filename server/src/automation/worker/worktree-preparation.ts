@@ -32,7 +32,7 @@ export class WorktreePreparation {
     let missing = await this.missingDependencies(cwd, manifest);
     const prepared = (await this.read(marker)) === signature;
     if (!prepared || missing.length) {
-      for (const command of setup) await this.executor.run({ ...command, cwd, signal, onProgress: progress });
+      for (const command of setup) await this.executor.run({ ...command, cwd, signal, compactProgress: true, onProgress: progress });
       missing = await this.missingDependencies(cwd, manifest);
       if ((!prepared || missing.length) && !setup.length && lock) {
         try {
@@ -41,7 +41,7 @@ export class WorktreePreparation {
           }
         } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
         progress('Worker setup: npm ci in isolated worktree (before agent).\n');
-        await this.executor.run({ command: 'npm', args: ['ci', '--include=dev', '--no-audit', '--no-fund'], cwd, signal, onProgress: progress });
+        await this.executor.run({ command: 'npm', args: ['ci', '--include=dev', '--no-audit', '--no-fund'], cwd, signal, compactProgress: true, onProgress: progress });
         missing = await this.missingDependencies(cwd, manifest);
       }
       if (missing.length) throw new Error(`Worktree dependencies are incomplete: ${missing.slice(0, 8).join(', ')}. Configure setup or repair the installation; no agent was started.`);

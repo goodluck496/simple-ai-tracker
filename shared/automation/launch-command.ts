@@ -10,7 +10,7 @@ export class WorkerLaunchCommand {
     return [
       '& {',
       "  $ErrorActionPreference = 'Stop'",
-      '  Get-Command node, docker -ErrorAction Stop | Out-Null',
+      '  Get-Command node, docker, git, codegraph -ErrorAction Stop | Out-Null',
       "  $satWorkerDir = Join-Path $env:LOCALAPPDATA 'SimpleAiTracker\\workers'",
       '  New-Item -ItemType Directory -Path $satWorkerDir -Force | Out-Null',
       `  $satWorkerFile = Join-Path $satWorkerDir ${literal(`worker-${workspace}.cjs`)}`,

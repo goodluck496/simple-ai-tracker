@@ -61,10 +61,10 @@ test('queue exposes all active runs, phases, heartbeat, human progress and linke
     assert.equal(run.taskId, task.id);
     app.automationService.beginStage(run.id, run.leaseToken!);
     app.automationService.heartbeat(run.id, run.leaseToken!);
-    app.automationService.progress(run.id, run.leaseToken!, JSON.stringify({ type: 'item.started', item: { command: 'npm test' } }), RunPhase.Checks);
+    app.automationService.progress(run.id, run.leaseToken!, JSON.stringify({ type: 'item.completed', item: { type: 'command_execution', command: 'npm test', exit_code: 0, aggregated_output: 'PRIVATE_SOURCE_SENTINEL' } }), RunPhase.Checks);
     const item = app.automationService.queue().items.find((entry) => entry.id === run.id)!;
     assert.equal(item.taskStatus, 'planning'); assert.equal(item.phase, RunPhase.Checks);
-    assert.equal(item.lastMessage, 'Команда: npm test'); assert.ok(item.heartbeatAt); assert.ok(item.progressAt);
+    assert.equal(item.lastMessage, 'Команда завершена: exit 0.'); assert.ok(item.heartbeatAt); assert.ok(item.progressAt);
     assert.equal('leaseToken' in item, false); assert.equal('settings' in item, false);
     assert.equal(QueuePresentation.lane(item), QueueLane.Running);
     assert.match(QueuePresentation.health(item, Date.now(), { online: true }), /на связи/);
@@ -102,7 +102,7 @@ test('pure task read tools advertise read-only, mutating and claiming tools do n
     const definitions = new TrackerToolRegistry(app).definitions();
     for (const name of AGENT_TRACKER_READ_TOOLS) assert.equal(definitions.find((tool) => tool.name === name)?.annotations?.readOnlyHint, true);
     for (const name of ['tracker_get_next_task', 'tracker_set_status', 'tracker_automation_claim']) assert.equal(definitions.find((tool) => tool.name === name)?.annotations?.readOnlyHint, false);
-    assert.equal(RunProgressText.format('{"type":"item.completed","item":{"type":"agent_message","text":"Inspecting tests"}}'), 'Inspecting tests');
+    assert.equal(RunProgressText.format('{"type":"item.completed","item":{"type":"agent_message","text":"Inspecting tests"}}'), '');
     assert.equal(RunProgressText.format('{"type":"turn.started"}'), '');
   } finally { app.close(); }
 });

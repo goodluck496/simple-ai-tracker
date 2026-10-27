@@ -37,13 +37,13 @@ try {
   const consoleView = queue.getByRole('region', { name: 'Консоль выполнения' });
   const log = consoleView.getByRole('log');
   const payload = JSON.stringify({ type: 'item.completed', item: { id: 'cmd', type: 'command_execution', command: 'npm test',
-    aggregated_output: '  строка α\r\n\u001b[33mwarning: fixture\u001b[0m\n<img src=x onerror=alert(1)>\n', stderr: 'fixture stderr\n', exit_code: 1 } });
+    aggregated_output: 'PRIVATE_SOURCE_SENTINEL\r\n<img src=x onerror=alert(1)>\n', stderr: 'Error: fixture stderr\n', exit_code: 1 } });
   service.progress(run.id, run.leaseToken!, payload.slice(0, 65));
   await consoleView.getByRole('status').filter({ hasText: 'часть структурированной записи' }).waitFor();
   service.progress(run.id, run.leaseToken!, payload.slice(65) + '\n');
-  await log.getByText('$ npm test', { exact: true }).waitFor();
-  assert.equal(await log.getByText('$ npm test', { exact: true }).count(), 1);
-  assert.ok((await log.innerText()).includes('  строка α'));
+  await log.getByText('Команда завершена: exit 1.', { exact: true }).waitFor();
+  assert.equal(await log.getByText('Команда завершена: exit 1.', { exact: true }).count(), 1);
+  assert.ok(!(await log.innerText()).includes('PRIVATE_SOURCE_SENTINEL'));
   assert.equal(await log.locator('img').count(), 0);
   assert.ok(!(await log.innerText()).includes('item.completed'));
   assert.ok((await log.innerText()).includes('exit 1'));

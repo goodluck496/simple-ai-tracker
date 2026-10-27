@@ -7,6 +7,7 @@ import { PROJECT_LIMITS } from '../../../../shared/automation/project.js';
 import { AutomationTool } from '../../../../shared/automation/protocol.js';
 import type { AutomationSettings } from '../../../../shared/automation/contracts.js';
 import { WorkerPool } from './worker-pool.js';
+import { WorktreeCodeGraph } from './code-navigation.js';
 
 export class WorkerApplication {
   public async run(): Promise<void> {
@@ -16,7 +17,7 @@ export class WorkerApplication {
     const settings = await channel.call<AutomationSettings>(AutomationTool.Settings);
     const once = process.argv.includes('--once');
     const count = once ? 1 : Math.max(1, Math.min(8, settings.maxParallelRuns ?? 2));
-    const pool = new WorkerPool(Array.from({ length: count }, (_, index) => new PipelineWorker(channel, `${workerId}-${index + 1}`)));
+    const pool = new WorkerPool(Array.from({ length: count }, (_, index) => new PipelineWorker(channel, `${workerId}-${index + 1}`, undefined, undefined, new WorktreeCodeGraph())));
     const projects = new ProjectWorker(channel, workerId);
     let projectTick: Promise<void> | undefined;
     const pollProjects = () => {

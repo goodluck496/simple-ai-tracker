@@ -5,7 +5,7 @@ import { DEFAULT_TRACKER_CONTAINER } from '../../../shared/automation/launch-com
 
 async function main(): Promise<void> {
   if (process.argv.includes('--help')) {
-    process.stdout.write('Tracker host worker: --workspace NAME --container NAME [--project ABSOLUTE_PATH] [--once]\nNeeds Node.js 22+ and Docker CLI. No tracker checkout or npm install is needed.\n'); return;
+    process.stdout.write('Tracker host worker: --workspace NAME --container NAME [--project ABSOLUTE_PATH] [--once]\nNeeds Node.js 22+, Docker CLI, Git and CodeGraph on the host. No tracker checkout or project npm install is needed.\n'); return;
   }
   const values = new Map<string, string>();
   for (let index = 2; index < process.argv.length; index++) {

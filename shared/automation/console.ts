@@ -1,12 +1,11 @@
 import type { RunEvent } from './contracts.js';
+import { CompactProgress } from './compact-progress.js';
 
 export type ConsoleLevel = 'info' | 'command' | 'success' | 'warning' | 'error';
 export interface ConsoleLine { id: string; at: string; stage: string; level: ConsoleLevel; text: string; }
 export const CONSOLE_LIMITS = { lines: 600, lineChars: 8000, pendingChars: 512 * 1024 } as const;
 export interface ConsoleView { lines: ConsoleLine[]; omitted: number; incomplete: boolean; }
 type RecordValue = Record<string, unknown>;
-type OutputField = 'output' | 'text' | 'stderr';
-interface ItemState { command?: string; output?: string; text?: string; stderr?: string; done?: boolean; tails?: Partial<Record<OutputField, ConsoleLine>>; }
 const record = (value: unknown): RecordValue => value && typeof value === 'object' ? value as RecordValue : {};
 
 /** Replays a bounded event window deterministically; no transport JSON enters the readable console. */
@@ -18,7 +17,6 @@ export class RunConsoleDecoder {
   private stage = 'Подготовка';
   private sequence = 0;
   private skipRecord = false;
-  private readonly items = new Map<string, ItemState>();
 
   public static render(events: readonly RunEvent[]): ConsoleView {
     const decoder = new RunConsoleDecoder(); const seen = new Set<number>();
@@ -44,7 +42,7 @@ export class RunConsoleDecoder {
         else this.emit(event, 'Неполная структурированная запись; исходник доступен отдельно.', 'warning');
         this.buffer = ''; this.origin = undefined;
       }
-      if (event.kind === 'stage') { this.stage = event.text.split(':')[0]; this.items.clear(); }
+      if (event.kind === 'stage') this.stage = event.text.split(':')[0];
       const level = ['failed', 'error'].includes(event.kind) ? 'error' : ['pass', 'merged'].includes(event.kind) ? 'success'
         : ['questions', 'changes_requested', 'interrupted', 'cancelled'].includes(event.kind) ? 'warning' : 'info';
       for (const line of event.text.split('\n')) {
@@ -87,26 +85,15 @@ export class RunConsoleDecoder {
 
   private structured(event: RunEvent, value: RecordValue): void {
     const type = String(value.type ?? ''); const item = record(value.item);
-    if (typeof value.summary === 'string') { this.emit(event, value.summary, value.verdict === 'pass' ? 'success' : 'warning'); return; }
     if (type.startsWith('item.')) {
-      const key = String(item.id ?? `${event.id}:${this.sequence}`);
-      const prior = this.items.get(key) ?? {}; this.items.set(key, prior);
-      if (typeof item.command === 'string' && prior.command !== item.command) { this.emit(event, `$ ${item.command}`, 'command'); prior.command = item.command; }
-      if (typeof item.tool === 'string' && !prior.command) { this.emit(event, `MCP: ${item.tool}`, 'command'); prior.command = item.tool; }
-      this.delta(event, item.aggregated_output ?? item.stdout, prior, 'output');
-      this.delta(event, item.stderr, prior, 'stderr');
-      this.delta(event, item.text, prior, 'text');
-      const message = record(item.error).message ?? (item.type === 'error' ? item.message : undefined);
-      if (typeof message === 'string') this.emit(event, this.errorText(message), 'error');
-      if (type === 'item.completed' && typeof item.exit_code === 'number' && !prior.done) {
-        this.emit(event, `exit ${item.exit_code}`, item.exit_code === 0 ? 'success' : 'error'); prior.done = true;
-      }
+      for (const line of CompactProgress.record(value)) this.emit(event, line, typeof item.exit_code === 'number' && item.exit_code !== 0 ? 'error' : undefined);
       return;
     }
+    if (typeof value.summary === 'string') { this.emit(event, value.summary, value.verdict === 'pass' ? 'success' : 'warning'); return; }
     const error = record(value.error).message ?? (type === 'error' ? value.message : undefined);
     if (typeof error === 'string') { this.emit(event, this.errorText(error), 'error'); return; }
-    if (typeof value.stdout === 'string') { this.emit(event, value.stdout); return; }
-    if (typeof value.stderr === 'string') { this.emit(event, value.stderr, 'error'); return; }
+    if (typeof value.stdout === 'string') return;
+    if (typeof value.stderr === 'string') { this.emit(event, CompactProgress.diagnostics(value.stderr), 'error'); return; }
     if (type === 'turn.completed') { this.emit(event, 'Ответ агента завершён.', 'success'); return; }
     if (['thread.started', 'turn.started', 'thread.closed'].includes(type)) return;
     this.emit(event, `Служебное событие: ${type || 'неизвестный формат'}`);
@@ -121,35 +108,6 @@ export class RunConsoleDecoder {
       } catch { break; }
     }
     return value;
-  }
-
-  private delta(event: RunEvent, value: unknown, prior: ItemState, field: OutputField): void {
-    if (typeof value !== 'string') return;
-    const old = prior[field] ?? ''; prior[field] = value;
-    if (value === old) return;
-    const text = value.startsWith(old) ? value.slice(old.length) : value;
-    if (field === 'text') {
-      if (value.trimStart().startsWith('{')) {
-        try {
-          const outcome = record(JSON.parse(value));
-          if (typeof outcome.summary === 'string') this.structured(event, outcome);
-          else this.emit(event, 'Структурированный ответ агента доступен в исходнике.');
-        } catch { /* Wait for the rest of a structured agent answer. */ }
-        return;
-      }
-    }
-    const severity = field === 'stderr' ? 'error' : undefined;
-    const clean = RunConsoleDecoder.clean(text); let remainder = clean;
-    const tail = prior.tails?.[field];
-    if (tail && value.startsWith(old) && !old.endsWith('\n') && this.lines.includes(tail)) {
-      const end = clean.indexOf('\n'); const first = end < 0 ? clean : clean.slice(0, end);
-      tail.text = (first.includes('\r') ? first.split('\r').at(-1)! : tail.text + first).slice(0, CONSOLE_LIMITS.lineChars);
-      if (end < 0) return;
-      remainder = clean.slice(end + 1);
-    }
-    const last = this.emit(event, remainder, severity);
-    prior.tails ??= {};
-    prior.tails[field] = !value.endsWith('\n') ? last : undefined;
   }
 
   private emit(event: RunEvent, value: string, level?: ConsoleLevel): ConsoleLine | undefined {
