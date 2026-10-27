@@ -3,6 +3,7 @@ import { DatePipe, DecimalPipe } from '@angular/common';
 import { TableModule } from 'primeng/table';
 import { ButtonModule } from 'primeng/button';
 import { TokenMeter } from '../../../../../shared/automation/token-usage';
+import { RunBudget } from '../../../../../shared/automation/budget';
 import { RunConsoleComponent } from '../run-console/run-console.component';
 import { HttpClient } from '@angular/common/http';
 import { takeUntilDestroyed, toObservable, toSignal } from '@angular/core/rxjs-interop';
@@ -42,6 +43,7 @@ export class AutomationQueueComponent {
   public readonly runStatus = RunStatus;
   public readonly runAction = RunAction;
   public readonly tokenMeter = TokenMeter;
+  public readonly runBudget = RunBudget;
   public readonly snapshot = toSignal(merge(timer(0, AUTOMATION_TIMING.pollMs), this.refresh).pipe(
     exhaustMap(() => this.http.get<QueueSnapshot>('/api/automation/queue').pipe(
       catchError((error: unknown) => { this.error.set(this.message(error)); return EMPTY; }),

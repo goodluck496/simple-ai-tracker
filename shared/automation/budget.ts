@@ -3,6 +3,19 @@ import { TokenMeter } from './token-usage.js';
 
 /** Limits count observed cumulative input, including cached input exactly once. */
 export class RunBudget {
+  public static explain(run: AgentRun) {
+    const observed = (run.usageAttempts ?? []).filter(attempt => attempt.usage);
+    const total = TokenMeter.summary(run.usageAttempts, run.usageIncomplete);
+    const cacheKnown = observed.length > 0 && observed.every(attempt => attempt.usage!.cachedInputTokens !== undefined);
+    const cached = cacheKnown ? observed.reduce((sum, attempt) => sum + attempt.usage!.cachedInputTokens!, 0) : undefined;
+    const nonCached = cached === undefined ? undefined : total.inputTokens - cached;
+    const limit = this.limits(run).input;
+    return { input: total.inputTokens, cached, nonCached, limit, percent: Math.floor(total.inputTokens * 100 / limit),
+      partial: total.partial, measured: total.measuredAttempts,
+      advice: total.inputTokens >= limit
+        ? 'Лимит накопленного входа достигнут. Сначала проверьте повторные чтения и шаг плана, сохраните результат. Увеличивайте лимит только для измеренной оставшейся работы; продолжение сохраняет уже потраченный бюджет.'
+        : 'Лимит считает суммарный вход всех обращений, включая кеш. Это не размер одного окна контекста и не денежная стоимость. Рост кеша не означает столько же нового текста.' };
+  }
   public static limits(run: AgentRun) {
     return { calls: run.settings.maxAgentCalls ?? 6, input: run.settings.maxInputTokens ?? 500000,
       minutes: run.settings.maxRunMinutes ?? 20 };

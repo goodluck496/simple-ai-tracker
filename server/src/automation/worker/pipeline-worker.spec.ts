@@ -28,7 +28,8 @@ test('worker runs isolated Git pipeline, executes real checks, fixes review find
     const bridge = path.join(root, 'fixture-agent.cjs');
     await writeFile(bridge, `const fs=require('node:fs'); const role=process.argv[2]; let verdict='pass'; let plan;
 if(role==='analyst') plan='# Plan\\nUpdate answer and verify it.';
-if(role==='developer') fs.writeFileSync('answer.txt',String(Number(fs.readFileSync('answer.txt','utf8'))+1));
+if(role==='developer') { fs.writeFileSync('answer.txt',String(Number(fs.readFileSync('answer.txt','utf8'))+1)); const order=JSON.parse(fs.readFileSync('.sat/work-order.json','utf8')); fs.writeFileSync('.sat/work-progress.json',JSON.stringify({workOrderKey:order.workOrderKey,completedSteps:['S1'],summary:'answer updated'})); }
+if(role==='tester'||role==='reviewer') { const order=JSON.parse(fs.readFileSync('.sat/work-order.json','utf8')); require('node:assert').equal(order.previousStage.role,role==='tester'?'developer':'tester'); require('node:assert').ok(order.changedFiles.includes('answer.txt')); if(role==='reviewer') require('node:assert').equal(order.previousStage.checks.length,1); }
 if(role==='reviewer' && fs.readFileSync('answer.txt','utf8')!=='2') verdict='changes_requested';
 process.stdout.write(JSON.stringify({verdict,summary:role+': '+verdict,plan,commitMessage:'[#SAT-1] - Изменено значение ответа, чтобы проверить ожидаемое поведение'}));`, 'utf8');
     const roles = ['analyst', 'developer', 'tester', 'reviewer'] as const;
@@ -58,6 +59,8 @@ process.stdout.write(JSON.stringify({verdict,summary:role+': '+verdict,plan,comm
     assert.equal((await git(['rev-list', '--count', 'HEAD'])).trim(), '2', 'One squash commit in target');
     assert.equal((await git(['rev-list', '--count', `sat/${run.id}`])).trim(), '3', 'Private source commits remain available');
     assert.equal((await git(['status', '--porcelain'])).trim(), '');
+    const evidence = JSON.parse(await readFile(path.join(detail.run.checkout!.worktreePath, '.sat', 'stage-handoff.json'), 'utf8'));
+    assert.equal(evidence.evidence.role, 'reviewer'); assert.equal(evidence.evidence.checks.length, 1);
     assert.equal(await worker.tick(), false);
   } finally { app.close(); await rm(root, { recursive: true, force: true }); }
 });

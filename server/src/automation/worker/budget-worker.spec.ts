@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { mkdtemp, mkdir, writeFile, rm, access } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile, rm, access, readFile } from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
 import { createContainer } from '../../bootstrap/container.js';
@@ -12,7 +12,7 @@ import { PipelineWorker } from './pipeline-worker.js';
 import { DEFAULT_AUTOMATION_SETTINGS, type AgentJob } from '../../../../shared/automation/contracts.js';
 
 test('worker aborts on live usage or total active time, persists usage and preserves checkout', async () => {
-  for (const mode of ['tokens', 'time'] as const) {
+  for (const mode of ['tokens', 'time', 'terminal'] as const) {
     const root = await mkdtemp(path.join(os.tmpdir(), 'sat-budget-'));
     const repo = path.join(root, 'repo'); await mkdir(repo);
     const executor = new ProcessExecutor();
@@ -34,8 +34,13 @@ test('worker aborts on live usage or total active time, persists usage and prese
       class FixtureRunners extends AgentRunnerRegistry {
         public override get() { return { id: 'codex' as const, async run(job: AgentJob) {
           calls++;
-          job.onUsage?.({ inputTokens: mode === 'tokens' ? 100 : 1, cachedInputTokens: 0, outputTokens: 0,
-            source: 'codex-json', reportedRequests: 1, missingRequests: 0 });
+          job.onUsage?.({ inputTokens: mode !== 'time' ? 100 : 1, cachedInputTokens: 0, outputTokens: 0,
+            source: 'codex-json', reportedRequests: 1, missingRequests: 0 }, { terminal: mode === 'terminal' });
+          if (mode === 'terminal') {
+            assert.equal(job.signal.aborted, false);
+            await writeFile(path.join(job.cwd, 'source.txt'), 'completed answer');
+            return { text: JSON.stringify({ verdict: 'pass', summary: 'Completed before terminal usage', commitMessage: '[#SAT-1] - Сохранён ответ для проверки бюджета' }) };
+          }
           if (!job.signal.aborted) await new Promise<void>(resolve => job.signal.addEventListener('abort', () => resolve(), { once: true }));
           job.signal.throwIfAborted();
           return { text: '' };
@@ -52,7 +57,12 @@ test('worker aborts on live usage or total active time, persists usage and prese
       await worker.tick();
       const detail = app.automationService.detail(run.id);
       assert.equal(detail.run.status, 'failed'); assert.match(detail.run.summary, /budget exhausted/);
-      assert.equal(calls, 1); assert.equal(detail.run.usageAttempts![0].usage!.inputTokens, mode === 'tokens' ? 100 : 1);
+      assert.equal(calls, 1); assert.equal(detail.run.usageAttempts![0].usage!.inputTokens, mode !== 'time' ? 100 : 1);
+      if (mode === 'terminal') {
+        assert.equal(detail.run.usageAttempts![0].finished, true);
+        const checkpoint = JSON.parse(await readFile(path.join(detail.run.checkout!.worktreePath, '.sat', 'stage-0-0.json'), 'utf8'));
+        assert.equal(checkpoint.outcome.summary, 'Completed before terminal usage');
+      }
       await access(path.join(detail.run.checkout!.worktreePath, 'source.txt'));
     } finally { app.close(); await rm(root, { recursive: true, force: true }); }
   }

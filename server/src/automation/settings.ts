@@ -52,6 +52,7 @@ export class AutomationSettingsValidator {
       || !Number.isInteger(settings.maxRevisions) || settings.maxRevisions < AUTOMATION_LIMITS.revisions.min || settings.maxRevisions > AUTOMATION_LIMITS.revisions.max) return fail('Invalid run limits.');
     if (!MERGE_POLICIES.includes(settings.mergePolicy)) return fail('Invalid merge policy.');
     const maxAgentCalls = settings.maxAgentCalls ?? 6;
+    const maxStageToolCalls = settings.maxStageToolCalls ?? 24;
     const maxInputTokens = settings.maxInputTokens ?? 500000;
     const maxRunMinutes = settings.maxRunMinutes ?? 20;
     const execution = { maxParallelRuns: settings.maxParallelRuns ?? 2, dependencyMode: settings.dependencyMode ?? 'isolated',
@@ -63,7 +64,8 @@ export class AutomationSettingsValidator {
       || !integer(execution.maxResolverCalls, 0, 3) || !integer(execution.resolverTimeoutMinutes, 1, 10)
       || !integer(execution.maxResolverToolCalls, 1, 40) || typeof execution.resolveConflicts !== 'boolean'
       || !['isolated', 'linked'].includes(execution.dependencyMode)) return fail('Invalid parallel execution or integration settings.');
-    if (!Number.isSafeInteger(maxAgentCalls) || maxAgentCalls < 1 || maxAgentCalls > 100
+    if (!Number.isSafeInteger(maxStageToolCalls) || maxStageToolCalls < 1 || maxStageToolCalls > 80
+      || !Number.isSafeInteger(maxAgentCalls) || maxAgentCalls < 1 || maxAgentCalls > 100
       || !Number.isSafeInteger(maxInputTokens) || maxInputTokens < 1 || maxInputTokens > 100000000
       || !Number.isSafeInteger(maxRunMinutes) || maxRunMinutes < 1 || maxRunMinutes > 240) return fail('Invalid run budget.');
     // Reconstruct persisted objects so unknown fields cannot carry credentials.
@@ -73,7 +75,7 @@ export class AutomationSettingsValidator {
       agents: settings.agents.map(({ id, role, runner, connectionId, model, instructions, nativeProfile, command, args }) => ({ id, role, runner, connectionId, model, instructions, nativeProfile, command, args })),
       pipeline: settings.pipeline, checks: settings.checks.map(({ command, args }) => ({ command, args })), setup: settings.setup.map(({ command, args }) => ({ command, args })), artifactPaths: settings.artifactPaths,
       timeoutMinutes: settings.timeoutMinutes, maxRevisions: settings.maxRevisions, mergePolicy: settings.mergePolicy,
-      maxAgentCalls, maxInputTokens, maxRunMinutes,
+      maxAgentCalls, maxStageToolCalls, maxInputTokens, maxRunMinutes,
       ...execution,
     };
   }

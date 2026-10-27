@@ -74,6 +74,7 @@ export interface AutomationSettings {
   timeoutMinutes: number;
   maxRevisions: number;
   maxAgentCalls?: number;
+  maxStageToolCalls?: number;
   maxInputTokens?: number;
   maxRunMinutes?: number;
   maxParallelRuns?: number;
@@ -89,7 +90,7 @@ export interface AutomationSettings {
 export const DEFAULT_AUTOMATION_SETTINGS: AutomationSettings = {
   repositoryPath: '', baseBranch: 'main', connections: [], agents: [], pipeline: [], checks: [], setup: [],
   artifactPaths: [], timeoutMinutes: AUTOMATION_LIMITS.timeoutMinutes.default, maxRevisions: 1, maxAgentCalls: 6, maxInputTokens: 500000, maxRunMinutes: 20, mergePolicy: MergePolicy.Manual,
-  maxParallelRuns: 2, dependencyMode: 'isolated', maxMergeAttempts: 2, resolveConflicts: true,
+  maxStageToolCalls: 24, maxParallelRuns: 2, dependencyMode: 'isolated', maxMergeAttempts: 2, resolveConflicts: true,
   maxResolverCalls: 1, resolverTimeoutMinutes: 3, maxResolverToolCalls: 16,
 };
 export const DEFAULT_CHECK_COMMAND: CheckCommand = { command: 'npm', args: ['test'] };
@@ -142,7 +143,7 @@ export interface AgentOutcome {
 
 export interface AgentJob {
   maxToolCalls?: number;
-  onUsage?: (usage: import('./token-usage.js').TokenUsage) => void;
+  onUsage?: (usage: import('./token-usage.js').TokenUsage, state?: { terminal: boolean }) => void;
   runId: string;
   cwd: string;
   prompt: string;

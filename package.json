@@ -30,7 +30,7 @@
     "import:json": "npm run build:server && node dist/server/cli.mjs import:json",
     "export:json": "npm run build:server && node dist/server/cli.mjs export:json",
     "db:stats": "npm run build:server && node dist/server/cli.mjs db:stats",
-    "test": "tsx --test \"server/src/**/*.spec.ts\"",
+    "test": "tsx --test --test-reporter=./scripts/compact-test-reporter.mjs \"server/src/**/*.spec.ts\"",
     "typecheck": "tsc -p tsconfig.server.json --noEmit"
   },
   "dependencies": {

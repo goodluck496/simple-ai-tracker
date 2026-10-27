@@ -21,6 +21,9 @@ import { SquashIntegration } from './squash-integration.js';
 import { MergeResolver } from './merge-resolver.js';
 import { TaskRuntime } from './task-runtime.js';
 import { RunPreparation } from './run-preparation.js';
+import { StageHandoff } from './stage-handoff.js';
+import type { StageEvidence } from '../../../../shared/automation/work-order.js';
+import { WorkOrder } from '../../../../shared/automation/work-order.js';
 
 export class PipelineWorker {
   private activeController?: AbortController;
@@ -52,7 +55,7 @@ export class PipelineWorker {
     if (recoveryOnly) armBudget();
     const pending = new ProgressBuffer(); let channelError: unknown;
     let heartbeatBusy = false;
-    let metering: { attemptId: string; usage?: TokenUsage } | undefined;
+    let metering: { attemptId: string; usage?: TokenUsage; terminal?: boolean } | undefined;
     const reportUsage = async (sample: { attemptId: string; usage?: TokenUsage }, finished = false) => {
       await this.channel.call(AutomationTool.Usage, { id: run!.id, leaseToken: token, ...sample, finished });
     };
@@ -68,7 +71,7 @@ export class PipelineWorker {
       heartbeatBusy = true;
       void (async () => {
         await this.channel.call(AutomationTool.Heartbeat, { id: run!.id, leaseToken: token, phase: publishing ? 'publish' : recoveryOnly ? 'recovery' : undefined });
-        if (metering?.usage) await reportUsage({ ...metering });
+        if (metering?.usage && !metering.terminal) await reportUsage({ ...metering });
         if (pending.length) {
           const text = redact(pending.take());
           await this.channel.call(AutomationTool.Progress, { id: run!.id, leaseToken: token, text });
@@ -170,6 +173,7 @@ export class PipelineWorker {
         }
         const pack = await this.channel.call<Record<string, unknown>>('tracker_get_task', { id: run.taskId, commentsLimit: 5 });
         const context = { id: pack.id, title: pack.title, description: pack.description, plan: pack.plan, questions: pack.questions, relations: pack.relations, comments: pack.comments };
+        const requirementsKey = StageCheckpoint.key({ description: pack.description, plan: pack.plan, questions: pack.questions, relations: pack.relations });
         // Failure comments and run.summary change on infrastructure failure, so they are not cache keys.
         const checkpoint = new StageCheckpoint(cwd, run.stage, run.revision, (args) => git(args, cwd));
         const key = StageCheckpoint.key({ id: run.id, stage: run.stage, revision: run.revision, settings: run.settings,
@@ -178,26 +182,42 @@ export class PipelineWorker {
         const priorSha = (await git(['rev-parse', 'HEAD'], cwd)).trim();
         if (run.commitSha && priorSha !== run.commitSha && !saved) throw new Error('Worktree HEAD changed after checkpoint; inspect it before resuming.');
         const priorStatus = await git(['status', '--porcelain', '--', '.', ':!.sat'], cwd);
-        const diff = await git(['diff', `${run.settings.baseBranch}...HEAD`, '--', '.', ':!.sat'], cwd);
-        const prompt = this.prompt(profile.role, profile.instructions, context, run.summary, diff.slice(-60000), run.settings.artifactPaths, run.settings.checks, run.checkout);
+        const baseline = run.checkout?.baseSha ?? run.settings.baseBranch;
+        const committed = await git(['diff', '--name-only', '-z', `${baseline}...HEAD`, '--', '.', ':!.sat'], cwd);
+        const pendingNames = await git(['diff', 'HEAD', '--name-only', '-z', '--', '.', ':!.sat'], cwd);
+        const untrackedNames = await git(['ls-files', '--others', '--exclude-standard', '-z'], cwd);
+        const changedFiles = [...new Set((committed + pendingNames + untrackedNames).split('\0').filter(Boolean))].sort();
+        const handoff = new StageHandoff(cwd, run.id);
+        const previous = await handoff.read(run.stage, run.revision, requirementsKey, priorSha);
+        const stepIds = WorkOrder.from(pack.plan)?.steps.filter(s => s.kind === 'step').map(s => s.id) ?? [];
+        const workProgress = [AgentRole.Developer, AgentRole.Designer].includes(profile.role as 'developer' | 'designer') ? await handoff.progress(requirementsKey, stepIds) : undefined;
+        const packet = AgentHandoff.forRole(profile.role, context, changedFiles, previous, workProgress);
+        const diff = profile.role === AgentRole.Reviewer ? await git(['diff', `${baseline}...HEAD`, '--', '.', ':!.sat'], cwd) : '';
+        const feedback = previous && run.summary.startsWith(previous.summary) ? '' : run.summary;
+        const prompt = this.prompt(profile.role, profile.instructions, context, feedback, diff, run.settings.artifactPaths, run.settings.checks, run.checkout, packet);
         let outcome: AgentOutcome;
+        const checksEvidence: StageEvidence['checks'] = saved?.checks ? [...saved.checks]
+          : previous?.current && [AgentRole.Reviewer, AgentRole.VisualValidator].includes(profile.role as 'reviewer' | 'visual-validator') ? [...previous.checks] : [];
         if (saved) {
           outcome = this.parseOutcome(JSON.stringify(saved.outcome));
           await phase(RunPhase.Preparing, 'Результат агента восстановлен из checkpoint; повторный вызов модели не нужен.');
         } else {
         const reason = RunBudget.reason(run, Date.now(), true);
         if (reason) throw new Error(reason);
+        await RunWorkspace.atomic(path.join(cwd, '.sat', 'work-order.json'), { workOrderKey: requirementsKey, ...JSON.parse(packet) });
+        await phase(RunPhase.Preparing, `[HANDOFF] role=${profile.role} promptChars=${prompt.length} planChars=${String((pack.plan as { content?: string } | undefined)?.content ?? '').length} changedFiles=${changedFiles.length} previous=${previous?.role ?? 'none'}. Values are characters, not tokens.`);
         const started = await this.channel.call<{ attemptId?: string }>(AutomationTool.BeginStage, { id: run.id, leaseToken: token });
         metering = started.attemptId ? { attemptId: started.attemptId } : undefined;
         let usageComplete = false;
         try {
           const result = await this.registry.get(profile.runner).run({ runId: run.id, cwd, prompt, profile, connection, settings: run.settings, signal: controller.signal,
-            onUsage: (usage) => {
+            maxToolCalls: run.settings.maxStageToolCalls ?? 24,
+            onUsage: (usage, state) => {
               if (metering) {
-                metering = { ...metering, usage };
+                metering = { ...metering, usage, terminal: state?.terminal };
                 const previous = (run!.usageAttempts ?? []).filter(a => a.id !== metering!.attemptId);
                 const total = previous.reduce((sum, a) => sum + (a.usage?.inputTokens ?? 0), 0) + usage.inputTokens;
-                if (total >= RunBudget.limits(run!).input) {
+                if (total >= RunBudget.limits(run!).input && !state?.terminal) {
                   budgetError = `Run stopped: input token budget exhausted (${total}; cached included).`;
                   controller.abort();
                 }
@@ -210,6 +230,9 @@ export class PipelineWorker {
           if (typeof outcome.commitMessage === 'string') outcome.commitMessage = redact(outcome.commitMessage);
           if (outcome.plan) outcome.plan = redact(outcome.plan);
           if (outcome.questions) outcome.questions = outcome.questions.map(redact);
+          // Preserve the completed answer before final usage can exhaust the budget.
+          if (outcome.verdict === AgentVerdict.Pass) await checkpoint.save({ key, head: priorSha,
+            fingerprint: '', priorHead: priorSha, priorStatus, outcome });
         } catch (error) {
           throw new Error(`${profile.role}/${profile.runner}: ${error instanceof Error ? error.message : String(error)}`);
         } finally {
@@ -242,15 +265,20 @@ export class PipelineWorker {
             try {
               await phase(RunPhase.Checks, `Проверка: ${check.command} ${check.args.join(' ')}`);
               await this.executor.run({ ...check, cwd, env: TaskEnvironment.create(), signal: controller.signal, onProgress: progress });
+              checksEvidence.push({ command: check.command, args: check.args, exitCode: 0 });
             }
             catch (error) { outcome = { verdict: AgentVerdict.ChangesRequested, summary: redact(`Configured check failed: ${error instanceof Error ? error.message : String(error)}`) }; break; }
           }
           if ((await git(['rev-parse', 'HEAD'], cwd)).trim() !== sha || (await git(['status', '--porcelain', '--', '.', ':!.sat'], cwd)).trim()) throw new Error('Checks changed the tested commit or left uncommitted files.');
           saved.outcome = outcome;
+          saved.checks = checksEvidence;
           saved.checksComplete = outcome.verdict === AgentVerdict.Pass;
           if (saved.checksComplete) await checkpoint.save(saved);
         }
         if (pending.length) { await this.channel.call(AutomationTool.Progress, { id: run.id, leaseToken: token, text: redact(pending.take()) }); }
+        await handoff.save({ stage: run.stage, revision: run.revision, role: profile.role, sha, requirementsKey,
+          verdict: outcome.verdict, summary: outcome.summary, changedFiles: [...new Set([...changedFiles,
+            ...(await git(['diff', '--name-only', '-z', `${baseline}...HEAD`, '--', '.', ':!.sat'], cwd)).split('\0').filter(Boolean)])], checks: checksEvidence });
         run = await this.channel.call<AgentRun>(AutomationTool.CompleteStage, { id: run.id, leaseToken: token, outcome, branch, commitSha: sha });
       }
       if (run.status === RunStatus.Integrating) await integrate(false);
@@ -279,19 +307,21 @@ export class PipelineWorker {
     if (!AGENT_VERDICTS.includes(result.verdict) || typeof result.summary !== 'string') throw new Error('Agent must return a valid JSON verdict.');
     return result;
   }
-  private prompt(role: AgentRole, instructions: string, context: unknown, feedback: string, diff: string, artifacts: string[], checks: unknown, checkout?: AgentRun['checkout']): string {
+  private prompt(role: AgentRole, instructions: string, context: unknown, feedback: string, diff: string, artifacts: string[], checks: unknown, checkout?: AgentRun['checkout'], packet?: string): string {
     const roleInstructions: Record<AgentRole, string> = {
-      [AgentRole.Analyst]: 'Produce an implementation plan for the requested change. Missing implementation and failing pre-change checks are expected, not review findings. If requirements are clear, return pass with a nonempty markdown plan. Otherwise return questions. Never return changes_requested.',
-      [AgentRole.Developer]: 'Implement the accepted plan by editing project files. Include the necessary tests. Return pass only after implementing the requested behavior.',
+      [AgentRole.Analyst]: 'Investigate only the affected path. Produce an executable numbered work order: each step names exact files/symbols, the change, dependencies and a focused check. Keep all acceptance criteria and constraints. No vague repeat-the-research steps. Missing implementation and failing pre-change checks are expected. Return pass with the complete markdown plan, or questions for missing requirements. Never return changes_requested.',
+      [AgentRole.Developer]: 'Execute the approved workOrder steps in order, one focused change at a time. Read required repository instructions once; inspect only files/symbols needed for the current step. Do not redo general analysis or replace an agreed plan. If a step is invalid or ambiguous, return questions with the concrete blocker. Add focused regressions, report completed/remaining step IDs, and pass only after implementation.',
       [AgentRole.Designer]: 'Implement the requested visual design in project files, following the accepted plan and supplied references.',
       [AgentRole.Tester]: 'Assess the implemented behavior and test coverage. Use the configured checks when helpful. Return changes_requested for defects or missing coverage. Do not edit files.',
-      [AgentRole.Reviewer]: 'Independently inspect the current diff against the requirements and accepted plan. Report concrete defects with changes_requested, otherwise pass. Do not edit files.',
+      [AgentRole.Reviewer]: 'Independently inspect the current diff against requirements, workOrder and current previousStage checks. Do not repeat unchanged successful checks without a concrete concern. Stale previousStage evidence is not proof for current requirements. Report concrete defects with changes_requested, otherwise pass. Do not edit files.',
       [AgentRole.VisualValidator]: 'Inspect the actual supplied images against the visual requirements. State the affected area and severity for each issue. Do not infer working behavior from appearance alone. Do not edit files.',
     };
     return `You are the ${role}. ${instructions.trim() || DEFAULT_ROLE_INSTRUCTIONS[role]}\nRead repository AGENTS.md and applicable instructions before work.\n`
       + `${roleInstructions[role]}\n`
       + `Tracker workspace: ${this.channel.workspace ?? process.env.SAT_WORKSPACE ?? 'default'}. The worker supplies the current task context via MCP. If you consult tracker tools, always pass this explicit workspace. Do not change tracker data yourself.\n`
-      + `${AgentHandoff.instructions}\nTask context:\n${AgentHandoff.task(context)}\nPrevious feedback:\n${AgentHandoff.feedback(feedback)}\nChanges:\n${AgentHandoff.diff(diff)}\n`
+      + `${AgentHandoff.instructions}\nTask context (approved work order and bounded previous-stage evidence):\n${packet ?? AgentHandoff.task(context)}\nPrevious feedback:\n${AgentHandoff.feedback(feedback)}\nChanges (full preview only for review; use changedFiles for focused reads):\n${AgentHandoff.diff(diff)}\n`
+      + `The worker owns the configured full checks after the tester stage and on the squash candidate. Run focused checks for your step or independent scenario only; avoid repeating the full build/test matrix inside every role. Never treat current=false previous-stage evidence as current verification.\n`
+      + `Developer/designer: after each completed focused step update .sat/work-progress.json with {"workOrderKey":"copy key from .sat/work-order.json","completedSteps":["S1"],"nextStep":"S2","summary":"brief changes and check results"}. Use the actual step IDs and omit nextStep when finished. Resume uses these as unverified hints, not proof: confirm the relevant changed files before continuing, without repeating general analysis. Never change the approved work order yourself.\n`
       + `Configured checks: ${JSON.stringify(checks)}\nVisual artifacts: ${JSON.stringify(artifacts)}\n`
       + `Only developer/designer may edit files. Do not change branches, commit, merge, publish or alter tracker data directly; the worker handles commits. `
       + `When developer/designer changes files, include commitMessage in the JSON result. Exact format: "[#${(context as { id: string }).id}] - описание на русском, что сделано и для чего". Use an explicit purpose clause (для/чтобы/ради), one line, up to ${CommitMessage.maxLength} characters. Technical names may stay in English. A generic role/stage label is forbidden. Worker rejects invalid messages without recalling the model. `

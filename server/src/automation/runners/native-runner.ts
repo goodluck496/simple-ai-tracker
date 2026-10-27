@@ -25,6 +25,7 @@ export class NativeAgentRunner implements AgentRunner {
     if (this.id === RunnerId.Codex) await fs.writeFile(schemaPath, JSON.stringify(AGENT_OUTCOME_SCHEMA), 'utf8');
     switch (this.id) {
       case RunnerId.Codex: command = RunnerId.Codex; args = ['exec', '--json', '--output-schema', schemaPath, '--sandbox', 'workspace-write', '--model', model,
+        '-c', 'tool_output_token_limit=1500',
         '-c', `mcp_servers.${AGENT_TRACKER_SERVER}.enabled_tools=${JSON.stringify(AGENT_TRACKER_READ_TOOLS)}`,
         '-c', `mcp_servers.${AGENT_TRACKER_SERVER}.default_tools_approval_mode="auto"`, '-']; stdin = job.prompt; break;
       case RunnerId.ClaudeCode: command = 'claude'; args = ['-p', '--output-format', 'json', '--model', model]; stdin = job.prompt; break;
@@ -68,11 +69,11 @@ export class NativeAgentRunner implements AgentRunner {
     if (this.id !== RunnerId.Custom) args.push(...(job.profile.args ?? []));
     const limitController = new AbortController();
     const toolIds = new Set<string>();
-    const meter = new NativeUsageStream(this.id, job.onUsage, (value) => {
+    const meter = new NativeUsageStream(this.id, sample => job.onUsage?.(sample, { terminal: true }), (value) => {
       const record = value as { type?: string; item?: { id?: string; type?: string } };
       if (job.maxToolCalls && record.item?.id && ['command_execution', 'mcp_tool_call', 'web_search', 'file_change'].includes(record.item.type ?? '')) {
         toolIds.add(record.item.id);
-        if (toolIds.size > job.maxToolCalls) limitController.abort(new Error('Conflict resolver tool-call limit exceeded.'));
+        if (toolIds.size > job.maxToolCalls) limitController.abort(new Error(`Agent tool-call limit exceeded (${job.maxToolCalls}). Saved work is retained; inspect the current step before resuming.`));
       }
     });
     const signal = AbortSignal.any([job.signal, limitController.signal]);

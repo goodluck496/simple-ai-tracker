@@ -2,10 +2,11 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
 import type { AgentOutcome } from '../../../../shared/automation/contracts.js';
+import type { StageEvidence } from '../../../../shared/automation/work-order.js';
 
 type Git = (args: string[]) => Promise<string>;
 export interface StageResult {
-  key: string; head: string; fingerprint: string; priorHead: string; priorStatus: string; outcome: AgentOutcome; checksComplete?: boolean;
+  key: string; head: string; fingerprint: string; priorHead: string; priorStatus: string; outcome: AgentOutcome; checksComplete?: boolean; checks?: StageEvidence['checks'];
 }
 
 /** Durable completed-agent output; infrastructure retries must not call the model again. */

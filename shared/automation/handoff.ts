@@ -1,8 +1,21 @@
+import type { AgentRole } from './contracts.js';
+import { WorkOrder, type StageEvidence, type WorkProgress } from './work-order.js';
+
 type Fields = Record<string, unknown>;
 export const HANDOFF_LIMITS = { taskChars: 40000, feedbackChars: 3000, diffChars: 16000, comments: 3, commentChars: 1000 } as const;
 
 /** Retain the actual plan; drop repeated machine reports and bound optional handoff evidence. */
 export class AgentHandoff {
+  public static forRole(role: AgentRole, value: unknown, changedFiles: string[], previous?: StageEvidence, progress?: WorkProgress): string {
+    const task = JSON.parse(this.task(value));
+    const workOrder = WorkOrder.from(task.plan); delete task.plan;
+    const evidence = previous ? { role: previous.role, sha: previous.sha, verdict: previous.verdict,
+      current: previous.current, summary: this.feedback(previous.summary),
+      changedFiles: previous.changedFiles, checks: previous.current === false ? [] : previous.checks } : undefined;
+    const payload = JSON.stringify({ role, task, workOrder, changedFiles, previousStage: evidence, workProgress: progress });
+    if (payload.length > HANDOFF_LIMITS.taskChars) throw new Error('Role handoff exceeds the limit; split the task. Requirements were not silently truncated.');
+    return payload;
+  }
   public static task(value: unknown): string {
     const source = value as Fields;
     const comments = (Array.isArray(source.comments) ? source.comments as Fields[] : [])

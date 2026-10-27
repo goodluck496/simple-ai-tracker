@@ -50,6 +50,7 @@ test('native adapters preserve model, prompt and native result/error envelopes',
         assert.equal(schema.properties.commitMessage.type, 'string');
         assert.equal(schema.additionalProperties, false);
         const args = executor.request!.args.join(' ');
+        assert.ok(argv.includes('tool_output_token_limit=1500'));
         assert.match(args, /enabled_tools=.*tracker_get_task/);
         assert.match(args, /default_tools_approval_mode="auto"/);
         assert.match(args, /mcp_servers.blender.enabled=false/);
@@ -70,6 +71,23 @@ test('native adapters preserve model, prompt and native result/error envelopes',
     assert.ok(executor.request!.args.includes('mcp_servers.blender.enabled=false'));
     executor.output = '{"is_error":true,"result":"auth failed"}';
     await assert.rejects(new NativeAgentRunner('claude-code', executor).run({ cwd, prompt: 'Test error envelope', profile: { model: 'm' }, signal: AbortSignal.timeout(5000) } as AgentJob, () => undefined), /failed/);
+  } finally { await rm(cwd, { recursive: true, force: true }); }
+});
+
+test('native operation limit counts distinct tools and stops a stage without retrying the model', async () => {
+  const cwd = await mkdtemp(path.join(os.tmpdir(), 'sat-tool-limit-'));
+  class Fixture extends ProcessExecutor {
+    public override async run(request: ProcessRequest): Promise<string> {
+      if (request.args[0] === 'mcp') return '[]';
+      for (const [id, type] of [['one', 'item.started'], ['one', 'item.completed'], ['two', 'item.started']]) {
+        request.onStdout?.(JSON.stringify({ type, item: { id, type: 'command_execution' } }) + '\n');
+      }
+      request.signal.throwIfAborted(); return '';
+    }
+  }
+  try {
+    await assert.rejects(new NativeAgentRunner('codex', new Fixture()).run({ cwd, prompt: 'A bounded stage', maxToolCalls: 1,
+      profile: { model: 'fixture' }, signal: AbortSignal.timeout(5000) } as AgentJob, () => undefined), /tool-call limit exceeded/);
   } finally { await rm(cwd, { recursive: true, force: true }); }
 });
 

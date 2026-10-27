@@ -62,6 +62,16 @@
         @let total = tokenMeter.summary(attempts, detail()?.run?.usageIncomplete);
         <section class="token-meter" aria-label="Токенометр">
           <h4>Токенометр</h4><p>{{ tokenMeter.label(total) }}</p>
+          @if (detail()?.run; as run) {
+            @let budget = runBudget.explain(run);
+            <div aria-label="Диагностика бюджета">
+              <p>Накопленный вход: {{ budget.input | number }} / {{ budget.limit | number }} ({{ budget.percent }}%).</p>
+              @if (budget.cached !== undefined) {
+                <p>Чтение кеша: {{ budget.cached | number }} · без чтения кеша: {{ budget.nonCached | number }}.</p>
+              } @else { <p>Разделение входа по кешу: нет полных данных.</p> }
+              <p class="muted">{{ budget.advice }} Native CLI может сообщить расход с задержкой, поэтому остановка не гарантирует точного финансового потолка.</p>
+            </div>
+          }
           @if (total.measuredAttempts) {
             <p>Вход: {{ total.inputTokens | number }} · выход: {{ total.outputTokens | number }}. Данные есть у {{ total.measuredAttempts }} из {{ total.attempts }} попыток этапов.</p>
           }
