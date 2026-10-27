@@ -4,6 +4,34 @@ import { createContainer, type AppContainer } from '../bootstrap/container.js';
 import { NodeSqliteDatabase } from '../db/node-sqlite-database.js';
 import { SilentLogger } from '../core/logger.js';
 import { TrackerToolRegistry } from './tools.js';
+import { DEFAULT_AUTOMATION_SETTINGS } from '../../../shared/automation/contracts.js';
+
+it('MCP enqueue preserves per-run settings, validates limits, and leaves global configuration unchanged', async () => {
+  const app = createApp();
+  try {
+    const settings = { ...structuredClone(DEFAULT_AUTOMATION_SETTINGS), repositoryPath: '/fixture',
+      connections: [{ id: 'native', label: 'Fixture', kind: 'native' as const, supportsImages: false }],
+      agents: (['analyst', 'developer', 'tester', 'reviewer'] as const).map(role => ({ id: role, role,
+        runner: 'codex' as const, connectionId: 'native', model: 'fixture', instructions: '' })),
+      pipeline: ['analyst', 'developer', 'tester', 'reviewer'], checks: [{ command: 'node', args: ['--version'] }] };
+    app.automationService.configure(settings);
+    const task = app.taskService.createTask({ title: 'MCP settings fixture' });
+    app.taskService.attachPlan({ id: task.id, planContent: '# Ready plan', actor: 'agent' });
+    const registry = new TrackerToolRegistry(app);
+    const perRun = { ...settings, pipeline: ['developer', 'tester', 'reviewer'], maxAgentCalls: 3, maxRunMinutes: 10 };
+    const bad = await registry.call('tracker_automation_enqueue', { workspace: 'default', taskId: task.id,
+      settings: { ...perRun, maxAgentCalls: 0 } });
+    assert.equal(bad.isError, true);
+    const good = await registry.call('tracker_automation_enqueue', { workspace: 'default', taskId: task.id, settings: perRun });
+    assert.equal(good.isError, undefined);
+    const run = JSON.parse(textOf(good));
+    assert.deepEqual(run.settings.pipeline, perRun.pipeline);
+    assert.equal(run.settings.maxAgentCalls, 3);
+    assert.equal(run.settings.maxRunMinutes, 10);
+    assert.equal(app.automationService.settings().maxAgentCalls, settings.maxAgentCalls);
+    assert.deepEqual(app.automationService.settings().pipeline, settings.pipeline);
+  } finally { app.close(); }
+});
 
 function createApp(): AppContainer {
   return createContainer({

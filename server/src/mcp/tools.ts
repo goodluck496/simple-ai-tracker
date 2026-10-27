@@ -408,7 +408,7 @@ export class TrackerToolRegistry {
         case AutomationTool.HostComplete: service.projects.complete(id(), token(), args['result'] as import('../../../shared/automation/project.js').ProjectResult | undefined, asString(args, 'error')); return json({ ok: true });
         case AutomationTool.ListRuns: return json(service.list(asString(args, 'taskId')));
         case AutomationTool.GetRun: return json(service.detail(id()));
-        case AutomationTool.Enqueue: return json(service.enqueue(requireString(args, 'taskId')));
+        case AutomationTool.Enqueue: return json(service.enqueue(requireString(args, 'taskId'), args['settings'], false));
         case AutomationTool.Claim: return json(service.claim(requireString(args, 'workerId')));
         case AutomationTool.Heartbeat: return json(service.heartbeat(id(), token()));
         case AutomationTool.Progress: service.progress(id(), token(), requireString(args, 'text'), asString(args, 'phase') as RunPhase | undefined); return json({ ok: true });

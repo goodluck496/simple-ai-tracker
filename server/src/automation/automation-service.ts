@@ -49,10 +49,10 @@ export class AutomationService {
   }
 
   public activeTaskIds(): string[] { return this.runs.activeTaskIds(); }
-  public enqueue(taskId: string, draft?: unknown): AgentRun {
-    return this.createRun(taskId, draft);
+  public enqueue(taskId: string, draft?: unknown, persistSettings = true): AgentRun {
+    return this.createRun(taskId, draft, undefined, persistSettings);
   }
-  private createRun(taskId: string, draft?: unknown, previous?: AgentRun): AgentRun {
+  private createRun(taskId: string, draft?: unknown, previous?: AgentRun, persistSettings = true): AgentRun {
     return this.runs.db.transaction(() => {
       const task = this.tasks.getTaskCard(taskId);
       if (task.openQuestionsCount || task.status === TaskStatus.Done) throw new TrackerError('CONFLICT', 'Resolve task questions before starting automation.');
@@ -78,7 +78,7 @@ export class AutomationService {
         branch: null, commitSha: null, summary: '', restartedFromId: previous?.id, usageAttempts: [] };
       this.runs.save(run);
       this.runs.event(run.id, RunStatus.Queued, 'Run queued with an immutable settings snapshot.', now);
-      if (draft !== undefined) this.repos.meta.set(SETTINGS_KEY, JSON.stringify(settings));
+      if (draft !== undefined && persistSettings) this.repos.meta.set(SETTINGS_KEY, JSON.stringify(settings));
       return this.publicRun(run);
     });
   }
