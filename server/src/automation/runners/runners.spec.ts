@@ -77,20 +77,27 @@ test('native adapters preserve model, prompt and native result/error envelopes',
   } finally { await rm(cwd, { recursive: true, force: true }); }
 });
 
-test('native operation limit counts distinct tools and stops a stage without retrying the model', async () => {
+test('native operation threshold warns once without interrupting useful work or external cancellation', async () => {
   const cwd = await mkdtemp(path.join(os.tmpdir(), 'sat-tool-limit-'));
   class Fixture extends ProcessExecutor {
     public override async run(request: ProcessRequest): Promise<string> {
       if (request.args[0] === 'mcp') return '[]';
-      for (const [id, type] of [['one', 'item.started'], ['one', 'item.completed'], ['two', 'item.started']]) {
+      for (const [id, type] of [['one', 'item.started'], ['one', 'item.completed'], ['two', 'item.started'], ['three', 'item.completed']]) {
         request.onStdout?.(JSON.stringify({ type, item: { id, type: 'command_execution' } }) + '\n');
       }
-      request.signal.throwIfAborted(); return '';
+      request.signal.throwIfAborted();
+      return JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: 'completed after threshold' } });
     }
   }
   try {
-    await assert.rejects(new NativeAgentRunner('codex', new Fixture()).run({ cwd, prompt: 'A bounded stage', maxToolCalls: 1,
-      profile: { model: 'fixture' }, signal: AbortSignal.timeout(5000) } as AgentJob, () => undefined), /tool-call limit exceeded/);
+    const progress: string[] = [];
+    const runner = new NativeAgentRunner('codex', new Fixture());
+    const job = { cwd, prompt: 'A bounded stage', maxToolCalls: 1,
+      profile: { model: 'fixture' }, signal: AbortSignal.timeout(5000) } as AgentJob;
+    const result = await runner.run(job, text => progress.push(text));
+    assert.equal(result.text, 'completed after threshold');
+    assert.equal(progress.filter(text => text.includes('Предупреждение:')).length, 1);
+    await assert.rejects(runner.run({ ...job, signal: AbortSignal.abort(new Error('user cancelled')) }, () => undefined), /user cancelled/);
   } finally { await rm(cwd, { recursive: true, force: true }); }
 });
 

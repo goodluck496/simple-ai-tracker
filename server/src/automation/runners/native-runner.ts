@@ -75,20 +75,21 @@ export class NativeAgentRunner implements AgentRunner {
       }
     }
     if (this.id !== RunnerId.Custom) args.push(...(job.profile.args ?? []));
-    const limitController = new AbortController();
     const toolIds = new Set<string>();
+    let toolThresholdReported = false;
     const meter = new NativeUsageStream(this.id, sample => job.onUsage?.(sample, { terminal: true }), (value) => {
       for (const line of CompactProgress.record(value)) onProgress(line + '\n');
       const record = value as { type?: string; item?: { id?: string; type?: string } };
       if (job.maxToolCalls && record.item?.id && ['command_execution', 'mcp_tool_call', 'web_search', 'file_change'].includes(record.item.type ?? '')) {
         toolIds.add(record.item.id);
-        if (toolIds.size > job.maxToolCalls) limitController.abort(new Error(`Agent tool-call limit exceeded (${job.maxToolCalls}). Saved work is retained; inspect the current step before resuming.`));
+        if (toolIds.size > job.maxToolCalls && !toolThresholdReported) {
+          toolThresholdReported = true;
+          onProgress(`Предупреждение: выполнено более ${job.maxToolCalls} действий. Агент продолжает работу; ограничения времени и общего бюджета сохраняются.\n`);
+        }
       }
     });
-    const signal = AbortSignal.any([job.signal, limitController.signal]);
     let raw: string;
-    try { raw = await this.executor.run({ command, args, cwd: job.cwd, stdin, env: TaskEnvironment.create(), signal, compactProgress: true, onProgress, onStdout: (text) => meter.push(text) }); }
-    catch (error) { if (limitController.signal.aborted) throw limitController.signal.reason; throw error; }
+    try { raw = await this.executor.run({ command, args, cwd: job.cwd, stdin, env: TaskEnvironment.create(), signal: job.signal, compactProgress: true, onProgress, onStdout: (text) => meter.push(text) }); }
     finally { meter.finish(); }
     // Some executors and formatted JSON outputs provide only the final complete document.
     if (!meter.usage) {

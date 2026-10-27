@@ -74,6 +74,7 @@ export interface AutomationSettings {
   timeoutMinutes: number;
   maxRevisions: number;
   maxAgentCalls?: number;
+  /** Native CLI: advisory threshold; managed Model API: hard tool-loop limit. */
   maxStageToolCalls?: number;
   maxInputTokens?: number;
   maxRunMinutes?: number;
