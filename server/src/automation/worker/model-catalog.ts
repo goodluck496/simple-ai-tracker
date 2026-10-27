@@ -2,6 +2,7 @@ import os from 'node:os';
 import { ProviderKind, RunnerId } from '../../../../shared/automation/contracts.js';
 import { MODEL_CATALOG_LIMITS, type ModelCatalogInput, type ModelOption } from '../../../../shared/automation/model-catalog.js';
 import { ProcessExecutor } from '../runners/process-executor.js';
+import { NativeExecutable } from '../runners/native-executable.js';
 
 type CatalogRow = Record<string, unknown>;
 /** Discovery runs on the host with the same CLI login and environment as execution. */
@@ -12,12 +13,20 @@ export class WorkerModelCatalog {
   public async list(input: ModelCatalogInput): Promise<ModelOption[]> {
     let rows: unknown; let idField: string; let labelField: string;
     if (input.connection.kind === ProviderKind.Native) {
+      if (input.runner === RunnerId.Antigravity) {
+        let output: string;
+        try { output = await this.executor.run({ command: NativeExecutable.antigravity(this.environment), args: ['models'], cwd: os.homedir(),
+          signal: AbortSignal.timeout(MODEL_CATALOG_LIMITS.timeoutMs), maxOutputChars: MODEL_CATALOG_LIMITS.maxBytes }); }
+        catch { throw new Error('Не удалось получить каталог Antigravity. Проверьте установку agy и вход в аккаунт на компьютере worker.'); }
+        rows = this.antigravityRows(output); idField = 'id'; labelField = 'name';
+      } else {
       if (input.runner !== RunnerId.Codex) throw new Error('Этот CLI пока не предоставляет поддерживаемый каталог. Укажите точный ID вручную или выберите API-подключение.');
       let output: string;
       try { output = await this.executor.run({ command: 'codex', args: ['debug', 'models'], cwd: os.homedir(),
         signal: AbortSignal.timeout(MODEL_CATALOG_LIMITS.timeoutMs), maxOutputChars: MODEL_CATALOG_LIMITS.maxBytes }); }
       catch { throw new Error('Не удалось получить каталог Codex. Проверьте вход в Codex и поддержку команды codex debug models установленной версией CLI.'); }
       rows = this.parse(output).models; idField = 'slug'; labelField = 'display_name';
+      }
     } else {
       const connection = input.connection;
       const base = (connection.baseUrl ?? '').replace(/\/+$/, '');
@@ -46,6 +55,21 @@ export class WorkerModelCatalog {
       if (models.size > MODEL_CATALOG_LIMITS.maxModels) throw new Error('Каталог превышает лимит моделей. Используйте ручной ввод ID.');
     }
     return [...models.values()];
+  }
+  private antigravityRows(output: string): CatalogRow[] {
+    if (Buffer.byteLength(output) > MODEL_CATALOG_LIMITS.maxBytes) throw new Error('Каталог моделей слишком большой.');
+    const rows: CatalogRow[] = [];
+    for (const raw of output.split(/\r?\n/)) {
+      const line = raw.trim();
+      if (!line || line === 'Fetching available models...') continue;
+      const separator = line.indexOf('\t');
+      if (separator < 1) throw new Error('Неизвестный формат каталога Antigravity. Проверьте версию CLI или укажите модель вручную.');
+      const id = line.slice(0, separator); const name = line.slice(separator + 1).trim();
+      if (!/^[\w./:-]+$/.test(id) || !name || name.includes('\t') || /[\x00-\x1f\x7f]/.test(name)) throw new Error('Некорректная строка каталога Antigravity.');
+      rows.push({ id, name });
+      if (rows.length > MODEL_CATALOG_LIMITS.maxModels) throw new Error('Каталог превышает лимит моделей.');
+    }
+    return rows;
   }
   private parse(text: string): CatalogRow {
     if (Buffer.byteLength(text) > MODEL_CATALOG_LIMITS.maxBytes) throw new Error('Каталог моделей слишком большой.');

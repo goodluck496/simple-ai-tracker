@@ -6,6 +6,7 @@ import { NativeUsageStream, UsageParser } from './usage-parser.js';
 import { AGENT_TRACKER_READ_TOOLS, AGENT_TRACKER_SERVER } from '../../../../shared/automation/tracker-access.js';
 import { TaskEnvironment } from './task-environment.js';
 import { AGENT_OUTCOME_SCHEMA } from '../../../../shared/automation/outcome-schema.js';
+import { NativeExecutable } from './native-executable.js';
 
 interface Envelope { type?: string; is_error?: boolean; result?: string; response?: string; status?: string; session_id?: string; conversation_id?: string; item?: { type?: string; text?: string }; part?: { type?: string; text?: string }; }
 const NATIVE_SUCCESS_STATUSES = new Set(['SUCCESS', 'success']);
@@ -29,7 +30,7 @@ export class NativeAgentRunner implements AgentRunner {
       case RunnerId.ClaudeCode: command = 'claude'; args = ['-p', '--output-format', 'json', '--model', model]; stdin = job.prompt; break;
       case RunnerId.OpenCode: command = RunnerId.OpenCode; args = ['run', '--format', 'json', '--model', model, brief]; break;
       case RunnerId.DeepSeekHarness: command = 'dsh'; args = ['--profile', job.profile.nativeProfile!, brief]; break;
-      case RunnerId.Antigravity: command = 'agy'; args = ['-p', brief, '--output-format', 'json', '--model', model]; break;
+      case RunnerId.Antigravity: command = NativeExecutable.antigravity(); args = ['-p', brief, '--output-format', 'json', '--model', model]; break;
       case RunnerId.Custom: {
         command = job.profile.command!;
         const values: Record<string, string> = { promptFile, model, cwd: job.cwd, role: job.profile.role, provider: job.connection.id };

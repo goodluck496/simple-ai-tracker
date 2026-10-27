@@ -7,8 +7,34 @@ import { ProjectAction } from '../../../../shared/automation/project.js';
 import { createContainer } from '../../bootstrap/container.js';
 import { SilentLogger } from '../../core/logger.js';
 import { ModelCatalogKey } from '../../../../shared/automation/model-catalog.js';
+import fs from 'node:fs/promises';
+import path from 'node:path';
+import os from 'node:os';
+import { NativeExecutable } from '../runners/native-executable.js';
 
 const native: ModelConnection = { id: 'native', label: 'Codex', kind: ProviderKind.Native, supportsImages: false };
+test('Antigravity 1.4.8 catalog uses its installed executable without inference and preserves exact TSV slugs', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'sat-agy-catalog-'));
+  try {
+    const executable = path.join(root, 'agy', 'bin', 'agy.exe'); await fs.mkdir(path.dirname(executable), { recursive: true }); await fs.writeFile(executable, 'fixture');
+    let calls = 0; let output = 'Fetching available models...\r\ngemini-4-argon-high\tGemini 4 Argon (High)\r\nclaude-sonnet-5-5-low\tClaude Sonnet 5.5 (Low)\r\n';
+    class Fixture extends ProcessExecutor {
+      public override async run(request: ProcessRequest): Promise<string> {
+        calls++; assert.equal(request.command, executable); assert.deepEqual(request.args, ['models']); return output;
+      }
+    }
+    const catalog = new WorkerModelCatalog(new Fixture(), fetch, { LOCALAPPDATA: root });
+    assert.deepEqual(await catalog.list({ connection: native, runner: RunnerId.Antigravity }), [
+      { id: 'gemini-4-argon-high', label: 'Gemini 4 Argon (High) · gemini-4-argon-high' },
+      { id: 'claude-sonnet-5-5-low', label: 'Claude Sonnet 5.5 (Low) · claude-sonnet-5-5-low' },
+    ]);
+    output = 'Please log in';
+    await assert.rejects(catalog.list({ connection: native, runner: RunnerId.Antigravity }), /формат/);
+    assert.equal(calls, 2);
+    assert.equal(NativeExecutable.antigravity({ SAT_ANTIGRAVITY_PATH: executable }), executable);
+    assert.throws(() => NativeExecutable.antigravity({ SAT_ANTIGRAVITY_PATH: path.join(root, 'missing') }), /executable/);
+  } finally { await fs.rm(root, { recursive: true, force: true }); }
+});
 class CatalogExecutor extends ProcessExecutor {
   public calls: ProcessRequest[] = [];
   public override async run(request: ProcessRequest): Promise<string> {
