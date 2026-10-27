@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { readFile, writeFile, access } from 'node:fs/promises';
+import { readFile, writeFile, access, appendFile } from 'node:fs/promises';
 import path from 'node:path';
 import { SquashIntegration } from './squash-integration.js';
 import { gitFixture } from './testing/git-fixture.js';
@@ -66,5 +66,18 @@ test('target movement reruns integration checks and dirty user files are preserv
     await assert.rejects(new SquashIntegration().run(b.job), /clean/);
     assert.equal(await readFile(path.join(f.repository, 'user.txt'), 'utf8'), 'do not remove');
     assert.equal((await f.git(['rev-parse', 'HEAD'])).trim(), target);
+  } finally { await f.dispose(); }
+});
+
+test('ignored local files are not overwritten during squash publication', async () => {
+  const f = await gitFixture();
+  try {
+    const source = await f.branch('task1', 'local.txt', ['task content']);
+    await appendFile(path.join(f.common, 'info', 'exclude'), '\nlocal.txt\n');
+    await writeFile(path.join(f.repository, 'local.txt'), 'user data');
+    const before = (await f.git(['rev-parse', 'HEAD'])).trim();
+    await assert.rejects(new SquashIntegration().run(source.job), /overwritten|untracked/i);
+    assert.equal((await f.git(['rev-parse', 'HEAD'])).trim(), before);
+    assert.equal(await readFile(path.join(f.repository, 'local.txt'), 'utf8'), 'user data');
   } finally { await f.dispose(); }
 });

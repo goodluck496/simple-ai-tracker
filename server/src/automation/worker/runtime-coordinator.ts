@@ -1,5 +1,5 @@
 import { DatabaseSync } from 'node:sqlite';
-import { mkdirSync, readFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, realpathSync, lstatSync, existsSync } from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { randomUUID } from 'node:crypto';
@@ -13,10 +13,14 @@ export class RuntimeCoordinator {
   private readonly db: DatabaseSync;
   public constructor(file: string) {
     mkdirSync(path.dirname(file), { recursive: true });
-    this.db = new DatabaseSync(file);
+    if (lstatSync(path.dirname(file)).isSymbolicLink() || (existsSync(file) && lstatSync(file).isSymbolicLink())) throw new Error('Runtime coordinator path is redirected.');
+    this.db = new DatabaseSync(path.join(realpathSync(path.dirname(file)), path.basename(file)));
     this.db.exec('PRAGMA busy_timeout=5000; CREATE TABLE IF NOT EXISTS owners (key TEXT PRIMARY KEY, nonce TEXT NOT NULL, pid INTEGER NOT NULL, host TEXT NOT NULL, capacity INTEGER NOT NULL, children TEXT NOT NULL)');
   }
   public close(): void { this.db.close(); }
+  public held(prefix: string): boolean {
+    return (this.db.prepare('SELECT key FROM owners').all() as unknown as { key: string }[]).some(row => row.key.startsWith(prefix));
+  }
   public async acquire(key: string, signal: AbortSignal, capacity = 0): Promise<RuntimeLease> {
     for (;;) {
       signal.throwIfAborted();

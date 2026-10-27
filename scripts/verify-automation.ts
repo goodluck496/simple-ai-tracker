@@ -110,6 +110,7 @@ try {
   await dialog.getByLabel('Имя Docker-контейнера трекера', { exact: true }).waitFor();
   assert.equal(await advancedConnection.getAttribute('aria-expanded'), 'true');
   await advancedConnection.focus(); await page.keyboard.press('Space');
+  await page.waitForFunction((element: HTMLElement) => element.getAttribute('aria-expanded') === 'false', await advancedConnection.elementHandle());
   assert.equal(await advancedConnection.getAttribute('aria-expanded'), 'false');
   const connectButton = dialog.getByRole('button', { name: 'Подключить worker', exact: true });
   assert.ok((await connectButton.getAttribute('class'))?.includes('p-button-success'));

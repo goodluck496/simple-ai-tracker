@@ -128,6 +128,7 @@ export class AutomationPanelComponent implements OnInit {
   public readonly providers = [...PROVIDER_KINDS];
   public readonly reasoningEfforts = [...REASONING_EFFORTS];
   public readonly mergePolicies = [...MERGE_POLICIES];
+  public readonly dependencyModes = ['isolated', 'linked'];
   public readonly providerKind = ProviderKind;
   public readonly runnerId = RunnerId;
   public readonly limits = AUTOMATION_LIMITS;

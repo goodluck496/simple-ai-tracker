@@ -1,6 +1,6 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import type { ProcessExecutor } from '../runners/process-executor.js';
 
 export class RunWorkspace {
@@ -32,9 +32,24 @@ export class RunWorkspace {
   }
   public static async atomic(file: string, value: unknown): Promise<void> {
     await fs.mkdir(path.dirname(file), { recursive: true });
-    const temporary = `${file}.${process.pid}.tmp`;
-    const handle = await fs.open(temporary, 'w');
+    if (await fs.realpath(path.dirname(file)) !== path.resolve(path.dirname(file))) throw new Error('Runtime directory is redirected.');
+    const temporary = `${file}.${process.pid}.${randomUUID()}.tmp`;
+    const handle = await fs.open(temporary, 'wx');
     try { await handle.writeFile(JSON.stringify(value), 'utf8'); await handle.sync(); } finally { await handle.close(); }
     await fs.rename(temporary, file);
+  }
+  public static async localDirectory(root: string, relative: string): Promise<string> {
+    const parts = relative.split(/[\\/]/).filter(Boolean);
+    if (parts.some(part => part === '.' || part === '..') || path.isAbsolute(relative)) throw new Error('Invalid runtime directory.');
+    let current = root;
+    for (const part of parts) {
+      current = path.join(current, part);
+      try {
+        const stat = await fs.lstat(current);
+        if (stat.isSymbolicLink() || !stat.isDirectory()) throw new Error('Runtime directory contains an external link.');
+      } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; await fs.mkdir(current); }
+      if (await fs.realpath(current) !== path.resolve(current)) throw new Error('Runtime directory is redirected.');
+    }
+    return current;
   }
 }

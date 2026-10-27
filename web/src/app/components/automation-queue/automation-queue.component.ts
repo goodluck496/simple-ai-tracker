@@ -7,7 +7,7 @@ import { HttpClient } from '@angular/common/http';
 import { takeUntilDestroyed, toObservable, toSignal } from '@angular/core/rxjs-interop';
 import { EMPTY, Subject, catchError, combineLatest, exhaustMap, finalize, merge, of, switchMap, tap, timer } from 'rxjs';
 import { AUTOMATION_TIMING, RunStatus, RunAction, type AgentRun, type RunEvent } from '../../../../../shared/automation/contracts';
-import { QUEUE_LANES, QUEUE_LIMITS, RUN_EVENT_TITLES, RUN_PHASE_TITLES, RUN_STATUS_TITLES, QueuePresentation, RunProgressText,
+import { QUEUE_LANES, QUEUE_LIMITS, RUN_EVENT_TITLES, RUN_PHASE_TITLES, RUN_STATUS_TITLES, INTEGRATION_STATE_TITLES, QueuePresentation, RunProgressText,
   type QueueItem, type QueueSnapshot, type QueueLane } from '../../../../../shared/automation/queue';
 import { ROLE_OPTIONS } from '../../../../../shared/automation/presets';
 import { TASK_STATUS_TITLES } from '../../../../../shared/automation/task-readiness';
@@ -33,6 +33,7 @@ export class AutomationQueueComponent {
   public readonly statusTitles = RUN_STATUS_TITLES;
   public readonly taskTitles = TASK_STATUS_TITLES;
   public readonly phaseTitles = RUN_PHASE_TITLES;
+  public readonly integrationTitles = INTEGRATION_STATE_TITLES;
   public readonly lanes = QUEUE_LANES;
   public readonly recentLimit = QUEUE_LIMITS.recent;
   public readonly archived = signal<AgentRun[] | null>(null);
@@ -56,7 +57,7 @@ export class AutomationQueueComponent {
   public clearSearch(): void { this.search.set(''); }
   public health(item: QueueItem): string { return QueuePresentation.health(item, Date.parse(this.snapshot().serverTime), this.snapshot().host); }
   public role(role: string): string { return ROLE_OPTIONS.find((entry) => entry.value === role)?.label ?? role; }
-  public currentRole(item: QueueItem): string { return this.role(item.pipeline.at(item.stage)?.role ?? ''); }
+  public currentRole(item: QueueItem): string { return item.status === RunStatus.Integrating ? 'Интеграция' : item.phase === 'waiting-slot' ? 'Ожидание слота' : this.role(item.pipeline.at(item.stage)?.role ?? ''); }
   public duration(at: string | undefined): string { return at ? `${Math.max(0, Math.floor((Date.parse(this.snapshot().serverTime) - Date.parse(at)) / 1000))} с` : 'нет данных'; }
   public progress(text: string): string { return RunProgressText.format(text); }
   public select(id: string): void { this.selectedId.set(id); this.error.set(''); }

@@ -4,6 +4,7 @@ import os from 'node:os';
 import net from 'node:net';
 import { RuntimeCoordinator, type RuntimeLease } from './runtime-coordinator.js';
 import { TaskEnvironment } from '../runners/task-environment.js';
+import { RunWorkspace } from './run-workspace.js';
 
 /** Per-run mutable state and an OS-probed, host-coordinated application port. */
 export class TaskRuntime {
@@ -12,7 +13,7 @@ export class TaskRuntime {
   public close(): void { this.lease.release(); this.coordinator.close(); }
   public static async create(cwd: string, signal: AbortSignal): Promise<TaskRuntime> {
     const temporary = path.join(cwd, '.sat', 'tmp'); const cache = path.join(cwd, '.sat', 'cache');
-    await fs.mkdir(temporary, { recursive: true }); await fs.mkdir(cache, { recursive: true });
+    await RunWorkspace.localDirectory(cwd, '.sat/tmp'); await RunWorkspace.localDirectory(cwd, '.sat/cache');
     const coordinator = new RuntimeCoordinator(path.join(os.tmpdir(), 'simple-ai-tracker-runtime', 'ports.sqlite'));
     try {
       for (let attempt = 0; attempt < 32; attempt++) {

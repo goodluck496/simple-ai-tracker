@@ -94,7 +94,9 @@ export const DEFAULT_AUTOMATION_SETTINGS: AutomationSettings = {
 export const DEFAULT_CHECK_COMMAND: CheckCommand = { command: 'npm', args: ['test'] };
 export const DEFAULT_SETUP_COMMAND: CheckCommand = { command: 'npm', args: ['ci'] };
 export interface AgentRun {
-  checkout?: { repositoryRoot: string; worktreePath: string; baseSha: string; dependencyMode: 'isolated' | 'linked'; dependencyKey?: string };
+  integrationSourceSha?: string;
+  mergeReviewRequired?: boolean;
+  checkout?: { repositoryRoot: string; worktreePath: string; baseSha: string; dependencyMode: 'isolated' | 'linked'; dependencyKey?: string; dependencyNote?: string };
   integration?: IntegrationInfo;
   mergeMessage?: string;
   budgetElapsedMs?: number;

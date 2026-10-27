@@ -11,19 +11,24 @@ import { DEFAULT_AUTOMATION_SETTINGS } from '../../../../shared/automation/contr
 import { PipelineWorker } from './pipeline-worker.js';
 import { gitFixture } from './testing/git-fixture.js';
 
-test('parallel pipelines keep independent worktrees, meter one conflict resolver and squash both tasks into master', async () => {
-  const f = await gitFixture(); const app = createContainer({ config: { dbPath: ':memory:' }, logger: new SilentLogger() });
+test('parallel pipelines across workspaces isolate identical task IDs and squash both results into one repository', async () => {
+  const f = await gitFixture(); const appRoot = path.join(f.root, 'tracker');
+  const app = createContainer({ config: { appRoot, dbPath: path.join(appRoot, 'data', 'tracker.db') }, logger: new SilentLogger() });
   try {
-    app.automationService.configure({ ...DEFAULT_AUTOMATION_SETTINGS, repositoryPath: f.repository, baseBranch: 'master', mergePolicy: 'local',
-      connections: [{ id: 'fixture', label: 'Fixture', kind: 'native', supportsImages: false }],
-      agents: (['developer', 'tester', 'reviewer'] as const).map(role => ({ id: role, role, runner: 'custom', connectionId: 'fixture', model: 'fixture',
+    const settings = { ...DEFAULT_AUTOMATION_SETTINGS, repositoryPath: f.repository, baseBranch: 'master', mergePolicy: 'local' as const,
+      connections: [{ id: 'fixture', label: 'Fixture', kind: 'native' as const, supportsImages: false }],
+      agents: (['developer', 'tester', 'reviewer'] as const).map(role => ({ id: role, role, runner: 'custom' as const, connectionId: 'fixture', model: 'fixture',
         instructions: '', command: process.execPath, args: [] })), pipeline: ['developer', 'tester', 'reviewer'],
-      checks: [{ command: process.execPath, args: ['-e', "require('node:assert').ok(Number(require('node:fs').readFileSync('a.txt','utf8'))>0)"] }] });
-    const tasks = [app.taskService.createTask({ title: 'First addition' }), app.taskService.createTask({ title: 'Second addition' })];
-    const runs = tasks.map(task => {
+      checks: [{ command: process.execPath, args: ['-e', "require('node:assert').ok(Number(require('node:fs').readFileSync('a.txt','utf8'))>0)"] }] };
+    app.workspaceManager.create('other', 'Other');
+    const spaces = ['default', 'other'];
+    const prepared = spaces.map((space, index) => app.workspaceManager.within(space, () => {
+      app.automationService.configure(settings);
+      const task = app.taskService.createTask({ title: index ? 'Second addition' : 'First addition' });
       app.taskService.attachPlan({ id: task.id, planContent: '# Fixture\nCombine changes without losing either task.', actor: 'agent' });
-      return app.automationService.enqueue(task.id);
-    });
+      return { task, run: app.automationService.enqueue(task.id) };
+    }));
+    assert.equal(prepared[0].task.id, prepared[1].task.id);
     let developers = 0; let resolvers = 0; let release!: () => void;
     const both = new Promise<void>(resolve => { release = resolve; });
     class Fixtures extends AgentRunnerRegistry {
@@ -32,7 +37,7 @@ test('parallel pipelines keep independent worktrees, meter one conflict resolver
         if (job.prompt.startsWith('Resolve only')) { resolvers++; await writeFile(path.join(job.cwd, 'a.txt'), '5\n'); }
         else if (job.profile.role === 'developer') {
           if (++developers === 2) release(); await both;
-          await writeFile(path.join(job.cwd, 'a.txt'), taskId === tasks[0].id ? '2\n' : '3\n');
+          await writeFile(path.join(job.cwd, 'a.txt'), job.prompt.includes('First addition') ? '2\n' : '3\n');
         }
         const usage = { inputTokens: 10, outputTokens: 1, source: 'codex-json' as const, reportedRequests: 1, missingRequests: 0 };
         job.onUsage?.(usage);
@@ -41,18 +46,18 @@ test('parallel pipelines keep independent worktrees, meter one conflict resolver
       } }; }
     }
     const registry = new TrackerToolRegistry(app);
-    const channel = { async call<T>(name: string, args = {}): Promise<T> {
-      const result = await registry.call(name, args); const text = result.content.filter(c => c.type === 'text').map(c => c.type === 'text' ? c.text : '').join('');
+    const channel = (workspace: string) => ({ workspace, async call<T>(name: string, args = {}): Promise<T> {
+      const result = await registry.call(name, { ...args, workspace }); const text = result.content.filter(c => c.type === 'text').map(c => c.type === 'text' ? c.text : '').join('');
       if (result.isError) throw new Error(text); return JSON.parse(text) as T;
-    } };
-    await Promise.all([new PipelineWorker(channel, 'one', f.executor, new Fixtures()).tick(), new PipelineWorker(channel, 'two', f.executor, new Fixtures()).tick()]);
-    const final = runs.map(run => app.automationService.detail(run.id).run);
+    } });
+    await Promise.all([new PipelineWorker(channel('default'), 'one', f.executor, new Fixtures()).tick(), new PipelineWorker(channel('other'), 'two', f.executor, new Fixtures()).tick()]);
+    const final = prepared.map(({ run }, index) => app.workspaceManager.within(spaces[index], () => app.automationService.detail(run.id).run));
     assert.ok(final.every(run => run.status === 'merged'), JSON.stringify(final.map(run => ({ status: run.status, summary: run.summary }))));
     assert.equal(resolvers, 1); assert.equal(developers, 2);
     assert.notEqual(final[0].checkout!.worktreePath, final[1].checkout!.worktreePath);
     assert.equal(final.flatMap(run => run.usageAttempts ?? []).filter(a => a.kind === 'resolver').length, 1);
     assert.equal((await f.git(['rev-list', '--count', 'master'])).trim(), '3');
     assert.equal(await readFile(path.join(f.repository, 'a.txt'), 'utf8'), '5\n');
-    assert.ok(tasks.every(task => app.taskService.getTaskCard(task.id).status === 'review'));
+    assert.ok(prepared.every(({ task }, index) => app.workspaceManager.within(spaces[index], () => app.taskService.getTaskCard(task.id).status === 'review')));
   } finally { app.close(); await f.dispose(); }
 });

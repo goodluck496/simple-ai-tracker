@@ -18,10 +18,11 @@
             <strong>{{ item.taskId }} · {{ item.title }}</strong><span>{{ statusTitles[item.status] }} @if (item.queuePosition) { · место {{ item.queuePosition }} }</span>
             <span>Этап {{ item.stage < item.pipeline.length ? item.stage + 1 : item.pipeline.length }} / {{ item.pipeline.length }} · {{ currentRole(item) }}</span>
             @if (item.tokenUsage; as usage) { <span>{{ tokenMeter.label(usage) }}</span> }
-            <small>{{ progress(item.status === runStatus.Running ? item.lastMessage || health(item) : item.summary || item.lastMessage || health(item)) }}</small>
+            <small>{{ item.integration ? integrationTitles[item.integration.state] : progress(item.status === runStatus.Running ? item.lastMessage || health(item) : item.summary || item.lastMessage || health(item)) }}</small>
           </button>
           @if (item.status === runStatus.Queued) { <button type="button" class="dequeue-action" [disabled]="busy()" (click)="dequeue(item)">Убрать из очереди</button> }
-          @if (item.status === runStatus.Failed || item.status === runStatus.Cancelled || item.status === runStatus.Interrupted || item.status === runStatus.Review || item.status === runStatus.Merged) { <button type="button" [disabled]="busy()" (click)="hide(item)">Скрыть из списка</button> }
+          @if (item.status === runStatus.Running || item.status === runStatus.Waiting || item.status === runStatus.Integrating) { <button type="button" [disabled]="busy() || item.integration?.state === 'publishing'" (click)="action(item, runAction.Cancel)">Остановить</button> }
+          @if (item.status === runStatus.Failed || item.status === runStatus.Cancelled || item.status === runStatus.Interrupted || item.status === runStatus.MergeBlocked || item.status === runStatus.Review || item.status === runStatus.Merged) { <button type="button" [disabled]="busy()" (click)="hide(item)">Скрыть из списка</button> }
         } @empty { <p class="muted">{{ search() ? 'Нет совпадений' : 'Нет запусков' }}</p> }
         </div>
       </section>
@@ -31,15 +32,30 @@
     <article class="run-detail" aria-label="Детали запуска">
       <h3>{{ item.taskId }} · {{ item.title }}</h3><p>{{ statusTitles[item.status] }} · карточка: {{ taskTitles[item.taskStatus] }}</p>
       <p class="identifier">ID: {{ item.id }} @if (item.restartedFromId) { · повтор запуска {{ item.restartedFromId }} }</p>
+      @if (item.checkout; as checkout) {
+        <p class="identifier">Worktree: {{ checkout.worktreePath }} · base {{ checkout.baseSha }}</p>
+        <p>Зависимости: {{ checkout.dependencyMode }} @if (checkout.dependencyNote) { · {{ checkout.dependencyNote }} }</p>
+      }
+      @if (item.integration; as integration) {
+        <section aria-label="Интеграция" class="integration-info">
+          <h4>{{ integrationTitles[integration.state] }} · {{ integration.targetBranch }}</h4>
+          <p class="identifier">Source: {{ integration.sourceSha }} · target base: {{ integration.baseSha }} · squash: {{ integration.candidateSha || 'ещё не создан' }}</p>
+          <p class="identifier">Кандидат: {{ integration.worktreePath }} · попытка {{ integration.attempt }}</p>
+          @if (integration.error) { <p class="error">{{ integration.error }}</p> }
+          @if (integration.noChanges) { <p>Отличий от целевой ветки нет; пустой коммит не создавался.</p> }
+          <p class="muted">Локальная интеграция; ветка задачи и журнал сохранены. Публикация в remote не выполнялась.</p>
+        </section>
+      }
+      @if (item.integrationSourceSha) { <p class="muted">Повторяется только интеграция проверенного исходника {{ item.integrationSourceSha }}. Конвейер разработки не вызывается заново; resolver учитывается отдельно.</p> }
       <p role="status">{{ health(item) }}</p>
       <div class="facts"><span>Фаза: {{ item.phase ? phaseTitles[item.phase] : 'Ожидание worker' }}</span><span>Фаза длится: {{ duration(item.phaseStartedAt) }}</span>
         <span>Попытка длится: {{ duration(item.attemptStartedAt) }} · лимит {{ item.timeoutMinutes }} мин</span>
         <span>Последний heartbeat: {{ (item.heartbeatAt | date:'mediumTime') || 'ещё не было' }}</span><span>Последнее событие: {{ (item.progressAt | date:'mediumTime') || 'ещё не было' }}</span>
         <span>Возвратов на исправление: {{ item.revision }}</span><span class="identifier">Ветка: {{ item.branch || 'ещё не создана' }}</span></div>
-      <ol class="stages">@for (stage of item.pipeline; track $index; let i = $index) {
+      @if (!item.integrationSourceSha) { <ol class="stages">@for (stage of item.pipeline; track $index; let i = $index) {
         <li [class.current]="i === item.stage"><strong>{{ role(stage.role) }}</strong> · {{ stage.runner }} / {{ stage.model }}
           <span>{{ i < item.stage ? 'Пройден' : i === item.stage ? statusTitles[item.status] : 'Ожидает' }}</span></li>
-      }</ol>
+      }</ol> }
       @if (item.summary) { <p class="summary">{{ progress(item.summary) }}</p> }
       @if (detail()?.run?.id === item.id) {
         @let attempts = detail()?.run?.usageAttempts || [];
@@ -53,7 +69,7 @@
           <p-table [value]="attempts" [scrollable]="true" scrollHeight="18rem" styleClass="p-datatable-sm">
             <ng-template #header><tr><th>Этап / попытка</th><th>Исполнитель / модель</th><th>Вход</th><th>Выход</th><th>Кэш: чтение / запись</th><th>Reasoning</th><th>Данные</th></tr></ng-template>
             <ng-template #body let-attempt><tr>
-              <td>{{ attempt.stage + 1 }} · {{ role(attempt.role) }}<small>{{ attempt.startedAt | date:'mediumTime' }} · цикл {{ attempt.revision + 1 }}</small></td>
+              <td>{{ attempt.kind === 'resolver' ? 'Конфликт' : attempt.stage + 1 }} · {{ role(attempt.role) }}<small>{{ attempt.startedAt | date:'mediumTime' }} · цикл {{ attempt.revision + 1 }}</small></td>
               <td>{{ attempt.runner }}<small>{{ attempt.model }}</small></td>
               <td>{{ attempt.usage ? (attempt.usage.inputTokens | number) : '—' }}</td><td>{{ attempt.usage ? (attempt.usage.outputTokens | number) : '—' }}</td>
               <td>{{ attempt.usage && attempt.usage.cachedInputTokens !== undefined ? (attempt.usage.cachedInputTokens | number) : '—' }} / {{ attempt.usage && attempt.usage.cacheWriteInputTokens !== undefined ? (attempt.usage.cacheWriteInputTokens | number) : '—' }}</td>
@@ -66,10 +82,10 @@
       }
       <div class="actions"><button type="button" (click)="openTask.emit(item.taskId)">Открыть задачу {{ item.openQuestions ? 'и ответить на вопросы' : '' }}</button>
         @if (item.status === runStatus.Queued) { <button type="button" class="dequeue-action" [disabled]="busy()" (click)="dequeue(item)">Убрать из очереди</button> }
-        @if (item.status === runStatus.Running || item.status === runStatus.Waiting) { <button type="button" [disabled]="busy()" (click)="action(item, runAction.Cancel)">Остановить</button> }
+        @if (item.status === runStatus.Running || item.status === runStatus.Waiting || item.status === runStatus.Integrating) { <button type="button" [disabled]="busy() || item.integration?.state === 'publishing'" (click)="action(item, runAction.Cancel)">Остановить</button> }
         @if (item.canResume) { <button type="button" [disabled]="busy()" (click)="action(item, runAction.Resume)">Продолжить с места остановки</button> }
-        @if (item.canRestart) { <button type="button" [disabled]="busy()" (click)="action(item, runAction.Restart)">Начать заново</button> }
-        @if (item.status === runStatus.Failed || item.status === runStatus.Cancelled || item.status === runStatus.Interrupted || item.status === runStatus.Review || item.status === runStatus.Merged) { <button type="button" [disabled]="busy()" (click)="hide(item)">Скрыть из списка</button> }
+        @if (item.canRestart) { <button type="button" [disabled]="busy()" (click)="action(item, runAction.Restart)">{{ item.stage >= item.pipeline.length ? 'Начать интеграцию заново' : 'Начать заново' }}</button> }
+        @if (item.status === runStatus.Failed || item.status === runStatus.Cancelled || item.status === runStatus.Interrupted || item.status === runStatus.MergeBlocked || item.status === runStatus.Review || item.status === runStatus.Merged) { <button type="button" [disabled]="busy()" (click)="hide(item)">Скрыть из списка</button> }
       </div>
       @if (item.actionReason) { <p class="muted">{{ item.actionReason }}</p> }
       @if (item.canResume || item.canRestart) { <p class="muted">Продолжение использует прежние настройки и рабочую ветку. «Начать заново» создаёт новый запуск и новую ветку от базовой ветки с сохранёнными настройками команды; старый журнал останется.</p> }

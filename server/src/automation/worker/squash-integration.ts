@@ -1,5 +1,6 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { createHash } from 'node:crypto';
 import type { IntegrationInfo } from '../../../../shared/automation/contracts.js';
 import { CommitMessage } from '../../../../shared/automation/commit-message.js';
 import { ProcessExecutor } from '../runners/process-executor.js';
@@ -11,6 +12,7 @@ export interface IntegrationJob {
   runId: string; taskId: string; repository: string; common: string; sourceSha: string;
   targetBranch: string; directory: string; message: string; contextKey: string; maxAttempts: number;
   signal: AbortSignal;
+  recoveryOnly?: boolean;
   prepare(cwd: string): Promise<void>;
   checks(cwd: string): Promise<void>;
   resolve(cwd: string, files: string[], baseSha: string): Promise<void>;
@@ -35,20 +37,33 @@ export class SquashIntegration {
     const git = (args: string[], cwd = job.repository) => this.executor.run({ command: 'git', args, cwd, signal: job.signal });
     const head = () => git(['rev-parse', '--verify', `refs/heads/${job.targetBranch}^{commit}`]).then(s => s.trim());
     const receiptFile = path.join(job.common, 'sat-runtime', 'integrations', `${job.runId}.json`);
+    const sourceFile = path.join(job.common, 'sat-runtime', 'integrations', 'by-source', createHash('sha256').update(`${job.targetBranch}\0${job.sourceSha}`).digest('hex') + '.json');
     let receipt: Receipt | undefined;
     try { receipt = JSON.parse(await fs.readFile(receiptFile, 'utf8')) as Receipt; }
     catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
-    const write = async (value: Receipt) => { receipt = value; await RunWorkspace.atomic(receiptFile, value); await job.record(value); };
+    const write = async (value: Receipt) => {
+      receipt = value; await RunWorkspace.atomic(receiptFile, value);
+      if (value.checked && !value.noChanges) await RunWorkspace.atomic(sourceFile, value);
+      await job.record(value);
+    };
     const ancestor = async (sha: string, target: string) => {
       try { await git(['merge-base', '--is-ancestor', sha, target]); return true; }
       catch (error) { if (String(error).includes('failed (1)')) return false; throw error; }
     };
+    let previous: Receipt | undefined;
+    try { previous = JSON.parse(await fs.readFile(sourceFile, 'utf8')) as Receipt; }
+    catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
+    if (previous?.checked && previous.candidateSha && await ancestor(previous.candidateSha, await head())) {
+      if (previous.contextKey !== job.contextKey) throw new Error('This source was already published under different requirements; inspect the task rather than applying it twice.');
+      await job.authorize(); await write({ ...previous, attempt: receipt?.attempt ?? 1, state: 'publishing' }); return receipt!;
+    }
     if (receipt && (receipt.sourceSha !== job.sourceSha || receipt.contextKey !== job.contextKey || receipt.targetBranch !== job.targetBranch))
       throw new Error('Integration receipt belongs to different source/requirements; preserve it and inspect the run.');
     if (receipt?.checked && receipt.candidateSha && await ancestor(receipt.candidateSha, await head())) {
       // Crash after Git publication but before tracker acknowledgement: do not squash twice.
       await job.authorize(); await write({ ...receipt, state: 'publishing' }); return receipt;
     }
+    if (job.recoveryOnly) throw new Error('Budget exhausted: no published receipt can be acknowledged without executing more work. Restart integration explicitly for a new budget.');
     for (let attempt = receipt?.attempt ?? 1; attempt <= job.maxAttempts; attempt++) {
       job.signal.throwIfAborted(); await job.authorize();
       const base = await head();
@@ -93,10 +108,15 @@ export class SquashIntegration {
           if (unstaged.some(file => !conflicts.includes(file)) || before !== await outsideIndex()
             || (await git(['ls-files', '--others', '--exclude-standard'], cwd)).trim()) throw new Error('Resolver changed files outside the conflict set.');
           await git(['add', '--', ...conflicts.map(file => `:(literal)${file}`)], cwd);
+          await git(['diff', '--cached', '--check', '--', ...conflicts.map(file => `:(literal)${file}`)], cwd);
         }
         if ((await git(['ls-files', '--unmerged'], cwd)).trim()) throw new Error('Unresolved merge entries remain.');
         const changed = (await git(['diff', '--cached', '--name-only'], cwd)).trim();
-        if (changed) await git(['commit', '-m', CommitMessage.validate(job.message, job.taskId)], cwd);
+        if (changed) {
+          const message = CommitMessage.validate(job.message, job.taskId);
+          await git(['commit', '-m', message], cwd);
+          if ((await git(['log', '-1', '--format=%s'], cwd)).trim() !== message) throw new Error('Git hook changed the validated squash subject.');
+        }
         await write({ ...receipt!, state: 'checking', candidateSha: (await git(['rev-parse', 'HEAD'], cwd)).trim(), noChanges: !changed });
       }
       if (!receipt!.checked) {
@@ -114,7 +134,10 @@ export class SquashIntegration {
       await write({ ...receipt!, state: 'publishing' });
       await job.authorize();
       if (await head() !== base) throw new Error('Target HEAD changed before publication; resume integration against the new base.');
-      await git(['merge', '--ff-only', receipt!.candidateSha!]);
+      // Once authorized, let Git finish its checkout/ref transaction instead of killing it mid-publication.
+      // There are no model calls here; the bounded critical section has its own shutdown deadline.
+      await this.executor.run({ command: 'git', args: ['merge', '--ff-only', '--no-overwrite-ignore', receipt!.candidateSha!],
+        cwd: job.repository, signal: AbortSignal.timeout(120000) });
       return receipt!;
     }
     throw new Error('Integration retry budget exhausted.');

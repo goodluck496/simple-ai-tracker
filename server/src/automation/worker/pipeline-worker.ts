@@ -8,7 +8,6 @@ import { AutomationTool } from '../../../../shared/automation/protocol.js';
 import { DEFAULT_ROLE_INSTRUCTIONS } from '../../../../shared/automation/team-profiles.js';
 import { RunPhase } from '../../../../shared/automation/queue.js';
 import type { TokenUsage } from '../../../../shared/automation/token-usage.js';
-import { WorktreePreparation } from './worktree-preparation.js';
 import { StageCheckpoint, type StageResult } from './stage-checkpoint.js';
 import { AgentHandoff } from '../../../../shared/automation/handoff.js';
 import { ProgressBuffer } from '../../../../shared/automation/progress-buffer.js';
@@ -21,6 +20,7 @@ import { ExecutionScope } from '../runners/execution-scope.js';
 import { SquashIntegration } from './squash-integration.js';
 import { MergeResolver } from './merge-resolver.js';
 import { TaskRuntime } from './task-runtime.js';
+import { RunPreparation } from './run-preparation.js';
 
 export class PipelineWorker {
   private activeController?: AbortController;
@@ -40,10 +40,16 @@ export class PipelineWorker {
     let coordinator: RuntimeCoordinator | undefined;
     const leases: RuntimeLease[] = [];
     let runtime: TaskRuntime | undefined;
+    let preparation: RunPreparation | undefined;
     let budgetError: string | undefined;
-    const remainingMs = RunBudget.limits(run).minutes * 60000 - RunBudget.elapsed(run, Date.now());
-    const timeout = setTimeout(() => { budgetError = 'Run stopped: execution time budget exhausted.'; controller.abort(); },
-      Math.max(0, Math.min(run.settings.timeoutMinutes * 60_000, remainingMs)));
+    const recoveryOnly = run.stage >= run.settings.pipeline.length && run.settings.mergePolicy === MergePolicy.Local && !!RunBudget.reason(run, Date.now());
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    const armBudget = () => {
+      const remainingMs = RunBudget.limits(run).minutes * 60000 - RunBudget.elapsed(run, Date.now());
+      timeout = setTimeout(() => { budgetError = 'Run stopped: execution time budget exhausted.'; controller.abort(); },
+        recoveryOnly ? 30000 : Math.max(0, Math.min(run.settings.timeoutMinutes * 60_000, remainingMs)));
+    };
+    if (recoveryOnly) armBudget();
     const pending = new ProgressBuffer(); let channelError: unknown;
     let heartbeatBusy = false;
     let metering: { attemptId: string; usage?: TokenUsage } | undefined;
@@ -58,31 +64,66 @@ export class PipelineWorker {
       return value;
     };
     const heartbeat = setInterval(() => {
-      if (heartbeatBusy || publishing) return;
+      if (heartbeatBusy) return;
       heartbeatBusy = true;
       void (async () => {
-        await this.channel.call(AutomationTool.Heartbeat, { id: run!.id, leaseToken: token });
+        await this.channel.call(AutomationTool.Heartbeat, { id: run!.id, leaseToken: token, phase: publishing ? 'publish' : recoveryOnly ? 'recovery' : undefined });
         if (metering?.usage) await reportUsage({ ...metering });
         if (pending.length) {
           const text = redact(pending.take());
           await this.channel.call(AutomationTool.Progress, { id: run!.id, leaseToken: token, text });
         }
-      })().catch((error: unknown) => { if (!finished) { channelError = error; controller.abort(); } }).finally(() => { heartbeatBusy = false; });
+      })().catch((error: unknown) => { if (!finished) { channelError = error; if (!publishing) controller.abort(); } }).finally(() => { heartbeatBusy = false; });
     }, AUTOMATION_TIMING.heartbeatMs);
     const progress = (text: string) => { pending.append(text); };
     const phase = async (value: RunPhase, text: string) => { await this.channel.call(AutomationTool.Progress, { id: run!.id, leaseToken: token, phase: value, text }); };
     try {
       await phase(RunPhase.Preparing, 'Создание или проверка отдельной рабочей ветки.');
       if (!path.isAbsolute(run.settings.repositoryPath)) throw new Error('Repository path must be absolute on the worker host.');
-      const location = await RunWorkspace.describe(run.settings.repositoryPath, run.id, process.env.SAT_WORKSPACE ?? 'default', this.executor, controller.signal);
+      const location = await RunWorkspace.describe(run.settings.repositoryPath, run.id, this.channel.workspace ?? process.env.SAT_WORKSPACE ?? 'default', this.executor, controller.signal);
       const { root: repository, common, directory: cwd, branch, git } = location;
       coordinator = new RuntimeCoordinator(path.join(common, 'sat-runtime', 'coordination.sqlite'));
       leases.push(await coordinator.acquire(`run:${run.id}`, controller.signal));
-      await phase(RunPhase.Preparing, 'Ожидание свободного слота проекта.');
-      leases.push(await coordinator.acquire(`slot:${run.id}`, controller.signal, run.settings.maxParallelRuns ?? 2));
+      await phase(RunPhase.WaitingSlot, 'Ожидание свободного слота проекта.');
+      if (!recoveryOnly) leases.push(await coordinator.acquire(`slot:${run.id}`, controller.signal, run.settings.maxParallelRuns ?? 2));
+      await phase(RunPhase.Preparing, 'Слот получен; подготовка рабочей ветки.');
+      if (!recoveryOnly) { run = await this.channel.call<AgentRun>(AutomationTool.Heartbeat, { id: run.id, leaseToken: token }); armBudget(); }
       const execution = { env: undefined as NodeJS.ProcessEnv | undefined,
-        child: (pid: number, active: boolean) => { for (const lease of leases) lease.child(pid, active); runtime?.child(pid, active); } };
+        child: (pid: number, active: boolean) => { for (const lease of leases) lease.child(pid, active); runtime?.child(pid, active); preparation?.child(pid, active); } };
       await ExecutionScope.run(execution, async () => {
+      const integrate = async (recoveryOnly: boolean) => {
+        if (!recoveryOnly && (await git(['rev-parse', 'HEAD'], cwd)).trim() !== run!.commitSha) throw new Error('Source branch changed after review.');
+        const pack = await this.channel.call<Record<string, unknown>>('tracker_get_task', { id: run!.taskId, commentsLimit: 0 });
+        const context = { id: pack.id, title: pack.title, description: pack.description, plan: pack.plan, questions: pack.questions, relations: pack.relations, comments: [] };
+        const resolver = new MergeResolver(this.executor, async (profile, prompt, directory, signal, maxTools) => {
+          const started = await this.channel.call<{ attemptId: string }>(AutomationTool.BeginStage, { id: run!.id, leaseToken: token, phase: 'resolver' });
+          metering = { attemptId: started.attemptId };
+          let complete = false;
+          try {
+            const connection = run!.settings.connections.find(c => c.id === profile.connectionId)!;
+            const result = await this.registry.get(profile.runner).run({ runId: run!.id, cwd: directory, profile, connection,
+              prompt, settings: run!.settings, signal, maxToolCalls: maxTools,
+              onUsage: usage => { if (metering) metering = { ...metering, usage }; } }, progress);
+            if (result.usage && metering) metering = { ...metering, usage: result.usage };
+            const outcome = this.parseOutcome(result.text); outcome.summary = redact(outcome.summary);
+            if (outcome.verdict === AgentVerdict.Questions && outcome.questions?.length) await this.channel.call('tracker_ask_questions', { id: run!.taskId, questions: outcome.questions, phase: 'testing' });
+            complete = true; return outcome;
+          } finally { if (metering) { const sample = metering; metering = undefined; await reportUsage(sample, complete); } }
+        });
+        await new SquashIntegration(this.executor).run({ runId: run!.id, taskId: run!.taskId, repository, common,
+          sourceSha: run!.commitSha!, targetBranch: run!.settings.baseBranch, directory: cwd,
+          message: run!.mergeMessage ?? '', contextKey: StageCheckpoint.key(context), maxAttempts: run!.settings.maxMergeAttempts ?? 2,
+          signal: controller.signal, recoveryOnly,
+          authorize: async () => { run = await this.channel.call<AgentRun>(AutomationTool.Heartbeat, { id: run!.id, leaseToken: token, phase: recoveryOnly ? 'recovery' : undefined }); },
+          record: async info => { publishing = info.state === 'publishing'; await this.channel.call(AutomationTool.Integration, { id: run!.id, leaseToken: token, result: info }); },
+          prepare: async directory => { await preparation!.prepare(directory, controller.signal, progress); },
+          checks: async directory => { for (const check of run!.settings.checks) await this.executor.run({ ...check, cwd: directory,
+            env: TaskEnvironment.create(), signal: controller.signal, onProgress: progress }); },
+          resolve: (directory, files, base) => resolver.resolve(run!, context, directory, files, base, controller.signal),
+        });
+        await this.channel.call(AutomationTool.Merged, { id: run!.id, leaseToken: token });
+      };
+      if (recoveryOnly) { await integrate(true); return; }
       let newCheckout = false;
       try { await fs.access(cwd); }
       catch {
@@ -90,7 +131,7 @@ export class PipelineWorker {
         if (run!.settings.mergePolicy === MergePolicy.Local && (await git(['branch', '--show-current'])).trim() !== run!.settings.baseBranch)
           throw new Error('Target branch must be checked out before automatic integration.');
         await fs.mkdir(path.dirname(cwd), { recursive: true });
-        await git(['worktree', 'add', '-b', branch, cwd, run!.settings.baseBranch]);
+        await git(['worktree', 'add', '-b', branch, cwd, run!.integrationSourceSha ?? run!.settings.baseBranch]);
         newCheckout = true;
       }
       if ((await git(['branch', '--show-current'], cwd)).trim() !== branch) throw new Error('Worktree branch does not match run.');
@@ -107,9 +148,18 @@ export class PipelineWorker {
       await this.channel.call(AutomationTool.Checkout, { id: run!.id, leaseToken: token,
         result: { repositoryRoot: repository, worktreePath: cwd, baseSha, dependencyMode: 'isolated' } });
       await phase(RunPhase.Setup, 'Проверка и подготовка зависимостей worktree до запуска агента.');
-      await new WorktreePreparation(this.executor).prepare(cwd, run.settings.setup, controller.signal, progress);
+      preparation = new RunPreparation(this.executor, common, run.settings);
+      const prepareSource = async () => {
+        const dependency = await preparation!.prepare(cwd, controller.signal, progress);
+        run.checkout = { repositoryRoot: repository, worktreePath: cwd, baseSha, dependencyMode: dependency.mode,
+          dependencyKey: dependency.key, dependencyNote: dependency.note };
+        await this.channel.call(AutomationTool.Checkout, { id: run.id, leaseToken: token, result: run.checkout });
+      };
+      if (run.status === RunStatus.Running) await prepareSource();
+      let prepared = true;
       while (run.status === RunStatus.Running && run.stage < run.settings.pipeline.length) {
         controller.signal.throwIfAborted();
+        if (!prepared) await prepareSource(); prepared = false;
         const profileId = run.settings.pipeline[run.stage];
         const profile = run.settings.agents.find((agent) => agent.id === profileId)!;
         const connection = run.settings.connections.find((entry) => entry.id === profile.connectionId)!;
@@ -129,7 +179,7 @@ export class PipelineWorker {
         if (run.commitSha && priorSha !== run.commitSha && !saved) throw new Error('Worktree HEAD changed after checkpoint; inspect it before resuming.');
         const priorStatus = await git(['status', '--porcelain', '--', '.', ':!.sat'], cwd);
         const diff = await git(['diff', `${run.settings.baseBranch}...HEAD`, '--', '.', ':!.sat'], cwd);
-        const prompt = this.prompt(profile.role, profile.instructions, context, run.summary, diff.slice(-60000), run.settings.artifactPaths, run.settings.checks);
+        const prompt = this.prompt(profile.role, profile.instructions, context, run.summary, diff.slice(-60000), run.settings.artifactPaths, run.settings.checks, run.checkout);
         let outcome: AgentOutcome;
         if (saved) {
           outcome = this.parseOutcome(JSON.stringify(saved.outcome));
@@ -177,9 +227,12 @@ export class PipelineWorker {
           // Runtime is ignored through info/exclude. An explicit ignored .sat pathspec can make git add fail.
           await git(['add', '-A', '--', '.'], cwd);
           await checkpoint.save(saved);
+          const staged = (await git(['diff', '--cached', '--name-only', '-z'], cwd)).split('\0').filter(Boolean);
+          if (staged.some(file => /(^|\/)(?:node_modules|\.sat)(?:\/|$)/.test(file))) throw new Error('Generated dependencies/runtime must not be committed. Fix ignore rules before resuming.');
           if ((await git(['diff', '--cached', '--name-only'], cwd)).trim()) {
             const message = CommitMessage.validate(outcome.commitMessage, run.taskId);
             await git(['commit', '-m', message], cwd);
+            if ((await git(['log', '-1', '--format=%s'], cwd)).trim() !== message) throw new Error('Git hook changed the validated commit subject; inspect the source branch.');
           }
           await checkpoint.save(saved);
         }
@@ -200,38 +253,7 @@ export class PipelineWorker {
         if (pending.length) { await this.channel.call(AutomationTool.Progress, { id: run.id, leaseToken: token, text: redact(pending.take()) }); }
         run = await this.channel.call<AgentRun>(AutomationTool.CompleteStage, { id: run.id, leaseToken: token, outcome, branch, commitSha: sha });
       }
-      if (run!.status === RunStatus.Integrating) {
-        if ((await git(['rev-parse', 'HEAD'], cwd)).trim() !== run!.commitSha) throw new Error('Source branch changed after review.');
-        const pack = await this.channel.call<Record<string, unknown>>('tracker_get_task', { id: run!.taskId, commentsLimit: 0 });
-        const context = { id: pack.id, title: pack.title, description: pack.description, plan: pack.plan, questions: pack.questions, relations: pack.relations, comments: [] };
-        const resolver = new MergeResolver(this.executor, async (profile, prompt, directory, signal, maxTools) => {
-          const started = await this.channel.call<{ attemptId: string }>(AutomationTool.BeginStage, { id: run!.id, leaseToken: token, phase: 'resolver' });
-          metering = { attemptId: started.attemptId };
-          let complete = false;
-          try {
-            const connection = run!.settings.connections.find(c => c.id === profile.connectionId)!;
-            const result = await this.registry.get(profile.runner).run({ runId: run!.id, cwd: directory, profile, connection,
-              prompt, settings: run!.settings, signal, maxToolCalls: maxTools,
-              onUsage: usage => { if (metering) metering = { ...metering, usage }; } }, progress);
-            if (result.usage && metering) metering = { ...metering, usage: result.usage };
-            const outcome = this.parseOutcome(result.text); outcome.summary = redact(outcome.summary);
-            if (outcome.verdict === AgentVerdict.Questions && outcome.questions?.length) await this.channel.call('tracker_ask_questions', { id: run!.taskId, questions: outcome.questions, phase: 'testing' });
-            complete = true; return outcome;
-          } finally { if (metering) { const sample = metering; metering = undefined; await reportUsage(sample, complete); } }
-        });
-        await new SquashIntegration(this.executor).run({ runId: run!.id, taskId: run!.taskId, repository, common,
-          sourceSha: run!.commitSha!, targetBranch: run!.settings.baseBranch, directory: cwd,
-          message: run!.mergeMessage ?? '', contextKey: StageCheckpoint.key(context), maxAttempts: run!.settings.maxMergeAttempts ?? 2,
-          signal: controller.signal,
-          authorize: async () => { run = await this.channel.call<AgentRun>(AutomationTool.Heartbeat, { id: run!.id, leaseToken: token }); },
-          record: async info => { publishing = info.state === 'publishing'; await this.channel.call(AutomationTool.Integration, { id: run!.id, leaseToken: token, result: info }); },
-          prepare: directory => new WorktreePreparation(this.executor).prepare(directory, run!.settings.setup, controller.signal, progress),
-          checks: async directory => { for (const check of run!.settings.checks) await this.executor.run({ ...check, cwd: directory,
-            env: TaskEnvironment.create(), signal: controller.signal, onProgress: progress }); },
-          resolve: (directory, files, base) => resolver.resolve(run!, context, directory, files, base, controller.signal),
-        });
-        await this.channel.call(AutomationTool.Merged, { id: run!.id, leaseToken: token });
-      }
+      if (run.status === RunStatus.Integrating) await integrate(false);
       });
       finished = true;
     } catch (error) {
@@ -245,6 +267,7 @@ export class PipelineWorker {
       clearTimeout(timeout); clearInterval(heartbeat);
       for (const lease of leases.reverse()) lease.release();
       runtime?.close();
+      preparation?.close();
       coordinator?.close();
     }
     return true;
@@ -256,7 +279,7 @@ export class PipelineWorker {
     if (!AGENT_VERDICTS.includes(result.verdict) || typeof result.summary !== 'string') throw new Error('Agent must return a valid JSON verdict.');
     return result;
   }
-  private prompt(role: AgentRole, instructions: string, context: unknown, feedback: string, diff: string, artifacts: string[], checks: unknown): string {
+  private prompt(role: AgentRole, instructions: string, context: unknown, feedback: string, diff: string, artifacts: string[], checks: unknown, checkout?: AgentRun['checkout']): string {
     const roleInstructions: Record<AgentRole, string> = {
       [AgentRole.Analyst]: 'Produce an implementation plan for the requested change. Missing implementation and failing pre-change checks are expected, not review findings. If requirements are clear, return pass with a nonempty markdown plan. Otherwise return questions. Never return changes_requested.',
       [AgentRole.Developer]: 'Implement the accepted plan by editing project files. Include the necessary tests. Return pass only after implementing the requested behavior.',
@@ -267,12 +290,13 @@ export class PipelineWorker {
     };
     return `You are the ${role}. ${instructions.trim() || DEFAULT_ROLE_INSTRUCTIONS[role]}\nRead repository AGENTS.md and applicable instructions before work.\n`
       + `${roleInstructions[role]}\n`
-      + `Tracker workspace: ${process.env.SAT_WORKSPACE ?? 'default'}. The worker supplies the current task context via MCP. If you consult tracker tools, always pass this explicit workspace. Do not change tracker data yourself.\n`
+      + `Tracker workspace: ${this.channel.workspace ?? process.env.SAT_WORKSPACE ?? 'default'}. The worker supplies the current task context via MCP. If you consult tracker tools, always pass this explicit workspace. Do not change tracker data yourself.\n`
       + `${AgentHandoff.instructions}\nTask context:\n${AgentHandoff.task(context)}\nPrevious feedback:\n${AgentHandoff.feedback(feedback)}\nChanges:\n${AgentHandoff.diff(diff)}\n`
       + `Configured checks: ${JSON.stringify(checks)}\nVisual artifacts: ${JSON.stringify(artifacts)}\n`
       + `Only developer/designer may edit files. Do not change branches, commit, merge, publish or alter tracker data directly; the worker handles commits. `
       + `When developer/designer changes files, include commitMessage in the JSON result. Exact format: "[#${(context as { id: string }).id}] - описание на русском, что сделано и для чего". Use an explicit purpose clause (для/чтобы/ради), one line, up to ${CommitMessage.maxLength} characters. Technical names may stay in English. A generic role/stage label is forbidden. Worker rejects invalid messages without recalling the model. `
       + `The worker prepared dependencies before this invocation. Reuse that environment; only change/install dependencies when required by the task's manifest changes. Do not repeatedly reinstall packages for an unchanged infrastructure failure. `
+      + `Dependency mode: ${checkout?.dependencyMode ?? 'isolated'}. Managed linked packages are readonly: never run npm install/ci/rebuild on links. If changing manifests, return the source changes; worker detaches and installs private dependencies before the next role. Use the assigned PORT and temporary directories. Do not start unmanaged background processes or use live databases. `
       + `For visual validation inspect the actual artifacts; if absent return questions. `
       + `Return ONLY one JSON object, for example {"verdict":"pass","summary":"evidence and findings","questions":[],"plan":"markdown plan for analyst"}. Allowed verdicts are pass, changes_requested, questions, blocked. Return blocked for unavailable tools, permissions, infrastructure or environment failures; do not request code revisions to bypass them. `
       + `Analyst must include plan on pass. Do not claim checks passed without evidence. Never mark a task done.`;

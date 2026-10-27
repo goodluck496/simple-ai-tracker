@@ -63,11 +63,22 @@
     <label>Входных токенов (включая кеш) <input pInputText type="number" [(ngModel)]="settings.maxInputTokens" min="1" max="100000000" /></label>
     <p>Лимиты общие для запуска и сохраняются при продолжении. Токены ограничиваются по отчётам провайдера: возможен перерасход до следующего отчёта; при отсутствии данных действуют лимиты времени и вызовов.</p>
     <label>Слияние <p-select [options]="mergePolicies" [(ngModel)]="settings.mergePolicy" /></label>
+    <label>Параллельных задач <input pInputText type="number" [(ngModel)]="settings.maxParallelRuns" min="1" max="8" /></label>
+    <label>Зависимости <p-select [options]="dependencyModes" [(ngModel)]="settings.dependencyMode" /></label>
+    @if (settings.mergePolicy === 'local') {
+      <label><input type="checkbox" [(ngModel)]="settings.resolveConflicts" /> Автоматически разрешать конфликты</label>
+      <label>Попыток интеграции <input pInputText type="number" [(ngModel)]="settings.maxMergeAttempts" min="1" max="3" /></label>
+      <label>Вызовов resolver <input pInputText type="number" [(ngModel)]="settings.maxResolverCalls" min="0" max="3" /></label>
+      <label>Минут на resolver <input pInputText type="number" [(ngModel)]="settings.resolverTimeoutMinutes" min="1" max="10" /></label>
+      <label>Инструментов resolver <input pInputText type="number" [(ngModel)]="settings.maxResolverToolCalls" min="1" max="40" /></label>
+    }
   </div>
   <div class="row"><label class="grow">Новая ветка от выбранной <input pInputText [(ngModel)]="newBranch" placeholder="feature/my-project" /></label>
     <p-button label="Создать ветку" severity="secondary" [disabled]="projectBusy || !host.online || !branchOptions.length || !newBranch" (onClick)="createBranch()" /></div>
   <p class="hint">Новая ветка создаётся от выбранной без checkout. Для каждой задачи worker создаёт отдельную рабочую ветку sat/… от этой базы.</p>
-  <p class="hint">manual — принять вручную; local — fast-forward в выбранную базовую ветку. Для local она должна быть открыта (checkout) в исходной папке на worker, без незакоммиченных изменений. Создание новой ветки само не делает checkout. Карточку закрывает пользователь.</p>
+  <p class="hint">manual — локальная ветка для ручной проверки; local — один squash-коммит на задачу после проверок объединённого результата. Слияния одного репозитория выполняются последовательно. Целевая ветка должна быть открыта в исходной папке и чистой. Ветка задачи сохраняется, карточку закрывает пользователь.</p>
+  <p class="hint">linked — пакеты из управляемого readonly кеша через junction/symlink; .bin и .cache отдельные для worktree. При несовместимом проекте используются isolated зависимости. Пользовательский node_modules не изменяется. Число параллельных слотов host worker обновляется при его следующем подключении.</p>
+  <p class="hint">Resolver входит в общий бюджет. Для Codex/model-api ограничены шаги; неподдерживаемый runner блокирует автоматическое разрешение. Начатая публикация Git завершается перед остановкой worker; во время неё нет новых вызовов модели. Push и публикация MR автоматически не выполняются.</p>
   <h4>Подготовка рабочей папки</h4>
   <p class="hint">Один раз перед первым этапом: обычно установка зависимостей. Нажмите тег, чтобы включить или убрать команду. Для проекта с package-lock.json выберите npm ci.</p>
   <div class="chips">@for (preset of setupPresets; track preset.id) { <button type="button" class="chip" [class.selected]="commandSelected(preset.value, true)" [attr.aria-pressed]="commandSelected(preset.value, true)" [title]="preset.description" (click)="toggleCommand(preset.value, true)">{{ preset.label }}</button> }</div>

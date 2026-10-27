@@ -1,11 +1,11 @@
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 
-export interface TrackerChannel { call<T>(name: string, args?: Record<string, unknown>): Promise<T>; }
+export interface TrackerChannel { readonly workspace?: string; call<T>(name: string, args?: Record<string, unknown>): Promise<T>; }
 
 export class McpTrackerChannel implements TrackerChannel {
   private readonly client = new Client({ name: 'simple-ai-tracker-worker', version: '1.0.0' });
-  public constructor(private readonly workspace: string) {}
+  public constructor(public readonly workspace: string) {}
   public async connect(): Promise<void> {
     const command = process.env.SAT_MCP_COMMAND ?? process.execPath;
     const args: unknown = JSON.parse(process.env.SAT_MCP_ARGS ?? '["dist/server/mcp.mjs"]');

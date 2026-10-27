@@ -46,7 +46,7 @@ test('worker aborts on live usage or total active time, persists usage and prese
         const text = result.content.filter(c => c.type === 'text').map(c => c.type === 'text' ? c.text : '').join('');
         if (result.isError) throw new Error(text);
         const value = JSON.parse(text);
-        if (mode === 'time' && name.endsWith('claim') && value) value.budgetElapsedMs = 20 * 60000 - 5000;
+        if (mode === 'time' && (name.endsWith('claim') || name.endsWith('heartbeat')) && value) value.budgetElapsedMs = 20 * 60000 - 5000;
         return value as T;
       } }, 'budget-fixture', executor, new FixtureRunners());
       await worker.tick();

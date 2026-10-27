@@ -57,7 +57,8 @@ export class AutomationService {
         || !['isolated', 'linked'].includes(value.dependencyMode)) throw new TrackerError('VALIDATION_FAILED', 'Invalid checkout metadata.');
       if (run.checkout && (run.checkout.baseSha !== value.baseSha || run.checkout.repositoryRoot !== value.repositoryRoot || run.checkout.worktreePath !== value.worktreePath)) throw new TrackerError('CONFLICT', 'Checkout identity changed.');
       this.runs.save({ ...run, checkout: { repositoryRoot: value.repositoryRoot, worktreePath: value.worktreePath,
-        baseSha: value.baseSha, dependencyMode: value.dependencyMode, dependencyKey: typeof value.dependencyKey === 'string' ? value.dependencyKey.slice(0, 128) : undefined } });
+        baseSha: value.baseSha, dependencyMode: value.dependencyMode, dependencyKey: typeof value.dependencyKey === 'string' ? value.dependencyKey.slice(0, 128) : undefined,
+        dependencyNote: typeof value.dependencyNote === 'string' ? value.dependencyNote.slice(0, 500) : undefined } });
     });
   }
   public integration(id: string, token: string, input: unknown): void {
@@ -84,8 +85,11 @@ export class AutomationService {
     return this.runs.db.transaction(() => {
       const task = this.tasks.getTaskCard(taskId);
       if (task.openQuestionsCount || task.status === TaskStatus.Done) throw new TrackerError('CONFLICT', 'Resolve task questions before starting automation.');
-      if (!AUTOMATION_START_TASK_STATUSES.includes(task.status) && !(previous && (task.status === TaskStatus.InProgress || task.status === TaskStatus.Testing))) throw new TrackerError('CONFLICT', 'Start a new run from backlog, planning or ready; resume an existing run for work already in progress.');
+      const integrationRestart = previous && previous.stage >= previous.settings.pipeline.length && previous.settings.mergePolicy === MergePolicy.Local;
+      if (!AUTOMATION_START_TASK_STATUSES.includes(task.status) && !(previous && (task.status === TaskStatus.InProgress || task.status === TaskStatus.Testing || (integrationRestart && task.status === TaskStatus.Review)))) throw new TrackerError('CONFLICT', 'Start a new run from backlog, planning or ready; resume an existing run for work already in progress.');
       const settings = new AutomationSettingsValidator().validate(draft === undefined ? this.settings() : draft);
+      if (integrationRestart && (settings.repositoryPath.replace(/\\/g, '/') !== previous.settings.repositoryPath.replace(/\\/g, '/')
+        || settings.baseBranch !== previous.settings.baseBranch || settings.mergePolicy !== MergePolicy.Local)) throw new TrackerError('CONFLICT', 'Integration restart must keep the source repository, target branch and local merge policy.');
       if (!settings.repositoryPath || !settings.pipeline.length || !settings.checks.length) throw new TrackerError('VALIDATION_FAILED', 'Configure repository, pipeline and real check commands first.');
       const roles = settings.pipeline.map((id) => settings.agents.find((agent) => agent.id === id)!.role);
       const developer = roles.indexOf(AgentRole.Developer);
@@ -104,6 +108,10 @@ export class AutomationService {
       const run: AgentRun = { id: randomUUID(), taskId, status: RunStatus.Queued, stage: 0, revision: 0,
         workerId: null, leaseToken: null, leaseUntil: null, settings, createdAt: now, updatedAt: now,
         branch: null, commitSha: null, summary: '', restartedFromId: previous?.id, usageAttempts: [] };
+      if (integrationRestart) {
+        run.stage = settings.pipeline.length; run.integrationSourceSha = previous.commitSha!;
+        run.commitSha = previous.commitSha; run.mergeMessage = previous.mergeMessage;
+      }
       this.runs.save(run);
       this.runs.event(run.id, RunStatus.Queued, 'Run queued with an immutable settings snapshot.', now);
       if (draft !== undefined && persistSettings) this.repos.meta.set(SETTINGS_KEY, JSON.stringify(settings));
@@ -137,7 +145,7 @@ export class AutomationService {
           pipeline: run.settings.pipeline.map((id) => { const agent = run.settings.agents.find((a) => a.id === id)!; return { role: agent.role, runner: agent.runner, model: agent.model }; }),
           phase: run.phase, phaseStartedAt: run.phaseStartedAt, heartbeatAt: run.heartbeatAt ?? (run.leaseUntil ? new Date(Date.parse(run.leaseUntil) - LEASE_MS).toISOString() : undefined),
           progressAt: run.progressAt, lastMessage: run.lastMessage ?? '', createdAt: run.createdAt, updatedAt: run.updatedAt, summary: run.summary,
-          workerId: run.workerId, branch: run.branch, checkout: run.checkout, integration: run.integration, restartedFromId: run.restartedFromId, openQuestions: task.openQuestionsCount,
+          workerId: run.workerId, branch: run.branch, checkout: run.checkout, integration: run.integration, integrationSourceSha: run.integrationSourceSha, restartedFromId: run.restartedFromId, openQuestions: task.openQuestionsCount,
           attemptStartedAt: run.attemptStartedAt, timeoutMinutes: run.settings.timeoutMinutes, tokenUsage: TokenMeter.summary(run.usageAttempts, run.usageIncomplete),
           queuePosition: run.status === RunStatus.Queued ? queued.findIndex((r) => r.id === run.id) + 1 : undefined,
           canResume: resumable && !actionReason, canRestart: RESUMABLE_RUN_STATUSES.includes(run.status) && !actionReason, actionReason };
@@ -152,19 +160,28 @@ export class AutomationService {
       this.expireLeases();
       const run = this.runs.nextQueued();
       if (!run) return null;
-      const claimed: AgentRun = { ...run, status: run.stage >= run.settings.pipeline.length && run.settings.mergePolicy === MergePolicy.Local ? RunStatus.Integrating : RunStatus.Running, workerId, leaseToken: randomUUID(),
+      let mergeReviewRequired = run.mergeReviewRequired;
+      if (run.stage >= run.settings.pipeline.length && run.settings.mergePolicy === MergePolicy.Local) {
+        const task = this.tasks.getTaskCard(run.taskId);
+        if (!task.openQuestionsCount && task.status === TaskStatus.Ready) {
+          this.tasks.setStatus({ id: run.taskId, status: TaskStatus.InProgress, actor: 'agent' });
+          this.tasks.setStatus({ id: run.taskId, status: TaskStatus.Testing, actor: 'agent' }); mergeReviewRequired = true;
+        }
+      }
+      const claimed: AgentRun = { ...run, mergeReviewRequired, status: run.stage >= run.settings.pipeline.length && run.settings.mergePolicy === MergePolicy.Local ? RunStatus.Integrating : RunStatus.Running, workerId, leaseToken: randomUUID(),
         leaseUntil: new Date(new Date(now).getTime() + LEASE_MS).toISOString(), updatedAt: now, heartbeatAt: now, phase: RunPhase.Preparing,
         phaseStartedAt: now, attemptStartedAt: now, budgetUpdatedAt: now, progressAt: undefined, lastMessage: '' };
       this.runs.save(claimed);
       return claimed;
     });
   }
-  public heartbeat(id: string, token: string): AgentRun {
+  public heartbeat(id: string, token: string, recovery = false, publication = false): AgentRun {
     return this.runs.db.transaction(() => {
     const run = this.owned(id, token);
     const now = this.clock.now();
     const reason = RunBudget.reason(run, Date.parse(now));
-    if (reason) throw new TrackerError('CONFLICT', reason);
+    if (reason && !(run.status === RunStatus.Integrating && ((recovery && run.stage >= run.settings.pipeline.length)
+      || (publication && run.integration?.state === 'publishing')))) throw new TrackerError('CONFLICT', reason);
     const updated = { ...run, budgetElapsedMs: RunBudget.elapsed(run, Date.parse(now)), budgetUpdatedAt: now,
       updatedAt: now, heartbeatAt: now, leaseUntil: new Date(new Date(now).getTime() + LEASE_MS).toISOString() };
     this.runs.save(updated);
@@ -179,7 +196,8 @@ export class AutomationService {
     const now = this.clock.now();
     if (phase && !RUN_PHASES.includes(phase)) throw new TrackerError('VALIDATION_FAILED', 'Unknown execution phase.');
     const message = RunProgressText.format(text);
-    this.runs.save({ ...run, updatedAt: now, progressAt: now, lastMessage: message || run.lastMessage,
+    this.runs.save({ ...run, budgetElapsedMs: RunBudget.elapsed(run, Date.parse(now)), budgetUpdatedAt: now,
+      updatedAt: now, progressAt: now, lastMessage: message || run.lastMessage,
       phase: phase ?? run.phase, phaseStartedAt: phase && phase !== run.phase ? now : run.phaseStartedAt });
     this.runs.event(id, phase ? 'phase' : 'progress', text, now);
     });
@@ -312,9 +330,9 @@ export class AutomationService {
     return this.runs.db.transaction(() => {
     const run = this.requireRun(id);
     if (!RESUMABLE_RUN_STATUSES.includes(run.status)) throw new TrackerError('CONFLICT', 'Run cannot be resumed.');
-    const budgetReason = RunBudget.reason(run, Date.parse(this.clock.now()));
-    if (budgetReason) throw new TrackerError('CONFLICT', `${budgetReason} Start a separate new run explicitly.`);
     const mergeOnly = run.stage >= run.settings.pipeline.length && run.settings.mergePolicy === MergePolicy.Local;
+    const budgetReason = RunBudget.reason(run, Date.parse(this.clock.now()));
+    if (budgetReason && !mergeOnly) throw new TrackerError('CONFLICT', `${budgetReason} Start a separate new run explicitly.`);
     if (run.stage >= run.settings.pipeline.length && !mergeOnly) throw new TrackerError('CONFLICT', 'All stages finished; resolve the merge manually.');
     const task = this.tasks.getTaskCard(run.taskId);
     if (task.openQuestionsCount) throw new TrackerError('CONFLICT', 'Answer task questions first.');
@@ -333,7 +351,10 @@ export class AutomationService {
   private owned(id: string, token: string): AgentRun {
     const run = this.requireRun(id);
     if (![RunStatus.Running, RunStatus.Integrating].includes(run.status as 'running' | 'integrating') || !token || token !== run.leaseToken || !run.leaseUntil || run.leaseUntil < this.clock.now()) throw new TrackerError('CONFLICT', 'Run lease is missing, expired or cancelled.');
-    if (run.status === RunStatus.Integrating && this.tasks.getTaskCard(run.taskId).status !== TaskStatus.Review) throw new TrackerError('CONFLICT', 'Task changed during integration; inspect its requirements before merging.');
+    if (run.status === RunStatus.Integrating) {
+      const status = this.tasks.getTaskCard(run.taskId).status;
+      if (status !== TaskStatus.Review && !(run.mergeReviewRequired && status === TaskStatus.Testing)) throw new TrackerError('CONFLICT', 'Task changed during integration; inspect its requirements before merging.');
+    }
     return run;
   }
   public merged(id: string, token: string): void {
@@ -341,8 +362,12 @@ export class AutomationService {
     const run = this.requireRun(id);
     this.owned(id, token);
     if (run.status !== RunStatus.Integrating || run.integration?.state !== 'publishing') throw new TrackerError('CONFLICT', 'Merge publication is not owned by this worker.');
-    this.runs.save({ ...run, integration: { ...run.integration, state: 'merged' }, status: RunStatus.Merged, leaseToken: null, updatedAt: this.clock.now() });
-    this.tasks.addComment({ id: run.taskId, text: `[AUTOMATION MERGED] ${run.branch} at ${run.commitSha}. Task remains in review for user acceptance.`, actor: 'agent' });
+    if (run.mergeReviewRequired) this.tasks.setStatus({ id: run.taskId, status: TaskStatus.Review, actor: 'agent' });
+    this.runs.save({ ...run, budgetElapsedMs: RunBudget.elapsed(run, Date.parse(this.clock.now())), budgetUpdatedAt: this.clock.now(),
+      integration: { ...run.integration, state: 'merged' }, status: RunStatus.Merged, leaseToken: null, updatedAt: this.clock.now() });
+    const evidence = `${run.branch}@${run.commitSha} -> ${run.integration.targetBranch}@${run.integration.candidateSha}`;
+    this.runs.event(id, 'merged', evidence, this.clock.now());
+    this.tasks.addComment({ id: run.taskId, text: `[AUTOMATION MERGED] ${evidence}. Task remains in review for user acceptance.`, actor: 'agent' });
     });
   }
   private publicRun(run: AgentRun): AgentRun { return { ...run, leaseToken: null }; }
@@ -351,6 +376,7 @@ export class AutomationService {
     for (const run of this.runs.running()) {
       if ((run.status === RunStatus.Running || run.status === RunStatus.Integrating) && run.leaseUntil && run.leaseUntil < now) {
         this.runs.save({ ...run, budgetElapsedMs: RunBudget.elapsed(run, Date.parse(run.leaseUntil)), budgetUpdatedAt: now,
+          integration: run.integration ? { ...run.integration, state: 'blocked', error: 'Worker lease expired; verify its process before resuming.' } : undefined,
           status: run.status === RunStatus.Integrating ? RunStatus.MergeBlocked : RunStatus.Interrupted, leaseToken: null, updatedAt: now, summary: 'Worker lease expired. Resume explicitly after checking its process.' });
         this.runs.event(run.id, RunStatus.Interrupted, 'Worker lease expired; no automatic duplicate execution.', now);
       }
