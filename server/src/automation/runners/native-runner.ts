@@ -5,6 +5,7 @@ import { ProcessExecutor } from './process-executor.js';
 import { NativeUsageStream, UsageParser } from './usage-parser.js';
 import { AGENT_TRACKER_READ_TOOLS, AGENT_TRACKER_SERVER } from '../../../../shared/automation/tracker-access.js';
 import { TaskEnvironment } from './task-environment.js';
+import { AGENT_OUTCOME_SCHEMA } from '../../../../shared/automation/outcome-schema.js';
 
 interface Envelope { type?: string; is_error?: boolean; result?: string; response?: string; status?: string; session_id?: string; conversation_id?: string; item?: { type?: string; text?: string }; part?: { type?: string; text?: string }; }
 const NATIVE_SUCCESS_STATUSES = new Set(['SUCCESS', 'success']);
@@ -19,8 +20,10 @@ export class NativeAgentRunner implements AgentRunner {
     const brief = 'Read .sat/instructions.md and execute that task. Return only the requested JSON outcome.';
     let command = ''; let args: string[] = []; let stdin: string | undefined;
     const model = job.profile.model;
+    const schemaPath = path.join(promptDir, 'outcome-schema.json');
+    if (this.id === RunnerId.Codex) await fs.writeFile(schemaPath, JSON.stringify(AGENT_OUTCOME_SCHEMA), 'utf8');
     switch (this.id) {
-      case RunnerId.Codex: command = RunnerId.Codex; args = ['exec', '--json', '--sandbox', 'workspace-write', '--model', model,
+      case RunnerId.Codex: command = RunnerId.Codex; args = ['exec', '--json', '--output-schema', schemaPath, '--sandbox', 'workspace-write', '--model', model,
         '-c', `mcp_servers.${AGENT_TRACKER_SERVER}.enabled_tools=${JSON.stringify(AGENT_TRACKER_READ_TOOLS)}`,
         '-c', `mcp_servers.${AGENT_TRACKER_SERVER}.default_tools_approval_mode="auto"`, '-']; stdin = job.prompt; break;
       case RunnerId.ClaudeCode: command = 'claude'; args = ['-p', '--output-format', 'json', '--model', model]; stdin = job.prompt; break;
@@ -37,6 +40,29 @@ export class NativeAgentRunner implements AgentRunner {
         break;
       }
       default: throw new Error(`Not a native runner: ${this.id}`);
+    }
+    if (this.id === RunnerId.Codex) {
+      // Task context is already supplied by the worker. Do not inherit unrelated
+      // account-wide servers (and their large tool descriptions) in every role.
+      const inventory = await this.executor.run({ command, args: ['mcp', 'list', '--json'], cwd: job.cwd,
+        env: TaskEnvironment.create(), signal: job.signal, maxOutputChars: 100000 });
+      let servers: { name: string; enabled?: boolean; transport?: { type?: string; command?: string; url?: string } }[];
+      try {
+        const parsed: unknown = JSON.parse(inventory);
+        if (!Array.isArray(parsed) || parsed.some(server => !server || typeof server.name !== 'string' || !/^[\w-]+$/.test(server.name))) throw new Error();
+        servers = parsed;
+      } catch { throw new Error('Cannot inspect Codex MCP configuration; refusing an uncontrolled nested-agent context.'); }
+      let indexed = false;
+      try { indexed = (await fs.stat(path.join(job.cwd, '.codegraph'))).isDirectory(); }
+      catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
+      // Retain the repository's required code navigation only when it is indexed.
+      for (const server of servers) if (server.enabled !== false && (server.name !== 'codegraph' || !indexed)) {
+        // Desktop-injected servers may not exist in config.toml. An enabled-only
+        // override would create a transport-less entry and make Codex refuse startup.
+        if (server.transport?.type === 'stdio' && server.transport.command) args.push('-c', `mcp_servers.${server.name}.command=${JSON.stringify(server.transport.command)}`);
+        if (server.transport?.type === 'streamable_http' && server.transport.url) args.push('-c', `mcp_servers.${server.name}.url=${JSON.stringify(server.transport.url)}`);
+        args.push('-c', `mcp_servers.${server.name}.enabled=false`);
+      }
     }
     if (this.id !== RunnerId.Custom) args.push(...(job.profile.args ?? []));
     const limitController = new AbortController();

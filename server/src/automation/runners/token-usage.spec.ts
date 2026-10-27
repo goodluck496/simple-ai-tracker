@@ -38,6 +38,7 @@ test('stdout usage survives chunks and log-tail truncation, including a failing 
   class Fixture extends ProcessExecutor {
     public fail = false;
     public override async run(request: ProcessRequest): Promise<string> {
+      if (request.args[0] === 'mcp') return '[]';
       const output = `${codex}\n${'noise'.repeat(100000)}\n${codex}`;
       for (let i = 0; i < output.length; i += 37) request.onStdout?.(output.slice(i, i + 37));
       request.onProgress?.(codex); // stderr/progress is not another token report.

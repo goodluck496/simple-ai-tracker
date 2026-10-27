@@ -35,7 +35,7 @@ export class MergeResolver {
       }
       descriptions.push({ file, base_1: parts['1'], target_2: parts['2'], task_3: parts['3'] });
     }
-    const prompt = `Resolve only these conflicted files in this integration worktree. Preserve both task requirements and current target behavior. Never choose ours/theirs mechanically. Do not edit other files, stage, commit, change branches, install packages, push, or access live data. If intent is ambiguous return blocked or questions. Return JSON {"verdict":"pass|blocked|questions","summary":"brief evidence","questions":[]}.\n`
+    const prompt = `Resolve only these conflicted files in this integration worktree. Preserve both task requirements and current target behavior. Never choose ours/theirs mechanically. Do not edit other files, stage, commit, change branches, install packages, push, or access live data. Do not create acceptance.log, reports, or any other new file outside .sat. The worker runs checks after resolution: do not redirect command output into project files. If intent is ambiguous return blocked or questions. Return JSON {"verdict":"pass|blocked|questions","summary":"brief evidence","questions":[],"plan":"","commitMessage":""}.\n`
       + `${AgentHandoff.instructions}\nTask context:\n${AgentHandoff.task(context)}\nConflicts (base/target/task):\n${JSON.stringify(descriptions)}`;
     const priorHead = (await git(['rev-parse', 'HEAD'])).trim();
     const priorStatus = await git(['status', '--porcelain']);

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { mkdtemp, writeFile, rm } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile, readFile, rm } from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
 import { NativeAgentRunner } from './native-runner.js';
@@ -13,7 +13,13 @@ test('native adapters preserve model, prompt and native result/error envelopes',
   class FixtureExecutor extends ProcessExecutor {
     public request?: ProcessRequest;
     public output = '';
-    public override async run(request: ProcessRequest): Promise<string> { this.request = request; return this.output; }
+    public override async run(request: ProcessRequest): Promise<string> {
+      if (request.command === 'codex' && request.args[0] === 'mcp') return JSON.stringify([{ name: 'simple-ai-tracker' },
+        { name: 'blender', transport: { type: 'stdio', command: 'fixture-desktop-bridge' } }, { name: 'codegraph' },
+        { name: 'http_fixture', transport: { type: 'streamable_http', url: 'https://example.invalid/mcp' } },
+        { name: 'disabled_virtual', enabled: false }]);
+      this.request = request; return this.output;
+    }
   }
   const executor = new FixtureExecutor();
   try {
@@ -36,13 +42,32 @@ test('native adapters preserve model, prompt and native result/error envelopes',
       assert.equal(executor.request!.env?.SAT_DB_PATH, undefined);
       if (runner === 'codex' || runner === 'claude-code') assert.equal(executor.request!.stdin, job.prompt);
       if (runner === 'codex') {
+        const argv = executor.request!.args;
+        const schemaPath = argv[argv.indexOf('--output-schema') + 1];
+        assert.equal(schemaPath, path.join(cwd, '.sat', 'outcome-schema.json'));
+        const schema = JSON.parse(await readFile(schemaPath, 'utf8'));
+        assert.ok(schema.required.includes('commitMessage'));
+        assert.equal(schema.properties.commitMessage.type, 'string');
+        assert.equal(schema.additionalProperties, false);
         const args = executor.request!.args.join(' ');
         assert.match(args, /enabled_tools=.*tracker_get_task/);
         assert.match(args, /default_tools_approval_mode="auto"/);
+        assert.match(args, /mcp_servers.blender.enabled=false/);
+        assert.ok(argv.includes('mcp_servers.blender.command="fixture-desktop-bridge"'));
+        assert.ok(argv.includes('mcp_servers.http_fixture.url="https://example.invalid/mcp"'));
+        assert.ok(argv.includes('mcp_servers.http_fixture.enabled=false'));
+        assert.match(args, /mcp_servers.simple-ai-tracker.enabled=false/);
+        assert.match(args, /mcp_servers.codegraph.enabled=false/);
+        assert.equal(args.includes('mcp_servers.disabled_virtual'), false);
         assert.equal(args.includes('danger-full-access'), false);
         assert.equal(args.includes('bypass'), false);
       }
     }
+    await mkdir(path.join(cwd, '.codegraph'));
+    executor.output = JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: 'indexed-answer' } });
+    await new NativeAgentRunner('codex', executor).run({ cwd, prompt: 'Indexed repository', profile: { model: 'm' }, signal: AbortSignal.timeout(5000) } as AgentJob, () => undefined);
+    assert.equal(executor.request!.args.includes('mcp_servers.codegraph.enabled=false'), false);
+    assert.ok(executor.request!.args.includes('mcp_servers.blender.enabled=false'));
     executor.output = '{"is_error":true,"result":"auth failed"}';
     await assert.rejects(new NativeAgentRunner('claude-code', executor).run({ cwd, prompt: 'Test error envelope', profile: { model: 'm' }, signal: AbortSignal.timeout(5000) } as AgentJob, () => undefined), /failed/);
   } finally { await rm(cwd, { recursive: true, force: true }); }
