@@ -64,7 +64,7 @@ test('queue exposes all active runs, phases, heartbeat, human progress and linke
     app.automationService.progress(run.id, run.leaseToken!, JSON.stringify({ type: 'item.completed', item: { type: 'command_execution', command: 'npm test', exit_code: 0, aggregated_output: 'PRIVATE_SOURCE_SENTINEL' } }), RunPhase.Checks);
     const item = app.automationService.queue().items.find((entry) => entry.id === run.id)!;
     assert.equal(item.taskStatus, 'planning'); assert.equal(item.phase, RunPhase.Checks);
-    assert.equal(item.lastMessage, 'Команда завершена: exit 0.'); assert.ok(item.heartbeatAt); assert.ok(item.progressAt);
+    assert.equal(item.lastMessage, 'Команда: npm test → exit 0.'); assert.ok(item.heartbeatAt); assert.ok(item.progressAt);
     assert.equal('leaseToken' in item, false); assert.equal('settings' in item, false);
     assert.equal(QueuePresentation.lane(item), QueueLane.Running);
     assert.match(QueuePresentation.health(item, Date.now(), { online: true }), /на связи/);

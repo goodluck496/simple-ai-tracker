@@ -46,3 +46,14 @@ test('compact subprocess progress retains only result or relevant failure trace'
   assert.doesNotMatch(lines.join(''), /PRIVATE_SOURCE_SENTINEL/); assert.match(lines.join(''), /at fixture/);
   assert.deepEqual(CompactProgress.record({ type: 'item.updated', item: { text: 'PRIVATE_SOURCE_SENTINEL' } }), []);
 });
+
+test('compact progress identifies commands and MCP tools without copying payloads', () => {
+  assert.deepEqual(CompactProgress.record({ type: 'item.started', item: { type: 'mcp_tool_call', server: 'codegraph', tool: 'codegraph_explore', arguments: { code: 'PRIVATE_SOURCE_SENTINEL' } } }), ['MCP codegraph/codegraph_explore: вызов.']);
+  assert.deepEqual(CompactProgress.record({ type: 'item.completed', item: { type: 'mcp_tool_call', server: 'simple-ai-tracker', tool: 'tracker_get_task', status: 'completed', result: 'PRIVATE_SOURCE_SENTINEL' } }), ['MCP simple-ai-tracker/tracker_get_task: завершён.']);
+  assert.match(CompactProgress.record({ type: 'item.completed', item: { type: 'command_execution', command: 'npm.cmd test', exit_code: 0 } })[0], /npm.cmd test.*exit 0/);
+  assert.match(CompactProgress.command('powershell.exe -Command "Get-Content src/a.ts"'), /Get-Content src\/a.ts/);
+  assert.doesNotMatch(CompactProgress.command('node', ['-e', 'PRIVATE_SOURCE_SENTINEL']), /PRIVATE_SOURCE_SENTINEL/);
+  assert.doesNotMatch(CompactProgress.command('powershell.exe -Command "Set-Content a.ts PRIVATE_SOURCE_SENTINEL"'), /PRIVATE_SOURCE_SENTINEL/);
+  assert.match(CompactProgress.record({ type: 'item.completed', item: { type: 'mcp_tool_call', server: 'codegraph', tool: 'codegraph_explore', status: 'failed' } })[0], /ошибка/);
+  assert.deepEqual(CompactProgress.success('PRIVATE_SOURCE_SENTINEL\n✅ All 17 tests passed successfully\n'), ['Тесты: 17 пройдено.']);
+});

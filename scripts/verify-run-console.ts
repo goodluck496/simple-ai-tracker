@@ -41,8 +41,8 @@ try {
   service.progress(run.id, run.leaseToken!, payload.slice(0, 65));
   await consoleView.getByRole('status').filter({ hasText: 'часть структурированной записи' }).waitFor();
   service.progress(run.id, run.leaseToken!, payload.slice(65) + '\n');
-  await log.getByText('Команда завершена: exit 1.', { exact: true }).waitFor();
-  assert.equal(await log.getByText('Команда завершена: exit 1.', { exact: true }).count(), 1);
+  await log.getByText('Команда: npm test → exit 1.', { exact: true }).waitFor();
+  assert.equal(await log.getByText('Команда: npm test → exit 1.', { exact: true }).count(), 1);
   assert.ok(!(await log.innerText()).includes('PRIVATE_SOURCE_SENTINEL'));
   assert.equal(await log.locator('img').count(), 0);
   assert.ok(!(await log.innerText()).includes('item.completed'));

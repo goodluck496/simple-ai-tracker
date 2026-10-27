@@ -21,11 +21,11 @@ test('console reconstructs split JSONL, commands, cumulative output and exit cod
   const end = JSON.stringify({ type: 'item.completed', item: { id: 'c1', command: 'npm test', aggregated_output: '  первая\r\nошибка 😀\n', exit_code: 1 } });
   const events = [event(1, 'developer: fixture', 'stage'), event(2, command.slice(0, 30)), event(3, command.slice(30) + '\n' + output + '\n'), event(4, end)];
   const view = RunConsoleDecoder.render([...events, events[3]]);
-  assert.deepEqual(view.lines.slice(1).map((line) => line.text), ['Команда завершена: exit 1.', 'ошибка 😀']);
+  assert.deepEqual(view.lines.slice(1).map((line) => line.text), ['Выполняется: npm test', 'Команда: npm test → exit 1.', 'ошибка 😀']);
   assert.equal(view.lines.at(-1)?.level, 'error'); assert.equal(view.incomplete, false);
   assert.deepEqual(RunConsoleDecoder.render(events), view, 'polling replay is idempotent');
   const twoStages = RunConsoleDecoder.render([...events, event(5, 'tester: fixture', 'stage'), event(6, command)]);
-  assert.equal(twoStages.lines.filter((line) => line.text === 'Команда завершена: exit 1.').length, 1, 'Started/read events do not duplicate progress');
+  assert.equal(twoStages.lines.filter((line) => line.text === 'Команда: npm test → exit 1.').length, 1, 'Completed command is not duplicated');
 });
 test('console preserves ordinary partial lines, strips ANSI/OSC and exposes raw only outside readable text', () => {
   const events = [event(1, '\u001b[32mпри'), event(2, 'вет\u001b[0m\r\n\u001b]0;hidden\u0007warn: fixture\n')];
