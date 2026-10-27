@@ -28,7 +28,11 @@ function fixture() {
 test('integration keeps its lease, fences publication cancellation and acknowledges a verified SHA after the budget deadline', () => {
   const f = fixture();
   try {
+    assert.equal(f.run.startedAt, undefined);
+    assert.equal(f.service.detail(f.run.id).run.startedAt, '2026-10-27T00:00:00.000Z');
+    assert.equal(f.service.detail(f.run.id).run.finishedAt, undefined);
     f.finish(); assert.equal(f.service.detail(f.run.id).run.status, 'integrating');
+    assert.equal(f.service.detail(f.run.id).run.finishedAt, undefined);
     const info = { state: 'publishing' as const, sourceSha: 'a'.repeat(40), baseSha: 'b'.repeat(40), candidateSha: 'c'.repeat(40), targetBranch: 'master', worktreePath: '/fixture-integration', attempt: 1 };
     f.service.integration(f.run.id, f.token, info);
     assert.throws(() => f.service.cancel(f.run.id), /publication/);
@@ -38,6 +42,7 @@ test('integration keeps its lease, fences publication cancellation and acknowled
     assert.throws(() => f.service.beginStage(f.run.id, f.token, true), /budget/);
     f.service.merged(f.run.id, f.token);
     assert.equal(f.service.detail(f.run.id).run.status, 'merged');
+    assert.equal(f.service.detail(f.run.id).run.finishedAt, '2026-10-27T00:01:05.000Z');
     assert.ok(f.service.detail(f.run.id).run.summary.includes(info.candidateSha), 'Final summary must describe publication instead of a stale interruption');
     assert.equal(f.app.taskService.getTaskCard(f.task.id).status, 'review');
     assert.ok(f.service.detail(f.run.id).events.some(e => e.kind === 'merged' && e.text.includes(info.candidateSha)));
@@ -51,12 +56,17 @@ test('blocked merge resumes integration only, explicit restart preserves reviewe
     assert.throws(() => f.service.beginStage(f.run.id, f.token, true), /resolver call budget/);
     f.service.fail(f.run.id, f.token, 'resolver blocked');
     assert.equal(f.service.detail(f.run.id).run.status, 'merge_blocked');
+    assert.ok(f.service.detail(f.run.id).run.finishedAt);
     f.service.resume(f.run.id); const resumed = f.service.claim('second')!;
     assert.equal(resumed.status, 'integrating'); assert.equal(resumed.stage, 3);
+    assert.equal(resumed.startedAt, '2026-10-27T00:00:00.000Z');
+    assert.equal(resumed.finishedAt, undefined);
     assert.throws(() => f.service.beginStage(resumed.id, resumed.leaseToken!), /phase/);
     f.service.fail(resumed.id, resumed.leaseToken!, 'still blocked');
     const restarted = f.service.restart(resumed.id);
     assert.equal(restarted.integrationSourceSha, 'a'.repeat(40)); assert.equal(restarted.stage, 3);
+    assert.notEqual(restarted.id, resumed.id);
+    assert.equal(restarted.startedAt, undefined); assert.equal(restarted.finishedAt, undefined);
     assert.equal(restarted.usageAttempts!.length, 0); assert.equal(restarted.restartedFromId, f.run.id);
     assert.equal(f.service.claim('third')!.status, 'integrating');
   } finally { f.app.close(); }

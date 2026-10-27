@@ -64,12 +64,14 @@ test('queue exposes all active runs, phases, heartbeat, human progress and linke
     app.automationService.progress(run.id, run.leaseToken!, JSON.stringify({ type: 'item.completed', item: { type: 'command_execution', command: 'npm test', exit_code: 0, aggregated_output: 'PRIVATE_SOURCE_SENTINEL' } }), RunPhase.Checks);
     const item = app.automationService.queue().items.find((entry) => entry.id === run.id)!;
     assert.equal(item.taskStatus, 'planning'); assert.equal(item.phase, RunPhase.Checks);
+    assert.equal(item.startedAt, run.startedAt); assert.equal(item.attemptStartedAt, run.attemptStartedAt); assert.equal(item.finishedAt, undefined);
     assert.equal(item.lastMessage, 'Команда: npm test → exit 0.'); assert.ok(item.heartbeatAt); assert.ok(item.progressAt);
     assert.equal('leaseToken' in item, false); assert.equal('settings' in item, false);
     assert.equal(QueuePresentation.lane(item), QueueLane.Running);
     assert.match(QueuePresentation.health(item, Date.now(), { online: true }), /на связи/);
     app.automationService.fail(run.id, run.leaseToken!, 'MCP tool call requires approval, but approval policy is never');
     const failed = app.automationService.queue().items.find((entry) => entry.id === run.id)!;
+    assert.ok(failed.finishedAt); assert.equal(failed.updatedAt, failed.finishedAt);
     assert.equal(QueuePresentation.lane(failed), QueueLane.Attention); assert.ok(failed.canRestart);
     assert.match(QueuePresentation.health(failed, Date.now(), { online: true }), /requires approval/);
   } finally { app.close(); }
@@ -83,14 +85,17 @@ test('restart uses saved settings in a new immutable attempt, keeps old journal 
     assert.throws(() => service.restart(first.id), /Остановите/);
     service.beginStage(first.id, running.leaseToken!);
     service.fail(first.id, running.leaseToken!, 'invalid model');
+    assert.ok(service.detail(first.id).run.finishedAt);
     service.configure(settings('correct-model'));
     const second = service.restart(first.id);
     assert.notEqual(first.id, second.id); assert.equal(second.restartedFromId, first.id);
+    assert.equal(second.startedAt, undefined); assert.equal(second.finishedAt, undefined);
     assert.equal(second.settings.agents[0].model, 'correct-model'); assert.equal(second.stage, 0);
     assert.equal(service.detail(first.id).run.settings.agents[0].model, 'old-model');
     assert.ok(service.detail(first.id).events.some((event) => event.kind === 'restarted'));
     assert.throws(() => service.restart(first.id), /active run/);
     service.cancel(second.id);
+    assert.ok(service.detail(second.id).run.finishedAt);
     app.taskService.askQuestions({ id: task.id, questions: ['Need access?'], actor: 'agent' });
     assert.throws(() => service.restart(first.id), /вопросы/);
     assert.equal(service.queue().items.find((item) => item.id === first.id)?.canResume, false);

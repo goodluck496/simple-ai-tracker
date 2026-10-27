@@ -110,6 +110,8 @@ export interface AgentRun {
   usageAttempts?: import('./token-usage.js').UsageAttempt[];
   usageIncomplete?: boolean;
   attemptStartedAt?: string;
+  startedAt?: string;
+  finishedAt?: string;
   phase?: RunPhase;
   phaseStartedAt?: string;
   heartbeatAt?: string;

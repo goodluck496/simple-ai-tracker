@@ -29,8 +29,8 @@ export interface QueueItem {
   id: string; taskId: string; title: string; taskStatus: TaskStatus; status: RunStatus; stage: number; revision: number;
   pipeline: { role: AgentRole; runner: RunnerId; model: string }[];
   phase?: RunPhase; phaseStartedAt?: string; heartbeatAt?: string; progressAt?: string; lastMessage: string;
-  createdAt: string; updatedAt: string; summary: string; workerId: string | null; branch: string | null;
-  attemptStartedAt?: string; timeoutMinutes: number;
+  createdAt: string; startedAt?: string; attemptStartedAt?: string; finishedAt?: string; updatedAt: string;
+  summary: string; workerId: string | null; branch: string | null; timeoutMinutes: number;
   queuePosition?: number; openQuestions: number; canResume: boolean; canRestart: boolean; actionReason: string;
   restartedFromId?: string;
 }

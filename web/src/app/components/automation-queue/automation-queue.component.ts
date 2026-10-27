@@ -15,6 +15,7 @@ import { ROLE_OPTIONS } from '../../../../../shared/automation/presets';
 import { TASK_STATUS_TITLES } from '../../../../../shared/automation/task-readiness';
 import { WorkspaceService } from '../../services/workspace.service';
 import { filterQueueItems } from './queue-search';
+import { formatQueueDate, sortRunHistory } from './queue-dates';
 
 @Component({ selector: 'sat-automation-queue', standalone: true, imports: [DatePipe, DecimalPipe, RunConsoleComponent, TableModule, ButtonModule],
   changeDetection: ChangeDetectionStrategy.OnPush, templateUrl: './automation-queue.component.html', styleUrl: './automation-queue.component.scss' })
@@ -73,6 +74,8 @@ export class AutomationQueueComponent {
     ) : of(null)),
   ), { initialValue: null });
   public items(lane: QueueLane): QueueItem[] { return filterQueueItems(this.snapshot().items.filter((item) => QueuePresentation.lane(item) === lane), this.search()); }
+  public archivedItems(): AgentRun[] { return sortRunHistory(this.archived() ?? []); }
+  public timestamp(value: string | undefined): string { return formatQueueDate(value); }
   public total(lane: QueueLane): number { return this.snapshot().items.filter((item) => QueuePresentation.lane(item) === lane).length; }
   public clearSearch(): void { this.search.set(''); }
   public health(item: QueueItem): string { return QueuePresentation.health(item, Date.parse(this.snapshot().serverTime), this.snapshot().host); }

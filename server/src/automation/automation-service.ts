@@ -128,7 +128,10 @@ export class AutomationService {
       const previous = this.requireRun(id);
       if (!RESUMABLE_RUN_STATUSES.includes(previous.status)) throw new TrackerError('CONFLICT', 'Остановите текущий запуск перед повторным запуском.');
       if (this.tasks.getTaskCard(previous.taskId).openQuestionsCount) throw new TrackerError('CONFLICT', 'Сначала ответьте на вопросы в карточке задачи.');
-      if (previous.status === RunStatus.Waiting) this.runs.save({ ...previous, status: RunStatus.Cancelled, leaseToken: null, updatedAt: this.clock.now() });
+      if (previous.status === RunStatus.Waiting) {
+        const now = this.clock.now();
+        this.runs.save({ ...previous, status: RunStatus.Cancelled, leaseToken: null, updatedAt: now, finishedAt: now });
+      }
       const next = this.createRun(previous.taskId, this.settings(), previous);
       this.runs.event(previous.id, 'restarted', `Новый запуск с начала: ${next.id}. Используются сохранённые настройки команды.`, this.clock.now());
       return next;
@@ -150,9 +153,10 @@ export class AutomationService {
         return { id: run.id, taskId: run.taskId, title: task.title, taskStatus: task.status, status: run.status, stage: run.stage, revision: run.revision,
           pipeline: run.settings.pipeline.map((id) => { const agent = run.settings.agents.find((a) => a.id === id)!; return { role: agent.role, runner: agent.runner, model: agent.model }; }),
           phase: run.phase, phaseStartedAt: run.phaseStartedAt, heartbeatAt: run.heartbeatAt ?? (run.leaseUntil ? new Date(Date.parse(run.leaseUntil) - LEASE_MS).toISOString() : undefined),
-          progressAt: run.progressAt, lastMessage: run.lastMessage ?? '', createdAt: run.createdAt, updatedAt: run.updatedAt, summary: run.summary,
+          progressAt: run.progressAt, lastMessage: run.lastMessage ?? '', createdAt: run.createdAt, startedAt: run.startedAt,
+          attemptStartedAt: run.attemptStartedAt, finishedAt: run.finishedAt, updatedAt: run.updatedAt, summary: run.summary,
           workerId: run.workerId, branch: run.branch, checkout: run.checkout, integration: run.integration, integrationSourceSha: run.integrationSourceSha, restartedFromId: run.restartedFromId, openQuestions: task.openQuestionsCount,
-          attemptStartedAt: run.attemptStartedAt, timeoutMinutes: run.settings.timeoutMinutes, tokenUsage: TokenMeter.summary(run.usageAttempts, run.usageIncomplete),
+          timeoutMinutes: run.settings.timeoutMinutes, tokenUsage: TokenMeter.summary(run.usageAttempts, run.usageIncomplete),
           queuePosition: run.status === RunStatus.Queued ? queued.findIndex((r) => r.id === run.id) + 1 : undefined,
           canResume: resumable && !actionReason, canRestart: RESUMABLE_RUN_STATUSES.includes(run.status) && !actionReason, actionReason };
       });
@@ -175,7 +179,7 @@ export class AutomationService {
         }
       }
       const claimed: AgentRun = { ...run, mergeReviewRequired, status: run.stage >= run.settings.pipeline.length && run.settings.mergePolicy === MergePolicy.Local ? RunStatus.Integrating : RunStatus.Running, workerId, leaseToken: randomUUID(),
-        leaseUntil: new Date(new Date(now).getTime() + LEASE_MS).toISOString(), updatedAt: now, heartbeatAt: now, phase: RunPhase.Preparing,
+        leaseUntil: new Date(new Date(now).getTime() + LEASE_MS).toISOString(), startedAt: run.startedAt ?? now, updatedAt: now, heartbeatAt: now, phase: RunPhase.Preparing,
         phaseStartedAt: now, attemptStartedAt: now, budgetUpdatedAt: now, progressAt: undefined, lastMessage: '' };
       this.runs.save(claimed);
       return claimed;
@@ -327,6 +331,7 @@ export class AutomationService {
             leaseToken: run.settings.mergePolicy === MergePolicy.Local ? run.leaseToken : null };
         }
       }
+      if (updated.status === RunStatus.Failed || updated.status === RunStatus.Review) updated = { ...updated, finishedAt: now };
       this.runs.save(updated);
       this.runs.event(id, updated.status === RunStatus.Failed ? 'failed' : outcome.verdict, updated.summary, now);
       this.tasks.addComment({ id: taskId, text: `[AGENT ${profile.role}] ${outcome.summary}\nBranch: ${branch}\nCommit: ${commitSha}`, kind: 'note', actor: 'agent' });
@@ -340,7 +345,7 @@ export class AutomationService {
     const now = this.clock.now();
     this.runs.save({ ...run, budgetElapsedMs: RunBudget.elapsed(run, Date.parse(now)), budgetUpdatedAt: now,
       status: run.status === RunStatus.Integrating ? RunStatus.MergeBlocked : RunStatus.Failed,
-      integration: run.integration ? { ...run.integration, state: 'blocked', error: message } : undefined,
+      integration: run.integration ? { ...run.integration, state: 'blocked', error: message } : undefined, finishedAt: now,
       leaseToken: null, updatedAt: now, summary: message });
     this.runs.event(id, RunStatus.Failed, message, now);
     this.tasks.addComment({ id: run.taskId, text: `[AUTOMATION FAILED] ${message}`, actor: 'agent' });
@@ -351,9 +356,10 @@ export class AutomationService {
     const run = this.requireRun(id);
     if (!ACTIVE_RUN_STATUSES.includes(run.status)) throw new TrackerError('CONFLICT', 'Run is not active.');
     if (run.status === RunStatus.Integrating && run.integration?.state === 'publishing') throw new TrackerError('CONFLICT', 'Squash publication is already authorized; wait for its result before cancelling.');
-    this.runs.save({ ...run, budgetElapsedMs: RunBudget.elapsed(run, Date.parse(this.clock.now())), budgetUpdatedAt: this.clock.now(),
-      status: RunStatus.Cancelled, leaseToken: null, updatedAt: this.clock.now() });
-    this.runs.event(id, RunStatus.Cancelled, 'Остановлено пользователем. Worker отменит текущую операцию после проверки lease.', this.clock.now());
+    const now = this.clock.now();
+    this.runs.save({ ...run, budgetElapsedMs: RunBudget.elapsed(run, Date.parse(now)), budgetUpdatedAt: now,
+      status: RunStatus.Cancelled, leaseToken: null, updatedAt: now, finishedAt: now });
+    this.runs.event(id, RunStatus.Cancelled, 'Остановлено пользователем. Worker отменит текущую операцию после проверки lease.', now);
     });
   }
   public dequeue(id: string): void {
@@ -361,7 +367,7 @@ export class AutomationService {
       const run = this.requireRun(id);
       if (run.status !== RunStatus.Queued) throw new TrackerError('CONFLICT', 'Запуск уже покинул очередь. Обновите состояние; выполняющийся запуск можно остановить отдельно.');
       const now = this.clock.now();
-      this.runs.save({ ...run, status: RunStatus.Cancelled, leaseToken: null, summary: 'Убрано из очереди. Задача и журнал сохранены.', updatedAt: now });
+      this.runs.save({ ...run, status: RunStatus.Cancelled, leaseToken: null, summary: 'Убрано из очереди. Задача и журнал сохранены.', updatedAt: now, finishedAt: now });
       this.runs.event(id, RunStatus.Cancelled, 'Убрано из очереди пользователем. Задача и журнал сохранены.', now);
     });
   }
@@ -381,7 +387,7 @@ export class AutomationService {
     const role = run.settings.agents.find((agent) => agent.id === run.settings.pipeline[run.stage])?.role;
     const stage = run.status === RunStatus.Waiting && role && EVIDENCE_AGENT_ROLES.includes(role)
       ? Decomposition.child(run)?.developerStage ?? run.feature?.finalDeveloperStage ?? run.settings.pipeline.findIndex((id) => run.settings.agents.find((agent) => agent.id === id)?.role === AgentRole.Developer) : run.stage;
-    const updated: AgentRun = { ...run, stage, status: RunStatus.Queued, leaseToken: null, workerId: null, leaseUntil: null, updatedAt: this.clock.now() };
+    const updated: AgentRun = { ...run, stage, status: RunStatus.Queued, leaseToken: null, workerId: null, leaseUntil: null, updatedAt: this.clock.now(), finishedAt: undefined };
     this.runs.restore(id);
     this.runs.save(updated);
     this.runs.event(id, 'resumed', 'Продолжение с сохранёнными настройками и checkpoint. Ожидает worker.', this.clock.now());
@@ -419,11 +425,12 @@ export class AutomationService {
     this.owned(id, token);
     if (run.status !== RunStatus.Integrating || run.integration?.state !== 'publishing') throw new TrackerError('CONFLICT', 'Merge publication is not owned by this worker.');
     if (run.mergeReviewRequired) this.tasks.setStatus({ id: run.taskId, status: TaskStatus.Review, actor: 'agent' });
+    const now = this.clock.now();
     const evidence = `${run.branch}@${run.commitSha} -> ${run.integration.targetBranch}@${run.integration.candidateSha}`;
-    this.runs.save({ ...run, budgetElapsedMs: RunBudget.elapsed(run, Date.parse(this.clock.now())), budgetUpdatedAt: this.clock.now(),
+    this.runs.save({ ...run, budgetElapsedMs: RunBudget.elapsed(run, Date.parse(now)), budgetUpdatedAt: now,
       summary: `Squash merged: ${evidence}`,
-      integration: { ...run.integration, state: 'merged' }, status: RunStatus.Merged, leaseToken: null, updatedAt: this.clock.now() });
-    this.runs.event(id, 'merged', evidence, this.clock.now());
+      integration: { ...run.integration, state: 'merged' }, status: RunStatus.Merged, leaseToken: null, updatedAt: now, finishedAt: now });
+    this.runs.event(id, 'merged', evidence, now);
     this.tasks.addComment({ id: run.taskId, text: `[AUTOMATION MERGED] ${evidence}. Task remains in review for user acceptance.`, actor: 'agent' });
     });
   }
@@ -434,7 +441,7 @@ export class AutomationService {
       if ((run.status === RunStatus.Running || run.status === RunStatus.Integrating) && run.leaseUntil && run.leaseUntil < now) {
         this.runs.save({ ...run, budgetElapsedMs: RunBudget.elapsed(run, Date.parse(run.leaseUntil)), budgetUpdatedAt: now,
           integration: run.integration ? { ...run.integration, state: 'blocked', error: 'Worker lease expired; verify its process before resuming.' } : undefined,
-          status: run.status === RunStatus.Integrating ? RunStatus.MergeBlocked : RunStatus.Interrupted, leaseToken: null, updatedAt: now, summary: 'Worker lease expired. Resume explicitly after checking its process.' });
+          status: run.status === RunStatus.Integrating ? RunStatus.MergeBlocked : RunStatus.Interrupted, leaseToken: null, updatedAt: now, finishedAt: now, summary: 'Worker lease expired. Resume explicitly after checking its process.' });
         this.runs.event(run.id, RunStatus.Interrupted, 'Worker lease expired; no automatic duplicate execution.', now);
       }
     }

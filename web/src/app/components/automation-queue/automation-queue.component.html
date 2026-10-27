@@ -1,7 +1,7 @@
 <div class="queue">
   <div class="queue-toolbar"><p>Запуски сохраняются в трекере. Можно закрыть окно: подключённый worker продолжит выполнение.</p>
     <button pButton severity="secondary" type="button" (click)="configure.emit()">Настройки команды и подключение worker</button><button pButton severity="secondary" type="button" (click)="openArchive()">Архив запусков</button></div>
-  @if (archived(); as history) { <section aria-label="Архив запусков"><h3>Архив запусков</h3>@for (run of history; track run.id) { <div><button pButton severity="secondary" type="button" (click)="openTask.emit(run.taskId)">{{ run.taskId }} · {{ run.id }} · {{ statusTitles[run.status] }}</button><button pButton severity="secondary" type="button" [disabled]="busy()" (click)="restore(run.id)">Вернуть в очередь</button></div> } @empty { <p class="muted">Архив пуст</p> }</section> }
+  @if (archived(); as history) { <section aria-label="Архив запусков"><h3>Архив запусков</h3>@for (run of archivedItems(); track run.id) { <div><button pButton severity="secondary" type="button" (click)="openTask.emit(run.taskId)">{{ run.taskId }} · {{ run.id }} · {{ statusTitles[run.status] }}</button><small>Создано: {{ timestamp(run.createdAt) }} · Первый запуск: {{ timestamp(run.startedAt) }}</small><small>Текущая попытка: {{ timestamp(run.attemptStartedAt) }} · Завершено: {{ timestamp(run.finishedAt) }} · Активность: {{ timestamp(run.updatedAt) }}</small><button pButton severity="secondary" type="button" [disabled]="busy()" (click)="restore(run.id)">Вернуть в очередь</button></div> } @empty { <p class="muted">Архив пуст</p> }</section> }
   <p role="status">Worker: {{ snapshot().host.online ? 'подключён' : 'не подключён' }}. Показаны все активные и последние {{ recentLimit }} завершённых запусков.</p>
   <label class="queue-search">Поиск по ID задачи, названию или ID запуска
     <input type="search" [value]="search()" (input)="search.set($any($event.target).value)" aria-label="Поиск запусков" />
@@ -17,6 +17,9 @@
           <button pButton severity="secondary" type="button" class="run-card" [class.selected]="selectedId() === item.id" (click)="select(item.id)" [attr.aria-label]="'Запуск ' + item.taskId + ' ' + item.id">
             <strong>{{ item.taskId }} · {{ item.title }}</strong><span>{{ statusTitles[item.status] }} @if (item.queuePosition) { · место {{ item.queuePosition }} }</span>
             <span>Этап {{ item.stage < item.pipeline.length ? item.stage + 1 : item.pipeline.length }} / {{ item.pipeline.length }} · {{ currentRole(item) }}</span>
+            <small>Создано: {{ timestamp(item.createdAt) }} · Первый запуск: {{ timestamp(item.startedAt) }}</small>
+            <small>Текущая попытка: {{ timestamp(item.attemptStartedAt) }} · Завершено: {{ timestamp(item.finishedAt) }}</small>
+            <small>Последняя активность: {{ timestamp(item.updatedAt) }}</small>
             @if (item.tokenUsage; as usage) { <span>{{ tokenMeter.label(usage) }}</span> }
             <small>{{ item.integration ? integrationTitles[item.integration.state] : progress(item.status === runStatus.Running ? item.lastMessage || health(item) : item.summary || item.lastMessage || health(item)) }}</small>
           </button>
@@ -32,6 +35,13 @@
     <article class="run-detail" aria-label="Детали запуска">
       <h3>{{ item.taskId }} · {{ item.title }}</h3><p>{{ statusTitles[item.status] }} · карточка: {{ taskTitles[item.taskStatus] }}</p>
       <p class="identifier">ID: {{ item.id }} @if (item.restartedFromId) { · повтор запуска {{ item.restartedFromId }} }</p>
+      <dl class="run-timestamps">
+        <dt>Создано</dt><dd>{{ timestamp(item.createdAt) }}</dd>
+        <dt>Первый запуск</dt><dd>{{ timestamp(item.startedAt) }}</dd>
+        <dt>Текущая попытка</dt><dd>{{ timestamp(item.attemptStartedAt) }}</dd>
+        <dt>Завершено</dt><dd>{{ timestamp(item.finishedAt) }}</dd>
+        <dt>Последняя активность</dt><dd>{{ timestamp(item.updatedAt) }}</dd>
+      </dl>
       @if (item.checkout; as checkout) {
         <p class="identifier">Worktree: {{ checkout.worktreePath }} · base {{ checkout.baseSha }}</p>
         <p>Зависимости: {{ checkout.dependencyMode }} @if (checkout.dependencyNote) { · {{ checkout.dependencyNote }} }</p>
