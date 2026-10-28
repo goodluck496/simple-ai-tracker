@@ -10,6 +10,7 @@ import { InputTextModule } from 'primeng/inputtext';
 import { TabsModule } from 'primeng/tabs';
 import { AccordionModule } from 'primeng/accordion';
 import { DialogModule } from 'primeng/dialog';
+import { PipelinePolicy } from '../../../../../shared/automation/pipeline-policy';
 import { AUTOMATION_TABS, AutomationTab } from './automation-panel.types';
 import { AGENT_ROLES, RUNNER_IDS, DEFAULT_AUTOMATION_SETTINGS, PROVIDER_KINDS, REASONING_EFFORTS, MERGE_POLICIES,
   AUTOMATION_LIMITS, AUTOMATION_TIMING,
@@ -89,6 +90,15 @@ export class AutomationPanelComponent implements OnInit {
   }
   public toggleStage(id: string, selected: boolean): void {
     this.settings.pipeline = selected ? this.settings.pipeline.includes(id) ? this.settings.pipeline : [...this.settings.pipeline, id] : this.settings.pipeline.filter(stage => stage !== id);
+  }
+  public get launchConfigurationProblems(): string[] { return PipelinePolicy.configurationProblems(this.settings); }
+  public returnToTaskLaunch = false;
+  public configureLaunchProject(): void {
+    this.returnToTaskLaunch = this.settingsScope === 'task';
+    this.changeScope('project'); this.activeTab = AutomationTab.Project;
+  }
+  public backToTaskLaunch(): void {
+    this.changeScope('task'); this.activeTab = AutomationTab.Launch; this.returnToTaskLaunch = false;
   }
   public get launchAgents(): AgentProfile[] {
     const position = (id: string) => { const index = this.settings.pipeline.indexOf(id); return index < 0 ? Infinity : index; };
@@ -407,6 +417,7 @@ export class AutomationPanelComponent implements OnInit {
     if (!this.selectedTask) { this.startError = 'Выберите задачу для запуска.'; return; }
     if (!this.settings.pipeline.length) { this.startError = 'Выберите хотя бы один этап запуска.'; return; }
     if (!this.taskTeamReady) { this.startError = 'Команда выбранной задачи ещё не загружена.'; return; }
+    if (this.launchConfigurationProblems.length) { this.startError = 'Ошибка запуска: ' + this.launchConfigurationProblems.join(' '); return; }
     if (!this.selectedEligibility?.canStart) { this.startError = this.selectedEligibility?.reasons.join(' ') || 'Задача больше не доступна для запуска. Обновите список.'; return; }
     this.starting = true;
     const taskId = this.selectedTask; const settings = structuredClone(this.settings);

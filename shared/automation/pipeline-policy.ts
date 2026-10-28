@@ -2,6 +2,13 @@ import { AgentRole, WRITABLE_AGENT_ROLES, type AutomationSettings } from './cont
 
 /** Execution is derived from selected stages, never from a named team preset. */
 export class PipelinePolicy {
+  public static configurationProblems(settings: AutomationSettings): string[] {
+    const problems: string[] = [];
+    if (!settings.repositoryPath.trim()) problems.push('Не указана папка Git-проекта. Выберите её в настройках проекта.');
+    if (!settings.pipeline.length) problems.push('Не выбраны этапы запуска. Отметьте нужных агентов.');
+    if (this.writes(settings) && !settings.checks.length) problems.push('Для изменения кода нужны команды проверок. Настройте их в проекте; для запуска только аналитика они не требуются.');
+    return problems;
+  }
   public static roles(settings: AutomationSettings): AgentRole[] { return settings.pipeline.flatMap(id => { const agent = settings.agents.find(agent => agent.id === id); return agent ? [agent.role] : []; }); }
   public static writes(settings: AutomationSettings): boolean { return this.roles(settings).some(role => WRITABLE_AGENT_ROLES.includes(role)); }
   public static checkAt(settings: AutomationSettings, stage: number): boolean {

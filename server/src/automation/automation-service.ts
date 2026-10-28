@@ -110,7 +110,8 @@ export class AutomationService {
       const settings = new AutomationSettingsValidator().validate(draft === undefined ? this.taskTeam(taskId).settings : draft);
       if (integrationRestart && (settings.repositoryPath.replace(/\\/g, '/') !== previous.settings.repositoryPath.replace(/\\/g, '/')
         || settings.baseBranch !== previous.settings.baseBranch || settings.mergePolicy !== MergePolicy.Local)) throw new TrackerError('CONFLICT', 'Integration restart must keep the source repository, target branch and local merge policy.');
-      if (!settings.repositoryPath || !settings.pipeline.length || PipelinePolicy.writes(settings) && !settings.checks.length) throw new TrackerError('VALIDATION_FAILED', 'Configure repository, selected stages and real check commands for code changes.');
+      const configurationProblems = PipelinePolicy.configurationProblems(settings);
+      if (configurationProblems.length) throw new TrackerError('VALIDATION_FAILED', configurationProblems.join(' '));
       const roles = settings.pipeline.map((id) => settings.agents.find((agent) => agent.id === id)!.role);
       if (roles.includes(AgentRole.VisualValidator) && !settings.artifactPaths.some((file) => /\.(png|jpe?g|webp)$/i.test(file))) throw new TrackerError('VALIDATION_FAILED', 'Visual validator requires image artifact paths.');
       if (PipelinePolicy.needsPlan(settings, !!task.plan)) throw new TrackerError('VALIDATION_FAILED', 'Task needs an existing plan or an analyst before development.');

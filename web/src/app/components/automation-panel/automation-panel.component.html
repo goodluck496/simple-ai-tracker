@@ -24,6 +24,10 @@
     <p-tablist>@for (item of tabs; track item.value) { <p-tab [value]="item.value" [disabled]="settingsScope === 'task' && (item.value === tab.Project || item.value === tab.Models)">{{ item.label }}</p-tab> }</p-tablist>
     <p-tabpanels><p-tabpanel [value]="tab.Project"><div class="tab-content">
   <h3>1. Подключение компьютера</h3>
+  @if (returnToTaskLaunch) {
+    <p class="hint">После настройки папки и проверок сохраните настройки проекта, затем вернитесь к запуску. Выбранные исполнители задачи сохранены в черновике.</p>
+    <p-button label="Вернуться к запуску задачи" severity="secondary" [disabled]="busy" (onClick)="backToTaskLaunch()" />
+  }
   <p class="hint">Сначала подключите worker на компьютере с проектами. Этот шаг выполняется один раз на время работы; выбирать папку заранее не нужно.</p>
   <p role="status">Worker: {{ host.online ? 'подключён · ' + host.workerId : 'не подключён' }}</p>
   @if (!host.online) { <p class="hint">Браузер не видит абсолютные пути Windows без подключения компьютера. Скопируйте команду и выполните в PowerShell из любой папки. Команда не зависит от пути проекта; этот worker обслуживает выбранное пространство.</p> }
@@ -204,6 +208,12 @@
   }
     </div></p-tabpanel><p-tabpanel [value]="tab.Launch"><div class="tab-content">
   <h3>6. Запуск задачи</h3>
+  @if (launchConfigurationProblems.length) {
+    <div class="launch-feedback" role="status">
+      @for (problem of launchConfigurationProblems; track problem) { <p>{{ problem }}</p> }
+      <p-button label="Настроить проект" severity="secondary" [disabled]="busy || !taskTeamReady" (onClick)="configureLaunchProject()" />
+    </div>
+  }
   <section aria-label="Этапы этого запуска" class="launch-stages">
     <h4>Кто выполнит этот запуск</h4>
     <p>Источник: {{ settingsScope === 'task' ? 'команда выбранной задачи' : 'настройки проекта' }}. Отметьте только нужных исполнителей. Этот выбор применяется к новому запуску; отдельное сохранение меняет будущие настройки.</p>
