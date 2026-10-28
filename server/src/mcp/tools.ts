@@ -405,7 +405,10 @@ export class TrackerToolRegistry {
         case AutomationTool.Configure: return json(service.configure(args['settings']));
         case AutomationTool.Settings: return json(service.settings());
         case AutomationTool.TaskTeam: return json(service.taskTeam(requireString(args, 'taskId'), args['phase'] === 'reset' ? null : args['settings']));
-        case AutomationTool.HostPoll: return json(service.projects.poll(requireString(args, 'workerId'), asString(args, 'platform')));
+        case AutomationTool.HostStatus: return json(service.projects.status());
+        case AutomationTool.WorkerStart: return json(service.projects.enqueue({ action: 'start-worker', path: '' }));
+        case AutomationTool.WorkerStop: return json(service.projects.enqueue({ action: 'stop-worker', path: '' }));
+        case AutomationTool.HostPoll: return json(service.projects.poll(requireString(args, 'workerId'), asString(args, 'platform'), (args['result'] as { execution?: import('../../../shared/automation/project.js').ExecutionStatus } | undefined)?.execution));
         case AutomationTool.HostComplete: service.completeHost(id(), token(), args['result'] as import('../../../shared/automation/project.js').ProjectResult | undefined, asString(args, 'error')); return json({ ok: true });
         case AutomationTool.ListRuns: return json(service.list(asString(args, 'taskId')));
         case AutomationTool.GetRun: return json(service.detail(id()));

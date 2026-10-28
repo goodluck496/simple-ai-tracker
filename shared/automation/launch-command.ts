@@ -6,7 +6,6 @@ export class WorkerLaunchCommand {
     if (!/^[a-z0-9][a-z0-9_-]{0,49}$/i.test(workspace)) throw new Error('Некорректное имя пространства.');
     if (!/^[a-z0-9][a-z0-9_.-]{0,127}$/i.test(container)) throw new Error('Некорректное имя Docker-контейнера.');
     const literal = (value: string) => `'${value.replaceAll("'", "''")}'`;
-    const args = `--workspace ${literal(workspace)} --container ${literal(container)}`;
     return [
       '& {',
       "  $ErrorActionPreference = 'Stop'",
@@ -20,8 +19,13 @@ export class WorkerLaunchCommand {
       "    if ($satNodeMajor -lt 22) { throw 'Node.js 22 or newer is required for the tracker worker.' }",
       `    docker cp ${literal(`${container}:/app/dist/server/${PORTABLE_WORKER_FILENAME}`)} $satWorkerFile`,
       "    if ($LASTEXITCODE -ne 0) { throw 'Cannot copy worker from the tracker container. Update and start Docker first.' }",
-      `    & node $satWorkerFile ${args}`,
-      "    if ($LASTEXITCODE -ne 0) { throw 'Tracker worker stopped with an error. See the message above.' }",
+      '    $satSession = [Guid]::NewGuid().ToString("N")',
+      '    $satOut = Join-Path $satWorkerDir ($satSession + ".stdout.log")',
+      '    $satErr = Join-Path $satWorkerDir ($satSession + ".stderr.log")',
+      `    $satHost = Start-Process -FilePath (Get-Command node).Source -ArgumentList @(('"' + $satWorkerFile + '"'), '--workspace', ${literal(workspace)}, '--container', ${literal(container)}) -WorkingDirectory $satWorkerDir -WindowStyle Hidden -RedirectStandardOutput $satOut -RedirectStandardError $satErr -PassThru`,
+      '    Start-Sleep -Milliseconds 500',
+      '    if ($satHost.HasExited) { throw ("Host stopped; see " + $satErr) }',
+      '    Write-Host ("Local host started. Control worker in tracker UI. Logs: " + $satErr)',
       '  } finally { Pop-Location }',
       '}',
     ].join('\n');

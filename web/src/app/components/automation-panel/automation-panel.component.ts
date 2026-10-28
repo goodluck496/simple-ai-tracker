@@ -197,6 +197,17 @@ export class AutomationPanelComponent implements OnInit {
   public readonly setupPresets = SETUP_PRESETS;
   public checkPresets: readonly CommandPreset[] = CHECK_PRESETS;
   public host: HostStatus = { online: false };
+  public get executorReady(): boolean { return this.host.online && (!this.host.execution || this.host.execution.state === 'running'); }
+  public get executorTitle(): string {
+    return !this.host.online ? 'локальный хост не подключён' : !this.host.execution ? 'старый worker — обновите подключение для управления' : ({ starting: 'запускается', running: 'работает', stopping: 'останавливается', stopped: 'остановлен' })[this.host.execution.state];
+  }
+  public controlWorker(start: boolean): void {
+    void this.project({ action: start ? ProjectAction.StartWorker : ProjectAction.StopWorker, path: '' }, result => {
+      if (result.execution) this.host = { ...this.host, execution: result.execution };
+      this.notice = start ? 'Worker запущен на подключённом компьютере.' : 'Worker остановлен. Локальный хост остаётся доступен.';
+    });
+  }
+  public showHostConnection(): void { this.changeScope('project'); this.activeTab = AutomationTab.Project; }
   public projectBusy = false;
   public browserOpen = false;
   public directory: ProjectResult | null = null;
@@ -393,7 +404,7 @@ export class AutomationPanelComponent implements OnInit {
         const { run } = await firstValueFrom(this.http.post<{ run: AgentRun }>('/api/automation/runs', { taskId, settings }));
         if (this.destroyed) return;
         this.submittedRun = run; this.selectedRun = run.id; this.repairNotice = '';
-        this.startNotice = this.host.online ? `Запуск ${run.id} создан для ${taskId}. Ожидает захвата worker.`
+        this.startNotice = this.host.online && !this.executorReady ? `Задача ${taskId} поставлена в очередь. Исполнитель остановлен — нажмите «Запустить worker».` : this.host.online ? `Запуск ${run.id} создан для ${taskId}. Ожидает захвата worker.`
           : `Задача ${taskId} поставлена в очередь. Worker отключён — выполнение ещё не началось. Подключите компьютер в шаге 1.`;
         await this.poll();
         if (!this.destroyed) this.openQueue.emit(run.id);

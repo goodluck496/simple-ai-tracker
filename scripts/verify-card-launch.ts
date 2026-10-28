@@ -71,7 +71,7 @@ try {
   await modal.getByRole('button', { name: 'Поставить в очередь', exact: true }).click();
   await modal.getByRole('alert').filter({ hasText: 'Ошибка запуска:' }).waitFor();
   assert.equal(await modal.getByRole('tab', { name: 'Запуск', exact: true }).getAttribute('aria-selected'), 'true');
-  assert.ok((await modal.getByRole('combobox', { name: 'Задача для запуска', exact: true }).innerText()).includes(unconfigured.id));
+  await modal.getByText(`Задача для запуска: ${unconfigured.id}`, { exact: true }).waitFor();
   assert.equal(app.automationService.list(unconfigured.id).length, 0);
   await modal.locator('.p-dialog-close-button').click(); await modal.waitFor({ state: 'hidden' });
   app.automationService.configure(settings);

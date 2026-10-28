@@ -6,6 +6,7 @@
 :host ::ng-deep .p-tablist { position: sticky; top: 0; z-index: 2; background: var(--p-content-background); }
 .settings-footer { flex: 0 0 auto; padding: .6rem 0; background: var(--p-dialog-background, #18181b); border-top: 1px solid var(--p-content-border-color, #3f3f46); z-index: 2; }
 .settings-scope { display: flex; align-items: center; flex-wrap: wrap; gap: .6rem; }
+.worker-control { display: flex; align-items: center; flex-wrap: wrap; gap: .5rem; font-size: .8rem; }
 fieldset[hidden] { display: none; }
 .row { display: flex; flex-wrap: wrap; align-items: end; gap: .65rem; }
 label { display: grid; gap: .35rem; font-size: .85rem; min-width: 0; }

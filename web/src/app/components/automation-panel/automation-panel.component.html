@@ -7,6 +7,15 @@
       <p-button label="Наследовать команду проекта" severity="secondary" [disabled]="busy || !selectedTask" (onClick)="inheritTeam()" />
     }
   </div>
+  <div class="worker-control" aria-label="Управление worker">
+    <span role="status">Исполнитель: {{ executorTitle }} @if (host.execution?.hostName) { · {{ host.execution?.hostName }} }</span>
+    @if (host.online && host.execution) {
+      <p-button label="Запустить worker" severity="secondary" [disabled]="projectBusy || host.execution.state !== 'stopped'" (onClick)="controlWorker(true)" />
+      <p-button label="Остановить worker" severity="secondary" [disabled]="projectBusy || host.execution.state === 'stopped'" (onClick)="controlWorker(false)" />
+      <small>Остановка прерывает текущие задачи; рабочие копии и checkpoints сохраняются.</small>
+    } @else { <p-button label="Подключение компьютера" severity="secondary" (onClick)="showHostConnection()" /> }
+    @if (host.execution?.error) { <small role="alert">{{ host.execution?.error }}</small> }
+  </div>
   @if (error) { <p role="alert" class="error">{{ error }}</p> }
   @if (notice) { <p role="status">{{ notice }}</p> }
   @if (repairNotice) { <p role="status">{{ repairNotice }}</p> }
@@ -205,17 +214,17 @@
     <p>Выбрано этапов: {{ settings.pipeline.length }}. Дополнительные роли автоматически не добавляются.</p>
   </section>
   <p class="hint">Этот запуск использует показанную команду и не меняет настройки проекта. {{ settingsScope === 'task' ? 'Чтобы применять команду к следующим запускам этой задачи, сохраните её для задачи.' : 'Для отдельной команды задачи переключите область настроек.' }}</p>
-  <div class="row"><label class="grow">Задача для запуска
+  <div class="row">@if (settingsScope === 'project') { <label class="grow">Задача для запуска
     <p-select [options]="taskOptions" optionLabel="label" optionValue="value" optionDisabled="disabled"
       [formControl]="taskControl" [filter]="true" filterBy="label" filterPlaceholder="Поиск по ID, названию или статусу"
       [showClear]="true" placeholder="Выберите задачу" ariaLabel="Задача для запуска" appendTo="body">
       <ng-template pTemplate="item" let-option><div class="task-option"><span>{{ option.label }}</span>
         @if (option.readiness.reasons.length) { <small>{{ option.readiness.reasons.join(' ') }}</small> }
       </div></ng-template>
-    </p-select></label>
-    <p-button [label]="host.online ? 'Запустить' : 'Поставить в очередь'" [loading]="starting"
+    </p-select></label> } @else { <p class="grow">Задача для запуска: {{ selectedTask || 'выберите задачу вверху' }}</p> }
+    <p-button [label]="executorReady ? 'Запустить' : 'Поставить в очередь'" [loading]="starting"
       [disabled]="busy || starting || !selectedTask || !taskTeamReady || !settings.pipeline.length || !selectedEligibility?.canStart" (onClick)="start()" /></div>
-  <p class="hint">DoR здесь означает: статус ready, есть план, нет открытых вопросов. Это проверка полей трекера; качество плана проверяет команда. Задача без DoR может начать с аналитика. Вопросы, неподходящий статус и активный запуск блокируют новую очередь.</p>
+  <p class="hint">DoR означает: статус ready, есть план, нет открытых вопросов. Состав исполнителей задаётся выше. Перед изменением кода нужен готовый план или выбранный этап аналитики. Вопросы и активный запуск блокируют новую очередь.</p>
   @if (taskListLimited) { <p class="hint">Показаны первые {{ taskSelectionLimit }} задач пространства.</p> }
   @if (selectedEligibility; as eligibility) {
     <div class="launch-feedback"><strong>{{ selectedTask }} · {{ eligibility.summary }}</strong>
@@ -224,7 +233,7 @@
     </div>
   }
   @if (!host.online) { <p class="hint">Worker отключён. Можно поставить задачу в очередь, но выполнение начнётся только после подключения компьютера в шаге 1.</p> }
-  <p class="hint">Кнопка запуска проверяет и сохраняет текущие настройки формы вместе с запуском. Отдельно нажимать «Сохранить настройки» перед этим не нужно.</p>
+  <p class="hint">В очередь попадёт отдельная копия выбранных этапов и настроек. Уже созданные запуски и настройки проекта не изменяются.</p>
   @if (startError) { <p role="alert" class="error launch-feedback">{{ startError }}</p> }
   @if (startNotice) { <p role="status" class="launch-feedback">{{ startNotice }}</p> }
   @if (submittedRun; as run) {

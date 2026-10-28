@@ -30,13 +30,16 @@ import type { WorktreeCodeGraph } from './code-navigation.js';
 
 export class PipelineWorker {
   private activeController?: AbortController;
+  private stopping = false;
   public constructor(private readonly channel: TrackerChannel, private readonly workerId: string,
     private readonly executor = new ProcessExecutor(), private readonly registry = new AgentRunnerRegistry(), private readonly navigation?: WorktreeCodeGraph) {}
-  public stop(): void { this.activeController?.abort(); }
+  public stop(): void { this.stopping = true; this.activeController?.abort(); }
 
   public async tick(): Promise<boolean> {
+    if (this.stopping) return false;
     const claimed = await this.channel.call<AgentRun | null>(AutomationTool.Claim, { workerId: this.workerId });
     if (!claimed) return false;
+    if (this.stopping) { await this.channel.call(AutomationTool.Fail, { id: claimed.id, leaseToken: claimed.leaseToken, text: 'Worker остановлен до начала выполнения; файлы не удалялись.' }); return true; }
     let run: AgentRun = claimed;
     const token = run.leaseToken!;
     const controller = new AbortController();
@@ -336,7 +339,7 @@ export class PipelineWorker {
       });
       finished = true;
     } catch (error) {
-      const message = redact(budgetError ?? `${channelError ? 'Tracker connection/lease lost. ' : ''}${error instanceof Error ? error.message : String(error)}`);
+      const message = redact(budgetError ?? `${this.stopping ? 'Worker остановлен; рабочая копия и checkpoints сохранены. ' : ''}${channelError ? 'Tracker connection/lease lost. ' : ''}${error instanceof Error ? error.message : String(error)}`);
       if (pending.length) { try { await this.channel.call(AutomationTool.Progress, { id: run.id, leaseToken: token, text: redact(pending.take()) }); } catch { /* Preserve terminal failure even if the lease was lost. */ } }
       try { await this.channel.call(AutomationTool.Fail, { id: run.id, leaseToken: token, text: message }); }
       catch { process.stderr.write(`${message}\n`); }

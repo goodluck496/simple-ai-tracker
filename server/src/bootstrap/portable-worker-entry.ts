@@ -5,11 +5,11 @@ import { DEFAULT_TRACKER_CONTAINER } from '../../../shared/automation/launch-com
 
 async function main(): Promise<void> {
   if (process.argv.includes('--help')) {
-    process.stdout.write('Tracker host worker: --workspace NAME --container NAME [--project ABSOLUTE_PATH] [--once]\nNeeds Node.js 22+, Docker CLI, Git and CodeGraph on the host. No tracker checkout or project npm install is needed.\n'); return;
+    process.stdout.write('Tracker local host supervisor: --workspace NAME --container NAME [--project ABSOLUTE_PATH] [--once]\nConnect once per computer session, then start/stop execution in tracker UI. Needs Node.js 22+, Docker CLI, Git and CodeGraph on the host. No tracker checkout or project npm install is needed.\n'); return;
   }
   const values = new Map<string, string>();
   for (let index = 2; index < process.argv.length; index++) {
-    const option = process.argv[index]; if (option === '--once') continue;
+    const option = process.argv[index]; if (option === '--once' || option === '--execution-child') continue;
     if (!['--workspace', '--container', '--project'].includes(option) || !process.argv[index + 1] || process.argv[index + 1].startsWith('--')) throw new Error(`Invalid worker argument: ${option}`);
     values.set(option, process.argv[++index]);
   }

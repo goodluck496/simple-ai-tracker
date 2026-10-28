@@ -9,12 +9,22 @@ import { createApiServer } from '../server/src/api/http-server.js';
 import { SilentLogger } from '../server/src/core/logger.js';
 import { DEFAULT_AUTOMATION_SETTINGS } from '../shared/automation/contracts.js';
 import { STANDARD_TEAM_ROLES } from '../shared/automation/presets.js';
+import { TrackerToolRegistry } from '../server/src/mcp/tools.js';
+import { ProjectWorker } from '../server/src/automation/worker/project-worker.js';
+import type { ExecutionStatus } from '../shared/automation/project.js';
 
 const root = mkdtempSync(path.join(os.tmpdir(), 'sat-task-teams-ui-'));
 const app = createContainer({ config: { appRoot: root, dbPath: path.join(root, 'data', 'tracker.db'), webDistDir: path.resolve('dist/web/browser') }, logger: new SilentLogger() });
 const server = createApiServer(app); const browser = await chromium.launch({ headless: true });
+let projectTimer: ReturnType<typeof setInterval> | undefined; let projectTick: Promise<void> | undefined;
 try {
   const service = app.automationService;
+  const registry = new TrackerToolRegistry(app); let execution: ExecutionStatus = { state: 'stopped', hostName: 'fixture-host' };
+  const control = { status: () => execution, async start() { execution = { state: 'running', hostName: 'fixture-host', pid: 123 }; return execution; }, async stop() { execution = { state: 'stopped', hostName: 'fixture-host' }; return execution; } };
+  const projectWorker = new ProjectWorker({ async call<T>(name: string, args = {}): Promise<T> {
+    const result = await registry.call(name, args); const text = result.content.filter(c => c.type === 'text').map(c => c.type === 'text' ? c.text : '').join(''); if (result.isError) throw new Error(text); return JSON.parse(text) as T;
+  } }, 'fixture-host', undefined, { async list() { return []; } }, control);
+  await projectWorker.tick(); projectTimer = setInterval(() => { if (!projectTick) projectTick = projectWorker.tick().finally(() => { projectTick = undefined; }); }, 50);
   service.configure({ ...structuredClone(DEFAULT_AUTOMATION_SETTINGS), repositoryPath: '/fixture', connections: [{ id: 'n', label: 'Native', kind: 'native', supportsImages: false }],
     agents: STANDARD_TEAM_ROLES.map(role => ({ id: role, role, runner: 'codex', connectionId: 'n', model: 'fixture', instructions: '' })), pipeline: [...STANDARD_TEAM_ROLES], checks: [{ command: 'npm', args: ['test'] }] });
   const task = app.taskService.createTask({ title: 'Single developer fixture' });
@@ -27,6 +37,12 @@ try {
   const dialog = page.getByRole('dialog', { name: 'Команда агентов' }); await dialog.waitFor();
   await page.waitForTimeout(250);
   const original = (await dialog.boundingBox())!;
+  await dialog.getByRole('button', { name: 'Запустить worker', exact: true }).click();
+  await dialog.getByText('Worker запущен на подключённом компьютере.', { exact: true }).waitFor();
+  assert.equal(execution.state, 'running');
+  await dialog.getByRole('button', { name: 'Остановить worker', exact: true }).click();
+  await dialog.getByText('Worker остановлен. Локальный хост остаётся доступен.', { exact: true }).waitFor();
+  assert.equal(execution.state, 'stopped'); assert.equal(service.projects.status().online, true);
   for (const tab of ['Модели', 'Команда и этапы', 'Запуск', 'Компьютер и проект']) {
     await dialog.getByRole('tab', { name: tab, exact: true }).click();
     const current = (await dialog.boundingBox())!;
@@ -43,6 +59,8 @@ try {
   await page.waitForFunction(() => Array.from(document.querySelectorAll('button')).some(button => button.textContent?.trim() === 'Сохранить команду задачи' && !button.disabled));
   assert.equal(await dialog.getByRole('combobox', { name: 'Режим выполнения', exact: true }).count(), 0);
   await dialog.getByRole('tab', { name: 'Запуск', exact: true }).click();
+  assert.equal(await dialog.getByRole('combobox', { name: 'Задача для запуска', exact: true }).count(), 0, 'Task scope uses one task selector');
+  await dialog.getByText(`Задача для запуска: ${task.id}`, { exact: true }).waitFor();
   const selectedStages = dialog.getByRole('region', { name: 'Этапы этого запуска' });
   for (const role of ['analyst', 'tester', 'reviewer']) await selectedStages.locator(`[id="run-stage-${role}"]`).uncheck();
   await selectedStages.getByText(/Выбрано этапов: 1\./).waitFor();
@@ -74,4 +92,4 @@ try {
   assert.deepEqual(service.list(task.id)[0].settings.pipeline, ['analyst']);
   assert.equal(service.settings().pipeline.length, 4); assert.equal(service.taskTeam(task.id).overridden, false, 'Per-run selection must not persist');
   console.log('PASS: fixed geometry/footer, arbitrary launch roles, developer/reviewer/analyst selection, exact immutable queue snapshot, project/task isolation/reset, responsive. No models or real task store.');
-} finally { await browser.close(); server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); app.close(); rmSync(root, { recursive: true, force: true }); }
+} finally { if (projectTimer) clearInterval(projectTimer); await projectTick; await browser.close(); server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); app.close(); rmSync(root, { recursive: true, force: true }); }

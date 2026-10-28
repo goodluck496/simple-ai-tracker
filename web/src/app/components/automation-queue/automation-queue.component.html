@@ -4,7 +4,7 @@
     <button pButton severity="secondary" type="button" [attr.aria-pressed]="!historyMode()" (click)="historyMode.set(false); historyTask.set('')">Рабочая очередь</button>
     <button pButton severity="secondary" type="button" [attr.aria-pressed]="historyMode()" (click)="viewHistory()">История запусков</button>
     <button pButton severity="secondary" type="button" (click)="configure.emit()">Настройки команды и подключение worker</button></div>
-  <p role="status">Worker: {{ snapshot().host.online ? 'подключён' : 'не подключён' }}. {{ historyMode() ? 'История: последние 200 запусков, включая архив.' : 'Только ожидающие и выполняющиеся запуски.' }} @if (historyTask()) { Задача: {{ historyTask() }} }</p>
+  <p role="status">Хост: {{ snapshot().host.online ? 'подключён' : 'не подключён' }}. @if (snapshot().host.execution; as execution) { Исполнитель: {{ execution.state === 'running' ? 'работает' : execution.state === 'stopped' ? 'остановлен' : execution.state === 'starting' ? 'запускается' : 'останавливается' }}. } {{ historyMode() ? 'История: последние 200 запусков, включая архив.' : 'Только ожидающие и выполняющиеся запуски.' }} @if (historyTask()) { Задача: {{ historyTask() }} }</p>
   <label class="queue-search">Поиск по ID задачи, названию или ID запуска
     <input type="search" [value]="search()" (input)="search.set($any($event.target).value)" aria-label="Поиск запусков" />
   </label>

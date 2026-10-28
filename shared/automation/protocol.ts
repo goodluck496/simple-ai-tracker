@@ -12,6 +12,7 @@ export const AutomationTool = {
   Resume: `${AUTOMATION_TOOL_PREFIX}resume`, Merged: `${AUTOMATION_TOOL_PREFIX}merged`,
   Checkout: `${AUTOMATION_TOOL_PREFIX}checkout`, Integration: `${AUTOMATION_TOOL_PREFIX}integration`,
   HostPoll: `${AUTOMATION_TOOL_PREFIX}host_poll`, HostComplete: `${AUTOMATION_TOOL_PREFIX}host_complete`,
+  HostStatus: `${AUTOMATION_TOOL_PREFIX}host_status`, WorkerStart: `${AUTOMATION_TOOL_PREFIX}worker_start`, WorkerStop: `${AUTOMATION_TOOL_PREFIX}worker_stop`,
 } as const;
 export type AutomationTool = typeof AutomationTool[keyof typeof AutomationTool];
 export const AUTOMATION_TOOLS = Object.values(AutomationTool);

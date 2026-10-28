@@ -9,7 +9,8 @@ import { WindowsFolderPicker } from './folder-picker.js';
 
 test('launch command works without a project path and rejects invalid shell inputs', () => {
   const command = WorkerLaunchCommand.create('second-project');
-  assert.ok(command.includes("--workspace 'second-project'"));
+  assert.ok(command.includes("'--workspace', 'second-project'"));
+  assert.ok(command.includes('Start-Process')); assert.ok(command.includes('-WindowStyle Hidden'));
   assert.ok(command.includes('worker-host.cjs')); assert.ok(!command.includes('--project'));
   assert.ok(!command.includes('npm')); assert.ok(!command.includes('--prefix'));
   assert.throws(() => WorkerLaunchCommand.create('bad;name'));
@@ -24,6 +25,7 @@ test('PowerShell command uses only workspace/container and runs Node from its in
       '$satCalls = [System.Collections.Generic.List[object]]::new()',
       "function docker { $satCalls.Add(@{ name = 'docker'; argv = @($args) }); $global:LASTEXITCODE = 0 }",
       "function node { $satCalls.Add(@{ name = 'node'; argv = @($args); cwd = (Get-Location).Path }); $global:LASTEXITCODE = 0; if ($args[0] -eq '-p') { Write-Output 22 } }",
+      "function Start-Process { param($FilePath,$ArgumentList,$WorkingDirectory,$WindowStyle,$RedirectStandardOutput,$RedirectStandardError,[switch]$PassThru) $satCalls.Add(@{name='host';argv=@($ArgumentList);cwd=$WorkingDirectory;hidden=$WindowStyle}); [pscustomobject]@{HasExited=$false} }",
       WorkerLaunchCommand.create('project-two', 'tracker-dev'),
       '[System.IO.File]::WriteAllText($env:SAT_CAPTURE, (ConvertTo-Json -InputObject @($satCalls.ToArray()) -Depth 5), [System.Text.UTF8Encoding]::new($false))',
     ].join('\n');

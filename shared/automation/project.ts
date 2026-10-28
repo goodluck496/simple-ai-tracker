@@ -1,17 +1,20 @@
 import type { CheckCommand } from './contracts.js';
 import type { ModelCatalogInput, ModelOption } from './model-catalog.js';
 
-export const ProjectAction = { Browse: 'browse', Inspect: 'inspect', CreateBranch: 'create-branch', PickFolder: 'pick-folder', Models: 'models', Cleanup: 'cleanup' } as const;
+export const ProjectAction = { Browse: 'browse', Inspect: 'inspect', CreateBranch: 'create-branch', PickFolder: 'pick-folder', Models: 'models', Cleanup: 'cleanup', StartWorker: 'start-worker', StopWorker: 'stop-worker' } as const;
 export type ProjectAction = typeof ProjectAction[keyof typeof ProjectAction];
+export interface ExecutionStatus { state: 'starting' | 'running' | 'stopping' | 'stopped'; pid?: number; hostName?: string; error?: string; }
 export const ProjectRequestStatus = { Queued: 'queued', Running: 'running', Completed: 'completed', Failed: 'failed' } as const;
 export type ProjectRequestStatus = typeof ProjectRequestStatus[keyof typeof ProjectRequestStatus];
 export const PROJECT_LIMITS = { requestMs: 60000, cleanupMs: 300000, commandMs: 15000, pollMs: 1500, maxHistory: 20, maxEntries: 200, packageBytes: 1024 * 1024 } as const;
 export interface ProjectInput { action: ProjectAction; path: string; baseBranch?: string; newBranch?: string; catalog?: ModelCatalogInput; cleanup?: import('./cleanup.js').CleanupSpec; }
 export interface ProjectResult { path: string; cleanup?: import('./cleanup.js').CleanupResult; cancelled?: boolean; parent?: string; directories?: { name: string; path: string }[];
+  execution?: ExecutionStatus;
   branches?: string[]; currentBranch?: string; scripts?: string[]; hasLockfile?: boolean; truncated?: boolean; models?: ModelOption[]; }
 export interface ProjectRequest extends ProjectInput { id: string; status: ProjectRequestStatus; createdAt: number;
+  targetWorkerId?: string;
   workerId?: string; token?: string; result?: ProjectResult; error?: string; }
-export interface HostStatus { online: boolean; workerId?: string; lastSeen?: number; platform?: string; }
+export interface HostStatus { online: boolean; workerId?: string; lastSeen?: number; platform?: string; execution?: ExecutionStatus; executionDesired?: boolean; }
 export const WorkerPlatform = { Windows: 'win32', Linux: 'linux', MacOS: 'darwin' } as const;
 export interface CommandPreset { id: string; label: string; description: string; value: CheckCommand; }
 export const SETUP_PRESETS: readonly CommandPreset[] = [

@@ -1,0 +1,13 @@
+# SAT-27: управление исполнителем с локальным supervisor
+
+Backend остаётся в Docker, локальный supervisor на Windows — посредник для фиксированных start/stop. Ввод произвольного shell/argv/PID с backend не поддерживается. Прежняя команда подключения теперь запускает supervisor в фоне (Start-Process, WindowStyle Hidden, отдельные stdout/stderr logs). После завершения сеанса ПК supervisor нужно снова подключить; установка Windows service/автозагрузка не выполняется.
+
+Supervisor держит MCP связь и обслуживает project/model/cleanup запросы. Executor — отдельный дочерний процесс того же bundle с приватным IPC. В UI видны host online/offline и starting/running/stopping/stopped исполнителя. Старт/стоп маршрутизируются в owning supervisor через workspace-scoped mailbox и token. Повторный start не создаёт второй executor. Локальный runtime lease защищает от двух supervisor одного транспорта/пространства.
+
+Остановка посылает IPC команде worker pool, прерывает активные процессы штатным AbortSignal и сохраняет worktrees/checkpoints; сообщение об остановке явно попадает в run. При зависании завершается только собственное дерево дочернего процесса с ограничением времени. Child disconnect также останавливает pool, исполнителя нельзя запускать внутренним CLI флагом без IPC. После аварийного падения видна ошибка, нет самопроизвольного повторного выполнения failed задач.
+
+После потери Docker transport supervisor переподключается, останавливает потерявший связь executor и возвращает ранее работавший executor после восстановления. Явно остановленный executor остаётся остановленным. Статус stopped сохраняется между перезапусками supervisor на том же ПК; ошибки запуска не скрываются. Backend не может включить отсутствующий supervisor или выключенный ПК — UI показывает bootstrap инструкцию вместо обещания запуска.
+
+Миграция: legacy worker отмечается как не поддерживающий remote control, команды ему не отправляются. Его нужно заменить supervisor однократно. Обновление самого bundle остаётся через deployment/команду подключения; start/stop не скачивает и не исполняет произвольный код из HTTP.
+
+Проверки: fixture child start twice/stop/restart/crash/forced stop, остановка одного child не убивает другой; offline/legacy rejection, owner routing/idempotent requests/token fencing; реальный PowerShell bootstrap с mock Start-Process проверяет argv/working directory; headless UI start/stop через MCP mailbox на fake control, arbitrary role preview и immutable queue snapshot. 139 full tests прошли, typecheck/server/web builds прошли. Реальные модели не вызывались. Live start/stop/reconnect и deployment фиксируются в карточке после установки.

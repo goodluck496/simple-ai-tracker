@@ -8,19 +8,24 @@ import { ProjectAction, PROJECT_LIMITS, type ProjectInput, type ProjectRequest, 
 import { WindowsFolderPicker, type FolderPicker } from './folder-picker.js';
 import { WorkerModelCatalog } from './model-catalog.js';
 import { RunCleanup } from './run-cleanup.js';
+import type { ExecutionControl } from './execution-supervisor.js';
 
 export class ProjectWorker {
   private readonly executor = new ProcessExecutor();
   public constructor(private readonly channel: TrackerChannel, private readonly workerId: string, private readonly picker: FolderPicker = new WindowsFolderPicker(),
-    private readonly models: Pick<WorkerModelCatalog, 'list'> = new WorkerModelCatalog()) {}
+    private readonly models: Pick<WorkerModelCatalog, 'list'> = new WorkerModelCatalog(), private readonly execution?: ExecutionControl) {}
   public async tick(): Promise<void> {
-    const request = await this.channel.call<ProjectRequest | null>(AutomationTool.HostPoll, { workerId: this.workerId, platform: process.platform });
+    const request = await this.channel.call<ProjectRequest | null>(AutomationTool.HostPoll, { workerId: this.workerId, platform: process.platform, ...(this.execution ? { result: { execution: this.execution.status() } } : {}) });
     if (!request) return;
     let result: ProjectResult | undefined; let error: string | undefined;
     try { result = await this.execute(request); } catch (cause) { error = cause instanceof Error ? cause.message : String(cause); }
     await this.channel.call(AutomationTool.HostComplete, { id: request.id, leaseToken: request.token, result, error });
   }
   public async execute(input: ProjectInput): Promise<ProjectResult> {
+    if (input.action === ProjectAction.StartWorker || input.action === ProjectAction.StopWorker) {
+      if (!this.execution) throw new Error('Этот worker не поддерживает управление исполнителем.');
+      return { path: '', execution: await (input.action === ProjectAction.StartWorker ? this.execution.start() : this.execution.stop()) };
+    }
     if (input.action === ProjectAction.Cleanup) {
       if (!input.cleanup) throw new Error('Missing cleanup identity.');
       return { path: input.path, cleanup: await new RunCleanup(this.executor).execute(input.cleanup, AbortSignal.timeout(PROJECT_LIMITS.cleanupMs - 5000)) };
