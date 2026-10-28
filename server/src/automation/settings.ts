@@ -69,10 +69,7 @@ export class AutomationSettingsValidator {
       || !Number.isSafeInteger(maxInputTokens) || maxInputTokens < 1 || maxInputTokens > 100000000
       || !Number.isSafeInteger(maxRunMinutes) || maxRunMinutes < 1 || maxRunMinutes > 240) return fail('Invalid run budget.');
     // Reconstruct persisted objects so unknown fields cannot carry credentials.
-    const executionMode = settings.executionMode ?? 'team';
-    if (!['team', 'developer'].includes(executionMode)) return fail('Invalid execution mode.');
     return {
-      executionMode,
       repositoryPath: settings.repositoryPath, baseBranch: settings.baseBranch,
       connections: settings.connections.map(({ id, label, kind, baseUrl, credentialEnv, supportsImages, reasoningEffort, nativeRunner }) => ({ id, label, kind, baseUrl, credentialEnv, supportsImages, reasoningEffort, ...(kind === ProviderKind.Native && nativeRunner ? { nativeRunner } : {}) })),
       agents: settings.agents.map(({ id, role, runner, connectionId, model, instructions, nativeProfile, command, args }) => ({ id, role, runner, connectionId, model, instructions, nativeProfile, command, args })),

@@ -12,6 +12,7 @@ import { StageCheckpoint, type StageResult } from './stage-checkpoint.js';
 import { AgentHandoff } from '../../../../shared/automation/handoff.js';
 import { ProgressBuffer } from '../../../../shared/automation/progress-buffer.js';
 import { RunBudget } from '../../../../shared/automation/budget.js';
+import { PipelinePolicy } from '../../../../shared/automation/pipeline-policy.js';
 import { TaskEnvironment } from '../runners/task-environment.js';
 import { CommitMessage } from '../../../../shared/automation/commit-message.js';
 import { RuntimeCoordinator, type RuntimeLease } from './runtime-coordinator.js';
@@ -227,7 +228,9 @@ export class PipelineWorker {
         const packet = JSON.stringify(rolePacket);
         const diff = profile.role === AgentRole.Reviewer ? await git(['diff', `${baseline}...HEAD`, '--', '.', ':!.sat'], cwd) : '';
         const feedback = previous && run.summary.startsWith(previous.summary) ? '' : run.summary;
-        const prompt = this.prompt(profile.role, profile.instructions, context, feedback, diff, run.settings.artifactPaths, run.settings.checks, run.checkout, packet);
+        const prompt = this.prompt(profile.role, profile.instructions, context, feedback, diff, run.settings.artifactPaths, run.settings.checks, run.checkout, packet)
+          + `\nSelected execution stages: ${PipelinePolicy.roles(run.settings).join(' → ')}. No missing roles may be added. `
+          + (profile.role === AgentRole.Analyst && !PipelinePolicy.canDecompose(run.settings) ? 'Return decomposition: []; describe proposed subtasks in plan text if useful, without dispatching other roles.\n' : '');
         let outcome: AgentOutcome;
         const checksEvidence: StageEvidence['checks'] = saved?.checks ? [...saved.checks]
           : previous?.current && [AgentRole.Reviewer, AgentRole.VisualValidator].includes(profile.role as 'reviewer' | 'visual-validator') ? [...previous.checks] : [];
@@ -294,7 +297,7 @@ export class PipelineWorker {
           await checkpoint.save(saved);
         }
         let sha = (await git(['rev-parse', 'HEAD'], cwd)).trim();
-        if ((profile.role === AgentRole.Tester || run.settings.executionMode === 'developer' && profile.role === AgentRole.Developer) && outcome.verdict === AgentVerdict.Pass && !saved.checksComplete) {
+        if (PipelinePolicy.checkAt(run.settings, run.stage) && outcome.verdict === AgentVerdict.Pass && !saved.checksComplete) {
           for (const check of run.settings.checks) {
             try {
               await phase(RunPhase.Checks, `Проверка: ${check.command} ${check.args.join(' ')}`);

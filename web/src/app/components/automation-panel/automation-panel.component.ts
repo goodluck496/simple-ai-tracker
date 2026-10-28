@@ -50,7 +50,7 @@ export class AutomationPanelComponent implements OnInit {
   public settingsScope: 'project' | 'task' = 'project';
   public taskOverridden = false;
   public readonly scopeOptions = [{ label: 'Настройки проекта', value: 'project' }, { label: 'Команда выбранной задачи', value: 'task' }];
-  public readonly executionOptions = [{ label: 'Команда агентов', value: 'team' }, { label: 'Один разработчик', value: 'developer' }];
+  public addRole: AgentRole = AgentRole.Developer;
   private projectDraft?: AutomationSettings;
   private loadedTask: string | null = null;
   public get taskTeamReady(): boolean { return this.settingsScope === 'project' || !!this.selectedTask && this.loadedTask === this.selectedTask; }
@@ -64,13 +64,13 @@ export class AutomationPanelComponent implements OnInit {
       else this.taskDrafts.set(this.loadedTask, { settings: structuredClone(this.settings), overridden: this.taskOverridden });
     }
   }
-  private teamSignature(settings: AutomationSettings): string { return JSON.stringify([settings.agents, settings.pipeline, settings.executionMode ?? 'team']); }
+  private teamSignature(settings: AutomationSettings): string { return JSON.stringify([settings.agents, settings.pipeline]); }
   private async loadTaskTeam(id: string): Promise<void> {
     const value = await firstValueFrom(this.http.get<{ settings: AutomationSettings; overridden: boolean }>(`/api/automation/tasks/${encodeURIComponent(id)}/team`));
     if (this.settingsScope !== 'task' || id !== this.selectedTask) return;
     this.loadedTeamSignature = this.teamSignature(value.settings);
     const draft = this.taskDrafts.get(id)?.settings;
-    this.settings = structuredClone(draft ? { ...value.settings, agents: draft.agents, pipeline: draft.pipeline, executionMode: draft.executionMode } : value.settings);
+    this.settings = structuredClone(draft ? { ...value.settings, agents: draft.agents, pipeline: draft.pipeline } : value.settings);
     this.taskOverridden = value.overridden; this.loadedTask = id;
   }
   public changeScope(scope: 'project' | 'task'): void {
@@ -86,13 +86,8 @@ export class AutomationPanelComponent implements OnInit {
     const id = this.selectedTask;
     void this.act(async () => { const value = await firstValueFrom(this.http.post<{ settings: AutomationSettings; overridden: boolean }>(`/api/automation/tasks/${id}/team/reset`, {})); this.taskDrafts.delete(id); this.settings = value.settings; this.loadedTask = id; this.loadedTeamSignature = this.teamSignature(this.settings); this.taskOverridden = false; this.notice = 'Задача наследует команду проекта.'; });
   }
-  public setExecutionMode(mode: 'team' | 'developer'): void {
-    this.settings.executionMode = mode;
-    if (mode === 'developer') {
-      let agent = this.settings.agents.find(agent => agent.role === AgentRole.Developer);
-      if (!agent) { this.addAgent(AgentRole.Developer); agent = this.settings.agents.find(agent => agent.role === AgentRole.Developer); }
-      this.settings.pipeline = agent ? [agent.id] : [];
-    } else this.settings.pipeline = this.settings.agents.map(agent => agent.id);
+  public toggleStage(id: string, selected: boolean): void {
+    this.settings.pipeline = selected ? this.settings.pipeline.includes(id) ? this.settings.pipeline : [...this.settings.pipeline, id] : this.settings.pipeline.filter(stage => stage !== id);
   }
   public get taskOptions() {
     const options = (this.latestTasks ?? this.availableTasks).map((task) => {
@@ -388,6 +383,7 @@ export class AutomationPanelComponent implements OnInit {
     if (this.starting) return;
     this.startError = ''; this.startNotice = '';
     if (!this.selectedTask) { this.startError = 'Выберите задачу для запуска.'; return; }
+    if (!this.settings.pipeline.length) { this.startError = 'Выберите хотя бы один этап запуска.'; return; }
     if (!this.taskTeamReady) { this.startError = 'Команда выбранной задачи ещё не загружена.'; return; }
     if (!this.selectedEligibility?.canStart) { this.startError = this.selectedEligibility?.reasons.join(' ') || 'Задача больше не доступна для запуска. Обновите список.'; return; }
     this.starting = true;

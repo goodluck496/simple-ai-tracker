@@ -65,14 +65,7 @@ export class AppComponent implements OnInit {
     this.automationTaskId = taskId; this.automationMessage = message; this.showAutomation = true;
   }
   public launchTask(id: string): void {
-    this.automationLauncher.start(id).pipe(
-      tap((runId) => this.openQueue(runId)),
-      catchError((error: unknown) => {
-        const value = error as { error?: { error?: { message?: string } }; message?: string };
-        this.openAutomation(id, `Не удалось поставить задачу в очередь: ${value.error?.error?.message ?? value.message ?? 'проверьте настройки команды'}`);
-        return EMPTY;
-      }), takeUntilDestroyed(this.destroyRef),
-    ).subscribe();
+    this.openAutomation(id);
   }
   public showQueue = false;
   public queueRunId: string | null = null;

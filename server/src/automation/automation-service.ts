@@ -14,6 +14,7 @@ import { TokenMeter, type TokenUsage, type UsageAttempt } from '../../../shared/
 import { RunBudget } from '../../../shared/automation/budget.js';
 import { Decomposition } from '../../../shared/automation/decomposition.js';
 import { FeaturePlanning } from './feature-planning.js';
+import { PipelinePolicy } from '../../../shared/automation/pipeline-policy.js';
 import { ProjectAction, type ProjectResult } from '../../../shared/automation/project.js';
 
 const SETTINGS_KEY = 'automation_settings_v1';
@@ -40,8 +41,8 @@ export class AutomationService {
       if (input === null) this.repos.meta.set(key, 'null');
       else {
         const value = input as AutomationSettings;
-        const checked = new AutomationSettingsValidator().validate({ ...this.settings(), agents: value.agents, pipeline: value.pipeline, executionMode: value.executionMode });
-        this.repos.meta.set(key, JSON.stringify({ agents: checked.agents, pipeline: checked.pipeline, executionMode: checked.executionMode }));
+        const checked = new AutomationSettingsValidator().validate({ ...this.settings(), agents: value.agents, pipeline: value.pipeline });
+        this.repos.meta.set(key, JSON.stringify({ agents: checked.agents, pipeline: checked.pipeline }));
       }
     }
     const override = JSON.parse(this.repos.meta.get(key) ?? 'null') as Partial<AutomationSettings> | null;
@@ -109,20 +110,10 @@ export class AutomationService {
       const settings = new AutomationSettingsValidator().validate(draft === undefined ? this.taskTeam(taskId).settings : draft);
       if (integrationRestart && (settings.repositoryPath.replace(/\\/g, '/') !== previous.settings.repositoryPath.replace(/\\/g, '/')
         || settings.baseBranch !== previous.settings.baseBranch || settings.mergePolicy !== MergePolicy.Local)) throw new TrackerError('CONFLICT', 'Integration restart must keep the source repository, target branch and local merge policy.');
-      if (!settings.repositoryPath || !settings.pipeline.length || !settings.checks.length) throw new TrackerError('VALIDATION_FAILED', 'Configure repository, pipeline and real check commands first.');
+      if (!settings.repositoryPath || !settings.pipeline.length || PipelinePolicy.writes(settings) && !settings.checks.length) throw new TrackerError('VALIDATION_FAILED', 'Configure repository, selected stages and real check commands for code changes.');
       const roles = settings.pipeline.map((id) => settings.agents.find((agent) => agent.id === id)!.role);
-      const developer = roles.indexOf(AgentRole.Developer);
-      const tester = roles.indexOf(AgentRole.Tester);
-      const reviewer = roles.indexOf(AgentRole.Reviewer);
-      if (roles.filter((role) => role === AgentRole.Analyst).length > 1 || (roles.includes(AgentRole.Analyst) && roles[0] !== AgentRole.Analyst)) throw new TrackerError('VALIDATION_FAILED', 'Optional analyst must be the first stage.');
       if (roles.includes(AgentRole.VisualValidator) && !settings.artifactPaths.some((file) => /\.(png|jpe?g|webp)$/i.test(file))) throw new TrackerError('VALIDATION_FAILED', 'Visual validator requires image artifact paths.');
-      const solo = settings.executionMode === 'developer';
-      if (solo ? roles.length !== 1 || roles[0] !== AgentRole.Developer : developer < 0 || tester <= developer || reviewer <= tester) throw new TrackerError('VALIDATION_FAILED', solo ? 'Developer mode requires exactly one developer and an approved plan.' : 'Pipeline must include developer, tester and reviewer in this order.');
-      const lastTester = roles.lastIndexOf(AgentRole.Tester);
-      if (!solo && (reviewer < lastTester || roles.some((role, index) => (WRITABLE_AGENT_ROLES.includes(role) && index > tester)
-        || (role === AgentRole.VisualValidator && index < lastTester)))) throw new TrackerError('VALIDATION_FAILED', 'Development/design must precede tests; review and visual validation must follow tests.');
-      if (!task.plan && (roles.indexOf(AgentRole.Analyst) < 0 || roles.indexOf(AgentRole.Analyst) > developer)) throw new TrackerError('VALIDATION_FAILED', 'Task needs an existing plan or an analyst before development.');
-      if (!task.plan && roles.some((role, index) => role === AgentRole.Designer && index < roles.indexOf(AgentRole.Analyst))) throw new TrackerError('VALIDATION_FAILED', 'Analyst must precede design changes when the task has no plan.');
+      if (PipelinePolicy.needsPlan(settings, !!task.plan)) throw new TrackerError('VALIDATION_FAILED', 'Task needs an existing plan or an analyst before development.');
       if (this.activeTaskIds().includes(taskId)) throw new TrackerError('CONFLICT', 'Task already has an active run or belongs to an executing feature.');
       const now = this.clock.now();
       const run: AgentRun = { id: randomUUID(), taskId, status: RunStatus.Queued, stage: 0, revision: 0,
@@ -245,8 +236,8 @@ export class AutomationService {
     const task = this.tasks.getTaskCard(Decomposition.child(run)?.taskId ?? run.taskId);
     if (task.openQuestionsCount) throw new TrackerError('CONFLICT', 'Task has unanswered questions.');
     if (agent.role === AgentRole.Analyst) this.tasks.setStatus({ id: task.id, status: TaskStatus.Planning, actor: 'agent' });
-    if (agent.role === AgentRole.Developer && !resolver) this.tasks.setStatus({ id: task.id, status: TaskStatus.InProgress, actor: 'agent' });
-    if (agent.role === AgentRole.Tester && task.status !== TaskStatus.Testing) this.tasks.setStatus({ id: task.id, status: TaskStatus.Testing, actor: 'agent' });
+    if (WRITABLE_AGENT_ROLES.includes(agent.role) && !resolver) this.tasks.setStatus({ id: task.id, status: TaskStatus.InProgress, actor: 'agent' });
+    if (agent.role === AgentRole.Tester && task.status === TaskStatus.InProgress) this.tasks.setStatus({ id: task.id, status: TaskStatus.Testing, actor: 'agent' });
     const now = this.clock.now();
     const attempt: UsageAttempt = { id: randomUUID(), kind: resolver ? 'resolver' : 'pipeline', stage: run.stage, revision: run.revision, role: agent.role, runner: agent.runner, model: agent.model,
       startedAt: now, updatedAt: now, finished: false };
@@ -298,7 +289,7 @@ export class AutomationService {
         }
         else updated.mergeMessage = outcome.commitMessage;
       }
-      if (EVIDENCE_AGENT_ROLES.includes(profile.role) || run.settings.executionMode === 'developer') {
+      if (EVIDENCE_AGENT_ROLES.includes(profile.role) || PipelinePolicy.checkAt(run.settings, run.stage)) {
         this.tasks.addAttachment(taskId, { kind: 'report', name: `${profile.role}-${run.id}-${run.revision}.md`,
           content: `# ${profile.role}\n\nVerdict: ${outcome.verdict}\nCommit: ${commitSha}\nBranch: ${branch}\n\n${outcome.summary}\n\n## Worker evidence\n${this.runs.events(id).filter((event) => event.kind === 'progress').slice(-10).map((event) => event.text).join('\n')}` });
       }
@@ -314,17 +305,17 @@ export class AutomationService {
         updated = { ...updated, status: RunStatus.Waiting, leaseToken: null };
       } else if (outcome.verdict === AgentVerdict.ChangesRequested) {
         if (profile.role === AgentRole.Analyst) throw new TrackerError('VALIDATION_FAILED', 'Analyst must return a plan or questions.');
-        const developer = child?.developerStage ?? run.feature?.finalDeveloperStage ?? run.settings.pipeline.findIndex((profileId) => run.settings.agents.find((agent) => agent.id === profileId)?.role === AgentRole.Developer);
-        updated = run.revision >= run.settings.maxRevisions ? { ...updated, status: RunStatus.Failed, leaseToken: null }
+        const developer = child?.developerStage ?? run.feature?.finalDeveloperStage ?? run.settings.pipeline.findIndex((profileId) => WRITABLE_AGENT_ROLES.includes(run.settings.agents.find((agent) => agent.id === profileId)!.role));
+        updated = developer < 0 ? { ...updated, status: RunStatus.Review, leaseToken: null } : run.revision >= run.settings.maxRevisions ? { ...updated, status: RunStatus.Failed, leaseToken: null }
           : { ...updated, stage: developer, revision: run.revision + 1 };
       } else {
         if (profile.role === AgentRole.Analyst) {
           if (!outcome.plan?.trim()) throw new TrackerError('VALIDATION_FAILED', 'Analyst must return a plan.');
           this.tasks.attachPlan({ id: run.taskId, planContent: outcome.plan, summary: outcome.summary, actor: 'agent' });
-          if (outcome.decomposition?.length) {
+          if (outcome.decomposition?.length && PipelinePolicy.canDecompose(run.settings)) {
             if (run.feature) throw new TrackerError('CONFLICT', 'Feature was already decomposed.');
             let planned;
-            try { planned = FeaturePlanning.apply(run, outcome, this.tasks); }
+            try { planned = FeaturePlanning.apply({ ...run, settings: { ...run.settings, agents: run.settings.agents.filter(agent => run.settings.pipeline.includes(agent.id)) } }, outcome, this.tasks); }
             catch (error) { throw new TrackerError('VALIDATION_FAILED', String(error)); }
             updated = { ...updated, feature: planned.feature, settings: { ...run.settings, pipeline: planned.pipeline, maxAgentCalls: planned.feature.callBudget!.limit } };
             this.runs.event(id, 'budget', `Автоматический расчёт: план ${planned.feature.callBudget!.planned}, исправления ${planned.feature.callBudget!.revisions}, resolver ${planned.feature.callBudget!.resolver}, предел ${planned.feature.callBudget!.limit}. Лимиты токенов и времени сохранены.`, now);
@@ -343,10 +334,15 @@ export class AutomationService {
         updated = { ...updated, stage: run.stage + 1 };
         if (child && updated.stage === updated.feature?.finalDeveloperStage) updated.stage++;
         if (updated.stage >= updated.settings.pipeline.length) {
-          if (run.settings.executionMode === 'developer' && this.tasks.getTaskCard(run.taskId).status === TaskStatus.InProgress) this.tasks.setStatus({ id: run.taskId, status: TaskStatus.Testing, actor: 'agent' });
-          this.tasks.setStatus({ id: run.taskId, status: TaskStatus.Review, actor: 'agent' });
-          updated = { ...updated, status: run.settings.mergePolicy === MergePolicy.Local ? RunStatus.Integrating : RunStatus.Review,
-            leaseToken: run.settings.mergePolicy === MergePolicy.Local ? run.leaseToken : null };
+          const writes = PipelinePolicy.writes(run.settings);
+          if (writes) {
+            const status = this.tasks.getTaskCard(run.taskId).status;
+            if (status !== TaskStatus.InProgress && status !== TaskStatus.Testing) this.tasks.setStatus({ id: run.taskId, status: TaskStatus.InProgress, actor: 'agent' });
+            if (this.tasks.getTaskCard(run.taskId).status === TaskStatus.InProgress) this.tasks.setStatus({ id: run.taskId, status: TaskStatus.Testing, actor: 'agent' });
+            this.tasks.setStatus({ id: run.taskId, status: TaskStatus.Review, actor: 'agent' });
+          }
+          const integrate = writes && run.settings.mergePolicy === MergePolicy.Local;
+          updated = { ...updated, status: integrate ? RunStatus.Integrating : RunStatus.Review, leaseToken: integrate ? run.leaseToken : null };
         }
       }
       if (updated.status === RunStatus.Failed || updated.status === RunStatus.Review) updated = { ...updated, finishedAt: now };

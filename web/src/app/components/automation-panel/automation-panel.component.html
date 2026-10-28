@@ -149,12 +149,11 @@
     </div></p-tabpanel><p-tabpanel [value]="tab.Team"><div class="tab-content" [attr.inert]="settingsScope === 'task' && !taskTeamReady ? '' : null">
   <h3>4. Команда агентов</h3>
   @if (settingsScope === 'task') { <p class="hint">Подключения, проект и автопроверки общие. Здесь меняются роли, модели, инструкции и порядок этапов выбранной задачи. Новые подключения добавляются в настройках проекта.</p> }
-  <label>Режим выполнения <p-select [options]="executionOptions" optionLabel="label" optionValue="value" [ngModel]="settings.executionMode || 'team'" (ngModelChange)="setExecutionMode($event)" [disabled]="busy || !taskTeamReady" ariaLabel="Режим выполнения" /></label>
-  @if (settings.executionMode === 'developer') { <p class="hint">Один разработчик выполняет готовый план. Другие роли не запускаются. Обязательные проверки проекта выполняет worker; результат остаётся на проверке пользователя.</p> }
+  <p class="hint">Добавляйте нужные роли и задавайте их порядок. Запускаются только выбранные этапы; обязательной команды нет. Автопроверки после изменения кода выполняет worker.</p>
   <p class="hint">В списке «Подключение» можно сразу добавить Ollama, DeepSeek API/Harness, Antigravity, Claude Code, OpenCode и другие варианты. Исполнитель подбирается по типу подключения. Адрес API и переменную с ключом настройте на вкладке «Модели»; CLI должен быть установлен на worker. Модель — точный ID из вашего CLI/API.</p>
   @if (!settings.agents.length) { <p-button label="Добавить стандартную команду: план → код → тест → ревью" severity="secondary" (onClick)="addStandardTeam()" /> }
   @for (agent of settings.agents; track agent.id; let i = $index) {
-    <fieldset [hidden]="settings.executionMode === 'developer' && !settings.pipeline.includes(agent.id)" [attr.aria-label]="'Агент: ' + roleLabel(agent.role)"><legend>{{ roleLabel(agent.role) }}</legend><div class="row">
+    <fieldset [attr.aria-label]="'Агент: ' + roleLabel(agent.role)"><legend>{{ roleLabel(agent.role) }}</legend><div class="row">
       <label>Роль <p-select [options]="roleOptions" optionLabel="label" optionValue="value" [ngModel]="agent.role" (ngModelChange)="changeRole(agent, $event)" /></label>
       <label>Исполнитель <p-select [options]="runnerOptions(agent)" optionLabel="label" optionValue="value" [(ngModel)]="agent.runner" ariaLabel="Исполнитель агента" appendTo="body" /></label>
       <label>Подключение <p-select [options]="connectionOptions" optionLabel="label" optionValue="value" [(ngModel)]="agent.connectionId" (onChange)="selectConnection(agent)" [filter]="true" filterPlaceholder="Поиск подключения" ariaLabel="Подключение агента" appendTo="body" /></label>
@@ -187,7 +186,7 @@
     }
     </fieldset>
   }
-  <p-button label="Добавить агента" severity="secondary" size="small" (onClick)="addAgent()" />
+  <div class="row"><label>Добавить роль <p-select [options]="roleOptions" optionLabel="label" optionValue="value" [(ngModel)]="addRole" ariaLabel="Добавить роль" /></label><p-button label="Добавить агента" severity="secondary" size="small" (onClick)="addAgent(addRole)" /></div>
   <h3>5. Порядок этапов</h3>
   @for (id of settings.pipeline; track $index; let i = $index) {
     <div class="row pipeline-stage"><span class="grow">{{ i + 1 }}. {{ agentLabel(id) }}</span>
@@ -196,6 +195,15 @@
   }
     </div></p-tabpanel><p-tabpanel [value]="tab.Launch"><div class="tab-content">
   <h3>6. Запуск задачи</h3>
+  <section aria-label="Этапы этого запуска" class="launch-stages">
+    <h4>Кто выполнит этот запуск</h4>
+    <p>Источник: {{ settingsScope === 'task' ? 'команда выбранной задачи' : 'настройки проекта' }}. Отметьте только нужных исполнителей. Этот выбор применяется к новому запуску; отдельное сохранение меняет будущие настройки.</p>
+    @for (agent of settings.agents; track agent.id) {
+      <label class="checkbox-field"><p-checkbox [inputId]="'run-stage-' + agent.id" [binary]="true" [ngModel]="settings.pipeline.includes(agent.id)" (ngModelChange)="toggleStage(agent.id, $event)" [disabled]="busy || !taskTeamReady" /> {{ roleLabel(agent.role) }} · {{ agent.runner }} · {{ agent.model || 'модель не выбрана' }}</label>
+    }
+    <ol>@for (id of settings.pipeline; track $index; let i = $index) { <li>{{ agentLabel(id) }} <button pButton severity="secondary" type="button" [disabled]="i === 0" (click)="move(i, -1)" aria-label="Этап запуска выше">↑</button><button pButton severity="secondary" type="button" [disabled]="i === settings.pipeline.length - 1" (click)="move(i, 1)" aria-label="Этап запуска ниже">↓</button></li> }</ol>
+    <p>Выбрано этапов: {{ settings.pipeline.length }}. Дополнительные роли автоматически не добавляются.</p>
+  </section>
   <p class="hint">Этот запуск использует показанную команду и не меняет настройки проекта. {{ settingsScope === 'task' ? 'Чтобы применять команду к следующим запускам этой задачи, сохраните её для задачи.' : 'Для отдельной команды задачи переключите область настроек.' }}</p>
   <div class="row"><label class="grow">Задача для запуска
     <p-select [options]="taskOptions" optionLabel="label" optionValue="value" optionDisabled="disabled"
@@ -206,7 +214,7 @@
       </div></ng-template>
     </p-select></label>
     <p-button [label]="host.online ? 'Запустить' : 'Поставить в очередь'" [loading]="starting"
-      [disabled]="busy || starting || !selectedTask || !taskTeamReady || !selectedEligibility?.canStart" (onClick)="start()" /></div>
+      [disabled]="busy || starting || !selectedTask || !taskTeamReady || !settings.pipeline.length || !selectedEligibility?.canStart" (onClick)="start()" /></div>
   <p class="hint">DoR здесь означает: статус ready, есть план, нет открытых вопросов. Это проверка полей трекера; качество плана проверяет команда. Задача без DoR может начать с аналитика. Вопросы, неподходящий статус и активный запуск блокируют новую очередь.</p>
   @if (taskListLimited) { <p class="hint">Показаны первые {{ taskSelectionLimit }} задач пространства.</p> }
   @if (selectedEligibility; as eligibility) {

@@ -13,12 +13,12 @@ test('task team overrides inherit project infrastructure and snapshots never cha
     const first = app.taskService.createTask({ title: 'Single developer' }); const second = app.taskService.createTask({ title: 'Full team' });
     app.taskService.attachPlan({ id: first.id, planContent: '# Approved plan', actor: 'agent' });
     const base = service.settings();
-    const override = service.taskTeam(first.id, { ...base, repositoryPath: '/ignored', pipeline: ['developer'], executionMode: 'developer' });
+    const override = service.taskTeam(first.id, { ...base, repositoryPath: '/ignored', pipeline: ['developer'] });
     assert.equal(override.settings.repositoryPath, '/fixture'); assert.equal(override.overridden, true);
     assert.equal(service.taskTeam(second.id).overridden, false);
     assert.deepEqual(service.settings().pipeline, base.pipeline);
     const run = service.enqueue(first.id, undefined, false);
-    assert.deepEqual(run.settings.pipeline, ['developer']); assert.equal(run.settings.executionMode, 'developer');
+    assert.deepEqual(run.settings.pipeline, ['developer']);
     service.configure({ ...base, baseBranch: 'next' });
     assert.equal(service.taskTeam(first.id).settings.baseBranch, 'next');
     assert.equal(service.detail(run.id).run.settings.baseBranch, base.baseBranch, 'Existing run is immutable');
@@ -28,7 +28,6 @@ test('task team overrides inherit project infrastructure and snapshots never cha
     assert.equal(service.taskTeam(first.id, null).overridden, false);
     assert.deepEqual(service.taskTeam(first.id).settings.pipeline, base.pipeline);
     const noPlan = app.taskService.createTask({ title: 'No approved plan' });
-    assert.throws(() => service.enqueue(noPlan.id, { ...base, executionMode: 'developer', pipeline: ['developer'] }, false), /existing plan|analyst/);
-    assert.throws(() => service.enqueue(noPlan.id, { ...base, executionMode: 'team', pipeline: ['developer'] }, false), /developer, tester and reviewer/);
+    assert.throws(() => service.enqueue(noPlan.id, { ...base, pipeline: ['developer'] }, false), /existing plan|analyst/);
   } finally { app.close(); }
 });

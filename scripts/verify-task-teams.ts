@@ -41,15 +41,23 @@ try {
   await page.getByRole('option', { name: `${task.id} · Single developer fixture`, exact: true }).click();
   await dialog.getByText('Наследует команду проекта', { exact: true }).waitFor();
   await page.waitForFunction(() => Array.from(document.querySelectorAll('button')).some(button => button.textContent?.trim() === 'Сохранить команду задачи' && !button.disabled));
-  await dialog.getByRole('combobox', { name: 'Режим выполнения', exact: true }).click();
-  await page.getByRole('option', { name: 'Один разработчик', exact: true }).click();
-  assert.equal(await dialog.locator('.pipeline-stage').count(), 1);
+  assert.equal(await dialog.getByRole('combobox', { name: 'Режим выполнения', exact: true }).count(), 0);
+  await dialog.getByRole('tab', { name: 'Запуск', exact: true }).click();
+  const selectedStages = dialog.getByRole('region', { name: 'Этапы этого запуска' });
+  for (const role of ['analyst', 'tester', 'reviewer']) await selectedStages.locator(`[id="run-stage-${role}"]`).uncheck();
+  await selectedStages.getByText(/Выбрано этапов: 1\./).waitFor();
+  assert.equal(await selectedStages.locator('ol li').count(), 1);
+  await selectedStages.locator('[id="run-stage-reviewer"]').check();
+  await selectedStages.getByText(/Выбрано этапов: 2\./).waitFor();
+  assert.equal(await selectedStages.locator('ol li').count(), 2, 'Developer + reviewer needs no fixed team mode');
+  await selectedStages.locator('[id="run-stage-reviewer"]').uncheck();
+  await selectedStages.getByText(/Выбрано этапов: 1\./).waitFor();
   await dialog.getByRole('button', { name: 'Сохранить команду задачи', exact: true }).click();
   await dialog.getByText(`Команда задачи ${task.id} сохранена. Настройки проекта не изменены.`, { exact: true }).waitFor();
-  assert.equal(service.taskTeam(task.id).settings.executionMode, 'developer'); assert.equal(service.settings().pipeline.length, 4);
+  assert.deepEqual(service.taskTeam(task.id).settings.pipeline, ['developer']); assert.equal(service.settings().pipeline.length, 4);
   await dialog.getByRole('button', { name: 'Наследовать команду проекта', exact: true }).click();
   await dialog.getByText('Задача наследует команду проекта.', { exact: true }).waitFor();
-  assert.equal(service.taskTeam(task.id).overridden, false); assert.equal(await dialog.locator('.pipeline-stage').count(), 4);
+  assert.equal(service.taskTeam(task.id).overridden, false); assert.equal(await selectedStages.locator('ol li').count(), 4);
   for (const viewport of [{ width: 390, height: 844 }, { width: 844, height: 390 }]) {
     await page.setViewportSize(viewport); assert.ok(await dialog.evaluate(element => element.scrollWidth <= element.clientWidth + 2));
     const footer = (await dialog.locator('.settings-footer').boundingBox())!; const bounds = (await dialog.boundingBox())!;
@@ -57,6 +65,13 @@ try {
   }
   assert.deepEqual(errors, []);
   await page.setViewportSize({ width: 1440, height: 1000 });
+  for (const role of ['developer', 'tester', 'reviewer']) await selectedStages.locator(`[id="run-stage-${role}"]`).uncheck();
+  await selectedStages.getByText(/Выбрано этапов: 1\./).waitFor();
+  assert.equal(await selectedStages.locator('ol li').count(), 1, 'Analyst-only is selectable');
   mkdirSync('dist/acceptance', { recursive: true }); await page.screenshot({ path: 'dist/acceptance/task-team-settings.png' });
-  console.log('PASS: fixed modal geometry/opaque footer, project/task team isolation, developer preset/reset, responsive. No models or real task store.');
+  await dialog.getByRole('button', { name: 'Поставить в очередь', exact: true }).click();
+  await page.getByRole('dialog', { name: 'Очередь агентов', exact: true }).waitFor();
+  assert.deepEqual(service.list(task.id)[0].settings.pipeline, ['analyst']);
+  assert.equal(service.settings().pipeline.length, 4); assert.equal(service.taskTeam(task.id).overridden, false, 'Per-run selection must not persist');
+  console.log('PASS: fixed geometry/footer, arbitrary launch roles, developer/reviewer/analyst selection, exact immutable queue snapshot, project/task isolation/reset, responsive. No models or real task store.');
 } finally { await browser.close(); server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); app.close(); rmSync(root, { recursive: true, force: true }); }
