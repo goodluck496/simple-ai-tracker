@@ -76,6 +76,13 @@ test('native adapters preserve model, prompt and native result/error envelopes',
     assert.ok(executor.request!.args.includes(`mcp_servers.codegraph.args=${JSON.stringify(NativeExecutable.codegraphMcp(cwd).args)}`));
     assert.ok(executor.request!.args.includes('mcp_servers.codegraph.enabled_tools=["codegraph_explore"]'));
     assert.ok(executor.request!.args.includes('mcp_servers.blender.enabled=false'));
+    await new NativeAgentRunner('codex', executor).run({ cwd, prompt: 'Project MCP', profile: { model: 'm' },
+      projectMcp: [{ name: 'blender', command: 'project-bridge', args: ['--path', cwd], envVars: ['PROJECT_TOKEN'], tools: ['lookup'] }],
+      signal: AbortSignal.timeout(5000) } as AgentJob, () => undefined);
+    assert.ok(executor.request!.args.includes('mcp_servers.blender.command="project-bridge"'));
+    assert.ok(executor.request!.args.includes('mcp_servers.blender.enabled_tools=["lookup"]'));
+    assert.ok(executor.request!.args.includes('mcp_servers.blender.env_vars=["PROJECT_TOKEN"]'));
+    assert.equal(executor.request!.args.includes('mcp_servers.blender.enabled=false'), false);
     executor.output = '{"is_error":true,"result":"auth failed"}';
     await assert.rejects(new NativeAgentRunner('claude-code', executor).run({ cwd, prompt: 'Test error envelope', profile: { model: 'm' }, signal: AbortSignal.timeout(5000) } as AgentJob, () => undefined), /failed/);
   } finally { await rm(cwd, { recursive: true, force: true }); }

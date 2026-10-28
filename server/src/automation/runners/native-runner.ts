@@ -78,8 +78,19 @@ export class NativeAgentRunner implements AgentRunner {
         args.push('-c', `mcp_servers.codegraph.command=${JSON.stringify(executable.command)}`, '-c', `mcp_servers.codegraph.args=${JSON.stringify(executable.args)}`,
           '-c', 'mcp_servers.codegraph.enabled=true', '-c', 'mcp_servers.codegraph.enabled_tools=["codegraph_explore"]', '-c', 'mcp_servers.codegraph.default_tools_approval_mode="auto"');
       }
+      for (const server of job.projectMcp ?? []) {
+        const inherited = servers.find(s => s.name === server.name);
+        if (inherited && inherited.transport?.type !== 'stdio') throw new Error('Project MCP name conflicts with a non-stdio account server: ' + server.name);
+        args.push('-c', `mcp_servers.${server.name}.command=${JSON.stringify(server.command)}`,
+          '-c', `mcp_servers.${server.name}.args=${JSON.stringify(server.args)}`,
+          '-c', `mcp_servers.${server.name}.cwd=${JSON.stringify(job.cwd)}`,
+          '-c', `mcp_servers.${server.name}.env_vars=${JSON.stringify(server.envVars)}`,
+          '-c', `mcp_servers.${server.name}.enabled_tools=${JSON.stringify(server.tools)}`,
+          '-c', `mcp_servers.${server.name}.default_tools_approval_mode="auto"`,
+          '-c', `mcp_servers.${server.name}.enabled=true`);
+      }
       // Retain the repository's required code navigation only when it is indexed.
-      for (const server of servers) if (server.name !== AGENT_TRACKER_SERVER && server.enabled !== false && (server.name !== 'codegraph' || !indexed)) {
+      for (const server of servers) if (!(job.projectMcp ?? []).some(s => s.name === server.name) && server.name !== AGENT_TRACKER_SERVER && server.enabled !== false && (server.name !== 'codegraph' || !indexed)) {
         // Desktop-injected servers may not exist in config.toml. An enabled-only
         // override would create a transport-less entry and make Codex refuse startup.
         if (server.transport?.type === 'stdio' && server.transport.command) args.push('-c', `mcp_servers.${server.name}.command=${JSON.stringify(server.transport.command)}`);

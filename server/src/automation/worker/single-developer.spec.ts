@@ -17,9 +17,10 @@ test('selected developer and optional reviewer are the only invoked roles; manda
   const git = (args: string[]) => executor.run({ command: 'git', args, cwd: repository, signal });
   try {
     await git(['init', '-b', 'main']); await git(['config', 'user.name', 'Fixture']); await git(['config', 'user.email', 'fixture@example.invalid']);
+    await fs.writeFile(path.join(repository, 'AGENTS.md'), 'WORKTREE_POLICY_SENTINEL: obey project policy.');
     await fs.writeFile(path.join(repository, 'source.txt'), 'old'); await git(['add', '.']); await git(['commit', '-m', 'initial']);
     const bridge = path.join(root, 'fixture.cjs'); const calls = path.join(root, 'calls.txt'); const checks = path.join(root, 'checks.txt');
-    await fs.writeFile(bridge, `const fs=require('node:fs');const role=process.argv[3];fs.appendFileSync(${JSON.stringify(calls)},role+'\\n');if(role==='developer')fs.writeFileSync('source.txt','implemented');console.log(JSON.stringify({verdict:'pass',summary:'implemented',commitMessage:'[#'+process.argv[2]+'] - Изменён исходник для проверки готового плана'}));`);
+    await fs.writeFile(bridge, `const fs=require('node:fs');const role=process.argv[3];if(!fs.readFileSync('.sat/instructions.md','utf8').includes('WORKTREE_POLICY_SENTINEL'))throw Error('Missing project policy');const receipt=JSON.parse(fs.readFileSync('.sat/environment-'+role+'.json','utf8'));if(receipt.files[0].path!=='AGENTS.md')throw Error('Missing preflight receipt');fs.appendFileSync(${JSON.stringify(calls)},role+'\\n');if(role==='developer')fs.writeFileSync('source.txt','implemented');console.log(JSON.stringify({verdict:'pass',summary:'implemented',commitMessage:'[#'+process.argv[2]+'] - Изменён исходник для проверки готового плана'}));`);
     app.automationService.configure({ ...structuredClone(DEFAULT_AUTOMATION_SETTINGS), repositoryPath: repository, baseBranch: 'main',
       connections: [{ id: 'n', label: 'Fixture', kind: 'native', supportsImages: false }], agents: [{ id: 'dev', role: 'developer', runner: 'custom', connectionId: 'n', model: 'fixture', command: process.execPath, args: [bridge, '{model}', '{role}'], instructions: '' }], pipeline: ['dev'],
       checks: [{ command: process.execPath, args: ['-e', `require('node:fs').appendFileSync(${JSON.stringify(checks)},'checked\\n')`] }] });

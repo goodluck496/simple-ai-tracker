@@ -151,6 +151,7 @@ export interface AgentOutcome {
 }
 
 export interface AgentJob {
+  projectMcp?: { name: string; command: string; args: string[]; envVars: string[]; tools: string[] }[];
   maxToolCalls?: number;
   onUsage?: (usage: import('./token-usage.js').TokenUsage, state?: { terminal: boolean }) => void;
   runId: string;
