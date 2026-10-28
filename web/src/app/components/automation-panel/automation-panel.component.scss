@@ -40,6 +40,12 @@ button { cursor: pointer; }
 .task-option { display: grid; gap: .3rem; max-width: min(60rem, 80vw); white-space: normal; overflow-wrap: anywhere; }
 .launch-feedback { padding: .7rem; border: 1px solid var(--p-content-border-color); border-radius: .4rem; overflow-wrap: anywhere; }
 .launch-feedback p { margin: .3rem 0; }
+.batch-launch { display: grid; gap: .65rem; min-width: 0; }
+.batch-task-list { list-style: none; padding: 0; margin: 0; max-height: 15rem; overflow: auto; }
+.batch-task-list li { display: flex; align-items: center; justify-content: space-between; gap: .5rem; border-bottom: 1px solid var(--p-content-border-color); padding: .4rem 0; }
+.batch-task-list li > div { min-width: 0; overflow-wrap: anywhere; }
+.batch-task-list span { display: block; }
+:host ::ng-deep .batch-launch .p-multiselect { width: 100%; max-width: 100%; }
 .chips, .selected-commands { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; }
 .chip { border: 1px solid var(--p-content-border-color); border-radius: 2rem; padding: .4rem .8rem; background: var(--p-content-background); color: inherit; }
 .chip.selected { border-color: var(--p-primary-color); background: var(--p-highlight-background); color: var(--p-highlight-color); }

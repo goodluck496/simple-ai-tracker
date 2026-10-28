@@ -9,6 +9,7 @@ import { LINK_RELATIONS, QUESTION_PHASES, SEARCH_SCOPES, type LinkRelation, type
 import type { SearchScope, TaskFilters } from '../domain/entities.js';
 import type { AgentOutcome } from '../../../shared/automation/contracts.js';
 import { AutomationTool, AUTOMATION_TOOLS, AUTOMATION_TOOL_PREFIX } from '../../../shared/automation/protocol.js';
+import { BATCH_TASK_LIMIT } from '../../../shared/automation/batch.js';
 import { AGENT_TRACKER_READ_TOOLS } from '../../../shared/automation/tracker-access.js';
 import type { RunPhase } from '../../../shared/automation/queue.js';
 
@@ -82,7 +83,7 @@ export class TrackerToolRegistry {
     return [
       ...AUTOMATION_TOOLS.map((name): McpToolDefinition => ({
         name, description: `Automation ${name}. Operates only in the selected workspace. Worker mutations require an active leaseToken.`,
-        inputSchema: { type: 'object', properties: { id: { type: 'string' }, taskId: { type: 'string' }, workerId: { type: 'string' },
+        inputSchema: { type: 'object', properties: { id: { type: 'string' }, taskId: { type: 'string' }, taskIds: { type: 'array', items: { type: 'string' }, maxItems: BATCH_TASK_LIMIT }, requestId: { type: 'string' }, workerId: { type: 'string' },
           leaseToken: { type: 'string' }, text: { type: 'string' }, branch: { type: 'string' }, commitSha: { type: 'string' },
           attemptId: { type: 'string' }, usage: { type: 'object', additionalProperties: true }, finished: { type: 'boolean' },
           settings: { type: 'object', additionalProperties: true }, outcome: { type: 'object', additionalProperties: true },
@@ -417,6 +418,7 @@ export class TrackerToolRegistry {
         case AutomationTool.Cleanup: return json(service.cleanup(id(), (args['result'] as { discard?: boolean } | undefined)?.discard === true));
         case AutomationTool.Delete: service.deleteRun(id()); return json({ ok: true });
         case AutomationTool.Enqueue: return json(service.enqueue(requireString(args, 'taskId'), args['settings'], false));
+        case AutomationTool.EnqueueBatch: return json({ runs: service.enqueueBatch(args['taskIds'], args['settings'], args['requestId']) });
         case AutomationTool.Claim: return json(service.claim(requireString(args, 'workerId')));
         case AutomationTool.Heartbeat: return json(service.heartbeat(id(), token(), args['phase'] === 'recovery', args['phase'] === 'publish'));
         case AutomationTool.Progress: service.progress(id(), token(), requireString(args, 'text'), asString(args, 'phase') as RunPhase | undefined); return json({ ok: true });

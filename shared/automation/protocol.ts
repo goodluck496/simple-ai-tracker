@@ -4,7 +4,7 @@ export const AutomationTool = {
   TaskTeam: `${AUTOMATION_TOOL_PREFIX}task_team`,
   ListRuns: `${AUTOMATION_TOOL_PREFIX}list_runs`, GetRun: `${AUTOMATION_TOOL_PREFIX}get_run`,
   History: `${AUTOMATION_TOOL_PREFIX}history`, Archive: `${AUTOMATION_TOOL_PREFIX}archive`, Cleanup: `${AUTOMATION_TOOL_PREFIX}cleanup`, Delete: `${AUTOMATION_TOOL_PREFIX}delete`,
-  Enqueue: `${AUTOMATION_TOOL_PREFIX}enqueue`, Claim: `${AUTOMATION_TOOL_PREFIX}claim`,
+  Enqueue: `${AUTOMATION_TOOL_PREFIX}enqueue`, EnqueueBatch: `${AUTOMATION_TOOL_PREFIX}enqueue_batch`, Claim: `${AUTOMATION_TOOL_PREFIX}claim`,
   Heartbeat: `${AUTOMATION_TOOL_PREFIX}heartbeat`, Progress: `${AUTOMATION_TOOL_PREFIX}progress`,
   Usage: `${AUTOMATION_TOOL_PREFIX}usage`,
   BeginStage: `${AUTOMATION_TOOL_PREFIX}begin_stage`, CompleteStage: `${AUTOMATION_TOOL_PREFIX}complete_stage`,

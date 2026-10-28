@@ -61,9 +61,12 @@ export class AppComponent implements OnInit {
   public showAutomation = false;
   public automationTaskId: string | null = null;
   public automationMessage = '';
+  public automationBatch = false;
   public openAutomation(taskId: string | null = null, message = ''): void {
+    this.automationBatch = false;
     this.automationTaskId = taskId; this.automationMessage = message; this.showAutomation = true;
   }
+  public openBatchAutomation(): void { this.openAutomation(); this.automationBatch = true; }
   public launchTask(id: string): void {
     this.automationLauncher.preview(id).pipe(tap(runId => runId ? this.openQueue(runId) : this.openAutomation(id)),
       catchError(() => { this.openAutomation(id); return EMPTY; }), takeUntilDestroyed(this.destroyRef)).subscribe();

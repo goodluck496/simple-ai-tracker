@@ -208,6 +208,9 @@
   }
     </div></p-tabpanel><p-tabpanel [value]="tab.Launch"><div class="tab-content">
   <h3>6. Запуск задачи</h3>
+  @if (settingsScope === 'project') {
+    <label>Запуск <p-select [options]="launchModes" optionLabel="label" optionValue="value" [(ngModel)]="batchMode" ariaLabel="Режим запуска" appendTo="body" /></label>
+  }
   @if (launchConfigurationProblems.length) {
     <div class="launch-feedback" role="status">
       @for (problem of launchConfigurationProblems; track problem) { <p>{{ problem }}</p> }
@@ -237,6 +240,32 @@
     <p>Выбрано этапов: {{ settings.pipeline.length }}. Дополнительные роли автоматически не добавляются.</p>
   </section>
   <p class="hint">Этот запуск использует показанную команду и не меняет настройки проекта. {{ settingsScope === 'task' ? 'Чтобы применять команду к следующим запускам этой задачи, сохраните её для задачи.' : 'Для отдельной команды задачи переключите область настроек.' }}</p>
+  @if (batchMode && settingsScope === 'project') {
+    <section class="batch-launch" aria-label="Группа задач">
+      @if (taskListLimited) { <p class="hint">Показаны первые {{ taskSelectionLimit }} задач пространства.</p> }
+      <p class="hint">Все выбранные задачи получат показанные выше этапы и настройки проекта. Для анализа оставьте только аналитика. Индивидуальные команды задач в этом запуске заменяются общим выбором. Лимит группы: {{ batchLimit }}.</p>
+      <label>Задачи для группы
+        <p-multiselect [options]="taskOptions" optionLabel="label" optionValue="value" optionDisabled="disabled"
+          [(ngModel)]="batchTaskIds" [filter]="true" filterBy="label" [showToggleAll]="false" [selectionLimit]="batchLimit"
+          [maxSelectedLabels]="3" selectedItemsLabel="{0} задач" placeholder="Выберите задачи" ariaLabel="Задачи для группы" appendTo="body" />
+      </label>
+      <div class="row">
+        <p-button label="Выбрать доступные" severity="secondary" [disabled]="starting" (onClick)="selectAvailableTasks()" />
+        <p-button label="Очистить выбор" severity="secondary" [disabled]="starting || !batchTaskIds.length" (onClick)="batchTaskIds = []" />
+      </div>
+      <p>Выбрано задач: {{ batchTaskIds.length }}. Для каждой будет создан отдельный запуск с {{ settings.pipeline.length }} этапами.</p>
+      <ul class="batch-task-list">
+        @for (row of batchRows; track row.id) {
+          <li><div><strong>{{ row.id }} · {{ row.label }}</strong>
+            @if (row.reasons.length) { <p class="error">{{ row.reasons.join(' ') }}</p> } @else { <span class="hint">Можно поставить в очередь</span> }
+          </div><p-button icon="pi pi-times" severity="secondary" [text]="true" [ariaLabel]="'Убрать из группы ' + row.id" [disabled]="starting" (onClick)="removeBatchTask(row.id)" /></li>
+        }
+      </ul>
+      <p-button [label]="'Поставить группу в очередь (' + batchTaskIds.length + ')'" [loading]="starting"
+        [disabled]="busy || starting || !batchTaskIds.length || batchBlocked || !settings.pipeline.length" (onClick)="startBatch()" />
+      <p class="hint">Группа добавляется целиком. Если состояние задачи изменилось и запуск невозможен, ни одна новая задача из группы не будет добавлена.</p>
+    </section>
+  } @else {
   <div class="row">@if (settingsScope === 'project') { <label class="grow">Задача для запуска
     <p-select [options]="taskOptions" optionLabel="label" optionValue="value" optionDisabled="disabled"
       [formControl]="taskControl" [filter]="true" filterBy="label" filterPlaceholder="Поиск по ID, названию или статусу"
@@ -254,6 +283,7 @@
       @if (!eligibility.dorReady) { <p>До DoR: {{ eligibility.dorReasons.join(' ') }}</p> }
       @for (reason of eligibility.reasons; track reason) { <p class="error">{{ reason }}</p> }
     </div>
+  }
   }
   @if (!host.online) { <p class="hint">Worker отключён. Можно поставить задачу в очередь, но выполнение начнётся только после подключения компьютера в шаге 1.</p> }
   <p class="hint">В очередь попадёт отдельная копия выбранных этапов и настроек. Уже созданные запуски и настройки проекта не изменяются.</p>

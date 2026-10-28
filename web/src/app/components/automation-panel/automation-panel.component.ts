@@ -10,6 +10,8 @@ import { InputTextModule } from 'primeng/inputtext';
 import { TabsModule } from 'primeng/tabs';
 import { AccordionModule } from 'primeng/accordion';
 import { DialogModule } from 'primeng/dialog';
+import { MultiSelectModule } from 'primeng/multiselect';
+import { BATCH_TASK_LIMIT } from '../../../../../shared/automation/batch';
 import { PipelinePolicy } from '../../../../../shared/automation/pipeline-policy';
 import { AUTOMATION_TABS, AutomationTab } from './automation-panel.types';
 import { AGENT_ROLES, RUNNER_IDS, DEFAULT_AUTOMATION_SETTINGS, PROVIDER_KINDS, REASONING_EFFORTS, MERGE_POLICIES,
@@ -27,7 +29,7 @@ import { TaskAutomationReadiness, TASK_STATUS_TITLES, TASK_SELECTION_LIMIT, type
 import { ModelCatalogKey, type ModelOption } from '../../../../../shared/automation/model-catalog';
 
 @Component({ selector: 'sat-automation-panel', standalone: true,
-  imports: [FormsModule, ReactiveFormsModule, SelectModule, ButtonModule, CheckboxModule, InputTextModule, TabsModule, AccordionModule, DialogModule],
+  imports: [FormsModule, ReactiveFormsModule, SelectModule, ButtonModule, CheckboxModule, InputTextModule, TabsModule, AccordionModule, DialogModule, MultiSelectModule],
   templateUrl: './automation-panel.component.html', styleUrl: './automation-panel.component.scss' })
 export class AutomationPanelComponent implements OnInit {
   @Output() public readonly openQueue = new EventEmitter<string | null>();
@@ -35,6 +37,39 @@ export class AutomationPanelComponent implements OnInit {
   public readonly tab = AutomationTab;
   public activeTab: string | number = AutomationTab.Project;
   @Input() public initialMessage = '';
+  @Input() public set initialBatch(value: boolean) { if (value) { this.batchMode = true; this.activeTab = AutomationTab.Launch; } }
+  public batchMode = false;
+  public batchTaskIds: string[] = [];
+  private batchRequest?: { signature: string; id: string };
+  public readonly batchLimit = BATCH_TASK_LIMIT;
+  public readonly launchModes = [{ label: 'Одна задача', value: false }, { label: 'Группа задач', value: true }];
+  public get batchRows() {
+    return this.batchTaskIds.map(id => {
+      const option = this.taskOptions.find(option => option.value === id);
+      return { id, label: option?.title ?? id, reasons: option ? option.readiness.reasons : ['Задача недоступна в текущем списке.'] };
+    });
+  }
+  public get batchBlocked(): boolean { return this.batchRows.some(row => row.reasons.length > 0); }
+  public selectAvailableTasks(): void { this.batchTaskIds = this.taskOptions.filter(option => !option.disabled).slice(0, BATCH_TASK_LIMIT).map(option => option.value); }
+  public removeBatchTask(id: string): void { this.batchTaskIds = this.batchTaskIds.filter(value => value !== id); }
+  public async startBatch(): Promise<void> {
+    if (this.starting) return;
+    this.startError = ''; this.startNotice = '';
+    if (this.launchConfigurationProblems.length) { this.startError = this.launchConfigurationProblems.join(' '); return; }
+    if (!this.batchTaskIds.length || this.batchTaskIds.length > BATCH_TASK_LIMIT || this.batchBlocked) { this.startError = 'Выберите доступные задачи и уберите заблокированные из группы.'; return; }
+    const taskIds = [...this.batchTaskIds]; const settings = structuredClone(this.settings);
+    const signature = JSON.stringify({ taskIds, settings });
+    if (this.batchRequest?.signature !== signature) this.batchRequest = { signature, id: crypto.randomUUID() };
+    this.starting = true;
+    try {
+      const response = await firstValueFrom(this.http.post<{ runs: AgentRun[] }>('/api/automation/batch', { taskIds, settings, requestId: this.batchRequest!.id }));
+      if (this.destroyed) return;
+      this.batchTaskIds = []; this.batchRequest = undefined; this.startNotice = `В очередь добавлено задач: ${response.runs.length}.`;
+      await this.poll();
+      this.openQueue.emit(null);
+    } catch (error) { if (!this.destroyed) this.startError = 'Ошибка запуска группы: ' + this.errorMessage(error); }
+    finally { this.starting = false; this.changeDetector.markForCheck(); }
+  }
   @Input() public set initialTaskId(id: string | null) {
     if (id) { this.taskControl.setValue(id); this.activeTab = AutomationTab.Launch; this.settingsScope = 'task'; }
   }

@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { randomUUID, createHash } from 'node:crypto';
 import { DEFAULT_AUTOMATION_SETTINGS, AgentRole, RunStatus, AgentVerdict, AUTOMATION_START_TASK_STATUSES, ACTIVE_RUN_STATUSES,
   RESUMABLE_RUN_STATUSES, OWNED_RUN_STATUSES, WRITABLE_AGENT_ROLES, EVIDENCE_AGENT_ROLES, AGENT_VERDICTS, AUTOMATION_TIMING, MergePolicy,
   type AgentOutcome, type AgentRun, type AutomationSettings, type IntegrationInfo } from '../../../shared/automation/contracts.js';
@@ -15,6 +15,7 @@ import { RunBudget } from '../../../shared/automation/budget.js';
 import { Decomposition } from '../../../shared/automation/decomposition.js';
 import { FeaturePlanning } from './feature-planning.js';
 import { PipelinePolicy } from '../../../shared/automation/pipeline-policy.js';
+import { BATCH_TASK_LIMIT } from '../../../shared/automation/batch.js';
 import { ProjectAction, type ProjectResult } from '../../../shared/automation/project.js';
 
 const SETTINGS_KEY = 'automation_settings_v1';
@@ -100,6 +101,32 @@ export class AutomationService {
   }
   public enqueue(taskId: string, draft?: unknown, persistSettings = true): AgentRun {
     return this.createRun(taskId, draft, undefined, persistSettings);
+  }
+  public enqueueBatch(taskIds: unknown, draft?: unknown, requestId?: unknown): AgentRun[] {
+    if (!Array.isArray(taskIds) || !taskIds.length || taskIds.length > BATCH_TASK_LIMIT
+      || taskIds.some(id => typeof id !== 'string' || !id.trim()) || new Set(taskIds).size !== taskIds.length) {
+      throw new TrackerError('VALIDATION_FAILED', `Выберите от 1 до ${BATCH_TASK_LIMIT} разных задач.`);
+    }
+    if (requestId !== undefined && (typeof requestId !== 'string' || !/^[a-f0-9-]{36}$/i.test(requestId))) throw new TrackerError('VALIDATION_FAILED', 'Некорректный идентификатор группового запроса.');
+    const key = requestId ? 'automation_batch_' + requestId : undefined;
+    const fingerprint = createHash('sha256').update(JSON.stringify({ taskIds, draft })).digest('hex');
+    return this.runs.db.transaction(() => {
+      const receipt = key ? this.repos.meta.get(key) : undefined;
+      if (receipt) {
+        const saved = JSON.parse(receipt) as { fingerprint: string; ids: string[] };
+        if (saved.fingerprint !== fingerprint) throw new TrackerError('CONFLICT', 'Этот идентификатор группы уже использован с другим составом или настройками.');
+        return saved.ids.map(id => this.publicRun(this.requireRun(id)));
+      }
+      const runs = taskIds.map((id: string) => {
+        try { return this.createRun(id, draft, undefined, false); }
+        catch (error) {
+          if (error instanceof TrackerError) throw new TrackerError(error.code, `${id}: ${error.message} Ни одна задача из группы не добавлена в очередь.`);
+          throw error;
+        }
+      });
+      if (key) this.repos.meta.set(key, JSON.stringify({ fingerprint, ids: runs.map(run => run.id) }));
+      return runs;
+    });
   }
   private createRun(taskId: string, draft?: unknown, previous?: AgentRun, persistSettings = true): AgentRun {
     return this.runs.db.transaction(() => {
