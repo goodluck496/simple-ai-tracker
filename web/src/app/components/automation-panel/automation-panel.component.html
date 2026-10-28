@@ -195,7 +195,7 @@
     }
     </fieldset>
   }
-  <div class="row"><label>Добавить роль <p-select [options]="roleOptions" optionLabel="label" optionValue="value" [(ngModel)]="addRole" ariaLabel="Добавить роль" /></label><p-button label="Добавить агента" severity="secondary" size="small" (onClick)="addAgent(addRole)" /></div>
+  <div class="row"><label>Добавить роль <p-select [options]="roleOptions" optionLabel="label" optionValue="value" [(ngModel)]="addRole" ariaLabel="Добавить роль" appendTo="body" scrollHeight="12rem" /></label><p-button label="Добавить агента" severity="secondary" size="small" (onClick)="addAgent(addRole)" /></div>
   <h3>5. Порядок этапов</h3>
   @for (id of settings.pipeline; track $index; let i = $index) {
     <div class="row pipeline-stage"><span class="grow">{{ i + 1 }}. {{ agentLabel(id) }}</span>

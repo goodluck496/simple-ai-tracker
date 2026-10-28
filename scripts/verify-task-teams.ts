@@ -51,6 +51,30 @@ try {
       const color = getComputedStyle(element).backgroundColor; return color !== 'transparent' && !/rgba\([^)]*,\s*0\)$/.test(color);
     }), 'Footer must be opaque');
   }
+  await dialog.getByRole('tab', { name: 'Команда и этапы', exact: true }).click();
+  for (const viewport of [{ width: 1440, height: 1000 }, { width: 390, height: 844 }]) {
+    await page.setViewportSize(viewport);
+    const picker = dialog.getByRole('combobox', { name: 'Добавить роль', exact: true });
+    await picker.scrollIntoViewIfNeeded();
+    await picker.evaluate(element => {
+      const panel = element.closest('.p-tabpanels')!;
+      panel.scrollTop += element.getBoundingClientRect().bottom - panel.getBoundingClientRect().bottom + 8;
+    });
+    const scrollBefore = await dialog.locator('.p-tabpanels').evaluate(element => element.scrollTop);
+    await picker.click();
+    const popup = page.getByRole('listbox'); await popup.waitFor();
+    assert.equal(await popup.evaluate(element => element.closest('.p-tabpanels') === null), true, 'Role popup must escape the scroll/clipping container');
+    assert.ok(Math.abs(await dialog.locator('.p-tabpanels').evaluate(element => element.scrollTop) - scrollBefore) <= 2, 'Opening roles must not move modal content');
+    const bounds = (await popup.boundingBox())!;
+    assert.ok(bounds.y >= 0 && bounds.y + bounds.height <= viewport.height + 2, 'Role choices must remain in viewport');
+    await popup.hover(); await page.mouse.wheel(0, 180);
+    await page.waitForFunction((list: HTMLElement) => list.isConnected && (list.parentElement?.scrollTop ?? 0) > 0, await popup.elementHandle());
+    await popup.waitFor({ state: 'visible' });
+    if (viewport.width === 1440) { mkdirSync('dist/acceptance', { recursive: true }); await page.screenshot({ path: 'dist/acceptance/role-picker.png' }); }
+    await page.getByRole('option', { name: 'Тестировщик — проверки', exact: true }).click();
+    await popup.waitFor({ state: 'hidden' });
+  }
+  await page.setViewportSize({ width: 1440, height: 1000 });
   await dialog.getByRole('combobox', { name: 'Область настроек', exact: true }).click();
   await page.getByRole('option', { name: 'Команда выбранной задачи', exact: true }).click();
   await dialog.getByRole('combobox', { name: 'Задача для настройки команды', exact: true }).click();
