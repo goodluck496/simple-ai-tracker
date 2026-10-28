@@ -207,10 +207,23 @@
   <section aria-label="Этапы этого запуска" class="launch-stages">
     <h4>Кто выполнит этот запуск</h4>
     <p>Источник: {{ settingsScope === 'task' ? 'команда выбранной задачи' : 'настройки проекта' }}. Отметьте только нужных исполнителей. Этот выбор применяется к новому запуску; отдельное сохранение меняет будущие настройки.</p>
-    @for (agent of settings.agents; track agent.id) {
-      <label class="checkbox-field"><p-checkbox [inputId]="'run-stage-' + agent.id" [binary]="true" [ngModel]="settings.pipeline.includes(agent.id)" (ngModelChange)="toggleStage(agent.id, $event)" [disabled]="busy || !taskTeamReady" /> {{ roleLabel(agent.role) }} · {{ agent.runner }} · {{ agent.model || 'модель не выбрана' }}</label>
+    <div class="launch-agent-list">
+    @for (agent of launchAgents; track agent.id) {
+      @let stageIndex = settings.pipeline.indexOf(agent.id);
+      <div class="launch-agent-row" [class.stage-enabled]="stageIndex >= 0" [attr.data-agent-id]="agent.id">
+        <p-checkbox [inputId]="'run-stage-' + agent.id" [binary]="true" [ngModel]="stageIndex >= 0" (ngModelChange)="toggleStage(agent.id, $event)" [disabled]="busy || !taskTeamReady" />
+        <span class="stage-number" aria-hidden="true">{{ stageIndex >= 0 ? stageIndex + 1 : '—' }}</span>
+        <label class="stage-identity" [for]="'run-stage-' + agent.id" [title]="agentLabel(agent.id)">
+          <strong>{{ roleLabel(agent.role) }}</strong>
+          <span>{{ agent.runner }} · {{ agent.model || 'модель не выбрана' }}</span>
+        </label>
+        <div class="stage-actions">
+          <button pButton severity="secondary" type="button" [disabled]="busy || !taskTeamReady || stageIndex <= 0" (click)="move(stageIndex, -1)" [attr.aria-label]="'Этап запуска выше: ' + roleLabel(agent.role)">↑</button>
+          <button pButton severity="secondary" type="button" [disabled]="busy || !taskTeamReady || stageIndex < 0 || stageIndex === settings.pipeline.length - 1" (click)="move(stageIndex, 1)" [attr.aria-label]="'Этап запуска ниже: ' + roleLabel(agent.role)">↓</button>
+        </div>
+      </div>
     }
-    <ol>@for (id of settings.pipeline; track $index; let i = $index) { <li>{{ agentLabel(id) }} <button pButton severity="secondary" type="button" [disabled]="i === 0" (click)="move(i, -1)" aria-label="Этап запуска выше">↑</button><button pButton severity="secondary" type="button" [disabled]="i === settings.pipeline.length - 1" (click)="move(i, 1)" aria-label="Этап запуска ниже">↓</button></li> }</ol>
+    </div>
     <p>Выбрано этапов: {{ settings.pipeline.length }}. Дополнительные роли автоматически не добавляются.</p>
   </section>
   <p class="hint">Этот запуск использует показанную команду и не меняет настройки проекта. {{ settingsScope === 'task' ? 'Чтобы применять команду к следующим запускам этой задачи, сохраните её для задачи.' : 'Для отдельной команды задачи переключите область настроек.' }}</p>

@@ -89,6 +89,10 @@ export class AutomationPanelComponent implements OnInit {
   public toggleStage(id: string, selected: boolean): void {
     this.settings.pipeline = selected ? this.settings.pipeline.includes(id) ? this.settings.pipeline : [...this.settings.pipeline, id] : this.settings.pipeline.filter(stage => stage !== id);
   }
+  public get launchAgents(): AgentProfile[] {
+    const position = (id: string) => { const index = this.settings.pipeline.indexOf(id); return index < 0 ? Infinity : index; };
+    return [...this.settings.agents].sort((a, b) => position(a.id) - position(b.id));
+  }
   public get taskOptions() {
     const options = (this.latestTasks ?? this.availableTasks).map((task) => {
       const readiness = TaskAutomationReadiness.evaluate(task, this.settings, this.activeTaskIds.includes(task.id));

@@ -11,6 +11,21 @@ fieldset[hidden] { display: none; }
 .row { display: flex; flex-wrap: wrap; align-items: end; gap: .65rem; }
 label { display: grid; gap: .35rem; font-size: .85rem; min-width: 0; }
 .checkbox-field { display: flex; align-items: center; gap: .5rem; }
+.launch-agent-list { display: grid; gap: .4rem; }
+.launch-agent-row { display: grid; grid-template-columns: auto 2ch minmax(0, 1fr) auto; align-items: center; gap: .65rem; padding: .5rem .65rem; border: 1px solid var(--p-content-border-color); border-radius: .4rem; }
+.launch-agent-row.stage-enabled { background: var(--p-content-hover-background); }
+.stage-number { text-align: center; color: var(--p-text-muted-color); font-variant-numeric: tabular-nums; }
+.stage-identity { display: flex; align-items: baseline; gap: .75rem; min-width: 0; cursor: pointer; }
+.stage-identity strong { flex-shrink: 0; }
+.stage-identity span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--p-text-muted-color); }
+.stage-actions { display: flex; gap: .3rem; }
+.stage-actions button { width: 2rem; height: 2rem; padding: 0; }
+@media (max-width: 600px) {
+  .launch-agent-row { gap: .35rem; padding: .4rem; }
+  .stage-identity { display: block; }
+  .stage-identity strong, .stage-identity span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .stage-identity span { font-size: .75rem; }
+}
 :host ::ng-deep .p-select { max-width: 100%; }
 :host ::ng-deep .p-select-label { overflow: hidden; text-overflow: ellipsis; }
 input, textarea { min-width: 0; max-width: 100%; }

@@ -64,10 +64,18 @@ try {
   const selectedStages = dialog.getByRole('region', { name: 'Этапы этого запуска' });
   for (const role of ['analyst', 'tester', 'reviewer']) await selectedStages.locator(`[id="run-stage-${role}"]`).uncheck();
   await selectedStages.getByText(/Выбрано этапов: 1\./).waitFor();
-  assert.equal(await selectedStages.locator('ol li').count(), 1);
+  assert.equal(await selectedStages.locator('.launch-agent-row.stage-enabled').count(), 1);
+  assert.equal(await selectedStages.locator('.launch-agent-row').count(), 4, 'Each agent has one row including disabled agents');
+  assert.equal(await selectedStages.locator('ol').count(), 0, 'No duplicate pipeline list');
   await selectedStages.locator('[id="run-stage-reviewer"]').check();
   await selectedStages.getByText(/Выбрано этапов: 2\./).waitFor();
-  assert.equal(await selectedStages.locator('ol li').count(), 2, 'Developer + reviewer needs no fixed team mode');
+  assert.equal(await selectedStages.locator('.launch-agent-row.stage-enabled').count(), 2, 'Developer + reviewer needs no fixed team mode');
+  const reviewerRow = selectedStages.locator('[data-agent-id="reviewer"]');
+  assert.equal(await reviewerRow.locator('p-checkbox').count(), 1, 'Toggle belongs to the agent row');
+  await reviewerRow.getByRole('button', { name: 'Этап запуска выше:', exact: false }).click();
+  assert.equal(await selectedStages.locator('.launch-agent-row').first().getAttribute('data-agent-id'), 'reviewer');
+  assert.equal(await reviewerRow.locator('.stage-number').innerText(), '1');
+  await reviewerRow.getByRole('button', { name: 'Этап запуска ниже:', exact: false }).click();
   await selectedStages.locator('[id="run-stage-reviewer"]').uncheck();
   await selectedStages.getByText(/Выбрано этапов: 1\./).waitFor();
   await dialog.getByRole('button', { name: 'Сохранить команду задачи', exact: true }).click();
@@ -75,9 +83,10 @@ try {
   assert.deepEqual(service.taskTeam(task.id).settings.pipeline, ['developer']); assert.equal(service.settings().pipeline.length, 4);
   await dialog.getByRole('button', { name: 'Наследовать команду проекта', exact: true }).click();
   await dialog.getByText('Задача наследует команду проекта.', { exact: true }).waitFor();
-  assert.equal(service.taskTeam(task.id).overridden, false); assert.equal(await selectedStages.locator('ol li').count(), 4);
+  assert.equal(service.taskTeam(task.id).overridden, false); assert.equal(await selectedStages.locator('.launch-agent-row.stage-enabled').count(), 4);
   for (const viewport of [{ width: 390, height: 844 }, { width: 844, height: 390 }]) {
     await page.setViewportSize(viewport); assert.ok(await dialog.evaluate(element => element.scrollWidth <= element.clientWidth + 2));
+    assert.ok(await selectedStages.locator('.launch-agent-row').evaluateAll(rows => rows.every(row => row.scrollWidth <= row.clientWidth + 2)), 'Agent rows fit mobile viewport');
     const footer = (await dialog.locator('.settings-footer').boundingBox())!; const bounds = (await dialog.boundingBox())!;
     assert.ok(footer.y + footer.height <= bounds.y + bounds.height + 2, 'Footer must remain inside modal');
   }
@@ -85,7 +94,7 @@ try {
   await page.setViewportSize({ width: 1440, height: 1000 });
   for (const role of ['developer', 'tester', 'reviewer']) await selectedStages.locator(`[id="run-stage-${role}"]`).uncheck();
   await selectedStages.getByText(/Выбрано этапов: 1\./).waitFor();
-  assert.equal(await selectedStages.locator('ol li').count(), 1, 'Analyst-only is selectable');
+  assert.equal(await selectedStages.locator('.launch-agent-row.stage-enabled').count(), 1, 'Analyst-only is selectable');
   mkdirSync('dist/acceptance', { recursive: true }); await page.screenshot({ path: 'dist/acceptance/task-team-settings.png' });
   await dialog.getByRole('button', { name: 'Поставить в очередь', exact: true }).click();
   await page.getByRole('dialog', { name: 'Очередь агентов', exact: true }).waitFor();
