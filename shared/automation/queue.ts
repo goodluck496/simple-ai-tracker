@@ -22,6 +22,7 @@ export const QUEUE_LANES = [
   { id: QueueLane.Attention, title: 'Требуют внимания' }, { id: QueueLane.Finished, title: 'Завершены' },
 ] as const;
 export interface QueueItem {
+  cleanup?: import('./cleanup.js').CleanupState;
   checkout?: import('./contracts.js').AgentRun['checkout'];
   integration?: import('./contracts.js').IntegrationInfo;
   integrationSourceSha?: string;

@@ -13,6 +13,17 @@ export class AgentRunRepository {
     const row = this.db.prepare('SELECT payload FROM agent_runs WHERE id = ?').get<{ payload: string }>([id]);
     return row ? JSON.parse(row.payload) as AgentRun : undefined;
   }
+  public history(taskId?: string): AgentRun[] {
+    const rows = taskId
+      ? this.db.prepare('SELECT payload FROM agent_runs WHERE task_id=? ORDER BY updated_at DESC, id ASC LIMIT 200').all<{ payload: string }>([taskId])
+      : this.db.prepare('SELECT payload FROM agent_runs ORDER BY updated_at DESC, id ASC LIMIT 200').all<{ payload: string }>();
+    return rows.map(row => JSON.parse(row.payload) as AgentRun);
+  }
+  public delete(id: string): void {
+    this.db.prepare('DELETE FROM agent_run_events WHERE run_id=?').run([id]);
+    this.db.prepare('DELETE FROM archived_agent_runs WHERE run_id=?').run([id]);
+    this.db.prepare('DELETE FROM agent_runs WHERE id=?').run([id]);
+  }
   public queue(): AgentRun[] {
     const placeholders = ACTIVE_RUN_STATUSES.map(() => '?').join(',');
     return this.db.prepare(`SELECT payload FROM agent_runs WHERE status IN (${placeholders}) OR id IN

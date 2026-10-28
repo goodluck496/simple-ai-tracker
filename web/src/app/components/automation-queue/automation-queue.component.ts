@@ -2,6 +2,8 @@ import { ChangeDetectionStrategy, Component, DestroyRef, EventEmitter, Input, Ou
 import { DatePipe, DecimalPipe } from '@angular/common';
 import { TableModule } from 'primeng/table';
 import { ButtonModule } from 'primeng/button';
+import { FormsModule } from '@angular/forms';
+import { CheckboxModule } from 'primeng/checkbox';
 import { TokenMeter } from '../../../../../shared/automation/token-usage';
 import { RunBudget } from '../../../../../shared/automation/budget';
 import { RunConsoleComponent } from '../run-console/run-console.component';
@@ -17,7 +19,7 @@ import { WorkspaceService } from '../../services/workspace.service';
 import { filterQueueItems } from './queue-search';
 import { formatQueueDate, sortRunHistory } from './queue-dates';
 
-@Component({ selector: 'sat-automation-queue', standalone: true, imports: [DatePipe, DecimalPipe, RunConsoleComponent, TableModule, ButtonModule],
+@Component({ selector: 'sat-automation-queue', standalone: true, imports: [DatePipe, DecimalPipe, RunConsoleComponent, TableModule, ButtonModule, FormsModule, CheckboxModule],
   changeDetection: ChangeDetectionStrategy.OnPush, templateUrl: './automation-queue.component.html', styleUrl: './automation-queue.component.scss' })
 export class AutomationQueueComponent {
   private readonly http = inject(HttpClient);
@@ -25,7 +27,13 @@ export class AutomationQueueComponent {
   private readonly workspace = inject(WorkspaceService);
   private readonly refresh = new Subject<void>();
   public readonly selectedId = signal<string | null>(null);
-  @Input() public set runId(value: string | null) { this.selectedId.set(value); }
+  @Input() public set runId(value: string | null) { this.selectedId.set(value); if (value) this.historyMode.set(true); }
+  public readonly historyMode = signal(false);
+  public readonly historyTask = signal('');
+  public readonly showDetails = signal(false);
+  public readonly confirmation = signal<'cleanup' | 'delete' | null>(null);
+  public discard = false;
+  private readonly selectedCache = signal<QueueItem | undefined>(undefined);
   @Output() public readonly openTask = new EventEmitter<string>();
   @Output() public readonly configure = new EventEmitter<void>();
   @Output() public readonly changed = new EventEmitter<void>();
@@ -62,18 +70,21 @@ export class AutomationQueueComponent {
   public readonly runAction = RunAction;
   public readonly tokenMeter = TokenMeter;
   public readonly runBudget = RunBudget;
-  public readonly snapshot = toSignal(merge(timer(0, AUTOMATION_TIMING.pollMs), this.refresh).pipe(
-    exhaustMap(() => this.http.get<QueueSnapshot>('/api/automation/queue').pipe(
+  public readonly snapshot = toSignal(combineLatest([toObservable(this.historyMode), toObservable(this.historyTask), merge(timer(0, AUTOMATION_TIMING.pollMs), this.refresh)]).pipe(
+    switchMap(([history, task]) => this.http.get<QueueSnapshot>(history ? `/api/automation/history${task ? '?taskId=' + encodeURIComponent(task) : ''}` : '/api/automation/queue').pipe(
       catchError((error: unknown) => { this.error.set(this.message(error)); return EMPTY; }),
     )),
   ), { initialValue: { items: [], host: { online: false }, serverTime: new Date().toISOString() } as QueueSnapshot });
-  public readonly selected = computed(() => this.snapshot().items.find((run) => run.id === this.selectedId()));
+  public readonly selected = computed(() => this.snapshot().items.find((run) => run.id === this.selectedId()) ?? (this.selectedCache()?.id === this.selectedId() ? this.selectedCache() : undefined));
   public readonly detail = toSignal(combineLatest([toObservable(this.selectedId), merge(timer(0, AUTOMATION_TIMING.pollMs), this.refresh)]).pipe(
     switchMap(([id]) => id ? this.http.get<{ run: AgentRun; events: RunEvent[] }>(`/api/automation/runs/${id}`).pipe(
       catchError((error: unknown) => { this.error.set(this.message(error)); return of(null); }),
     ) : of(null)),
   ), { initialValue: null });
-  public items(lane: QueueLane): QueueItem[] { return filterQueueItems(this.snapshot().items.filter((item) => QueuePresentation.lane(item) === lane), this.search()); }
+  public items(lane: QueueLane): QueueItem[] {
+    const items = this.snapshot().items.filter(item => QueuePresentation.lane(item) === lane);
+    return filterQueueItems(this.historyMode() ? sortRunHistory(items) : items, this.search());
+  }
   public archivedItems(): AgentRun[] { return sortRunHistory(this.archived() ?? []); }
   public timestamp(value: string | undefined): string { return formatQueueDate(value); }
   public total(lane: QueueLane): number { return this.snapshot().items.filter((item) => QueuePresentation.lane(item) === lane).length; }
@@ -83,12 +94,28 @@ export class AutomationQueueComponent {
   public currentRole(item: QueueItem): string { return item.status === RunStatus.Integrating ? 'Интеграция' : item.phase === 'waiting-slot' ? 'Ожидание слота' : this.role(item.pipeline.at(item.stage)?.role ?? ''); }
   public duration(at: string | undefined): string { return at ? `${Math.max(0, Math.floor((Date.parse(this.snapshot().serverTime) - Date.parse(at)) / 1000))} с` : 'нет данных'; }
   public progress(text: string): string { return RunProgressText.format(text); }
-  public select(id: string): void { this.selectedId.set(id); this.error.set(''); }
+  public select(id: string): void { this.selectedCache.set(this.snapshot().items.find(run => run.id === id)); this.selectedId.set(id); this.error.set(''); this.showDetails.set(false); this.confirmation.set(null); }
+  public viewHistory(taskId = ''): void { this.historyTask.set(taskId); this.historyMode.set(true); this.refresh.next(); }
+  public visibleLanes() { return this.historyMode() ? this.lanes : this.lanes.filter(lane => lane.id === 'queued' || lane.id === 'running'); }
+  public manage(item: QueueItem): boolean { return !['queued', 'running', 'integrating', 'waiting'].includes(item.status); }
+  public requestConfirmation(action: 'cleanup' | 'delete'): void { this.confirmation.set(action); this.discard = false; }
+  public confirm(item: QueueItem): void {
+    const action = this.confirmation(); if (!action || this.busy()) return;
+    this.busy.set(true); this.error.set('');
+    this.http.post(`/api/automation/runs/${item.id}/${action}`, { discard: this.discard }).pipe(finalize(() => this.busy.set(false)), takeUntilDestroyed(this.destroyRef)).subscribe({
+      next: () => { this.confirmation.set(null); if (action === 'delete') { this.selectedId.set(null); this.selectedCache.set(undefined); } this.refresh.next(); this.changed.emit(); },
+      error: (error: unknown) => this.error.set(this.message(error)),
+    });
+  }
   constructor() {
     let current = this.workspace.current();
     effect(() => {
       const next = this.workspace.current();
-      if (next !== current) { current = next; this.search.set(''); this.selectedId.set(null); this.archived.set(null); }
+      if (next !== current) { current = next; this.search.set(''); this.selectedId.set(null); this.selectedCache.set(undefined); this.archived.set(null); this.historyTask.set(''); this.historyMode.set(false); }
+    });
+    effect(() => {
+      const run = this.detail()?.run;
+      if (run && run.id === this.selectedId() && !['queued', 'running', 'integrating'].includes(run.status)) this.historyMode.set(true);
     });
   }
   public action(item: QueueItem, action: RunAction): void {

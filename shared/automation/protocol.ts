@@ -2,6 +2,7 @@ export const AUTOMATION_TOOL_PREFIX = 'tracker_automation_';
 export const AutomationTool = {
   Configure: `${AUTOMATION_TOOL_PREFIX}configure`, Settings: `${AUTOMATION_TOOL_PREFIX}settings`,
   ListRuns: `${AUTOMATION_TOOL_PREFIX}list_runs`, GetRun: `${AUTOMATION_TOOL_PREFIX}get_run`,
+  History: `${AUTOMATION_TOOL_PREFIX}history`, Archive: `${AUTOMATION_TOOL_PREFIX}archive`, Cleanup: `${AUTOMATION_TOOL_PREFIX}cleanup`, Delete: `${AUTOMATION_TOOL_PREFIX}delete`,
   Enqueue: `${AUTOMATION_TOOL_PREFIX}enqueue`, Claim: `${AUTOMATION_TOOL_PREFIX}claim`,
   Heartbeat: `${AUTOMATION_TOOL_PREFIX}heartbeat`, Progress: `${AUTOMATION_TOOL_PREFIX}progress`,
   Usage: `${AUTOMATION_TOOL_PREFIX}usage`,

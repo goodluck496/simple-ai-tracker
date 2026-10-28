@@ -8,7 +8,10 @@ import { RunLogDownload } from '../../automation/run-log-download.js';
 
 export function registerAutomationRoutes(router: Router, app: AppContainer): void {
   router.get('/api/automation/host', ({ res }) => sendJson(res, 200, app.automationService.projects.status()));
-  router.get('/api/automation/queue', ({ res }) => sendJson(res, 200, app.automationService.queue()));
+  router.get('/api/automation/queue', ({ res }) => sendJson(res, 200, app.automationService.queue(false)));
+  router.get('/api/automation/history', ({ query, res }) => sendJson(res, 200, app.automationService.queue(true, query.get('taskId') ?? undefined)));
+  router.post('/api/automation/runs/:id/cleanup', ({ params, body, res }) => sendJson(res, 202, app.automationService.cleanup(params.id, bodyField(body, 'discard') === true)));
+  router.post('/api/automation/runs/:id/delete', ({ params, res }) => { app.automationService.deleteRun(params.id); sendJson(res, 200, { ok: true }); });
   router.get('/api/automation/runs/archive', ({ res }) => sendJson(res, 200, { runs: app.automationService.archive() }));
   router.post('/api/automation/runs/:id/hide', ({ params, res }) => { app.automationService.hide(params.id); sendJson(res, 200, { ok: true }); });
   router.post('/api/automation/runs/:id/restore', ({ params, res }) => { app.automationService.restore(params.id); sendJson(res, 200, { ok: true }); });

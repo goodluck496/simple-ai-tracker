@@ -12,7 +12,8 @@ interface HostState { workerId?: string; lastSeen?: number; platform?: string; r
 export class ProjectRequests {
   public constructor(private readonly meta: MetaRepository, private readonly db: SqlDatabase, private readonly now: () => number = Date.now) {}
   public status(): HostStatus { const state = this.read(); return { online: !!state.lastSeen && this.now() - state.lastSeen < PROJECT_LIMITS.requestMs, workerId: state.workerId, lastSeen: state.lastSeen, platform: state.platform }; }
-  public enqueue(input: ProjectInput): ProjectRequest {
+  public enqueue(input: ProjectInput, internal = false): ProjectRequest {
+    if (input?.action === ProjectAction.Cleanup && (!internal || !input.cleanup)) throw new TrackerError('VALIDATION_FAILED', 'Очистку запуска создаёт только сервис запусков.');
     if (!input || !Object.values(ProjectAction).includes(input.action) || typeof input.path !== 'string' || input.path.length > 4096) throw new TrackerError('VALIDATION_FAILED', 'Некорректный запрос проекта.');
     if (input.action === ProjectAction.CreateBranch && (!input.baseBranch || !input.newBranch || input.baseBranch.length > 250 || input.newBranch.length > 250)) throw new TrackerError('VALIDATION_FAILED', 'Укажите исходную и новую ветки.');
     let catalog: ProjectInput['catalog'];
@@ -24,10 +25,11 @@ export class ProjectRequests {
     }
     return this.db.transaction(() => {
       const state = this.read();
-      if (state.requests.some((r) => r.status === ProjectRequestStatus.Queued || r.status === ProjectRequestStatus.Running)) throw new TrackerError('CONFLICT', 'Предыдущий запрос к worker ещё выполняется.');
-      const request: ProjectRequest = { action: input.action, path: input.path, baseBranch: input.baseBranch, newBranch: input.newBranch, catalog,
+      if (!internal && state.requests.some((r) => r.status === ProjectRequestStatus.Queued || r.status === ProjectRequestStatus.Running)) throw new TrackerError('CONFLICT', 'Предыдущий запрос к worker ещё выполняется.');
+      const request: ProjectRequest = { action: input.action, path: input.path, baseBranch: input.baseBranch, newBranch: input.newBranch, catalog, cleanup: input.cleanup,
         id: randomUUID(), status: ProjectRequestStatus.Queued, createdAt: this.now() };
-      state.requests = [...state.requests.slice(-(PROJECT_LIMITS.maxHistory - 1)), request]; this.save(state); return request;
+      const retained = state.requests.filter((r, index) => r.status === ProjectRequestStatus.Queued || r.status === ProjectRequestStatus.Running || index >= state.requests.length - PROJECT_LIMITS.maxHistory + 1);
+      state.requests = [...retained, request]; this.save(state); return request;
     });
   }
   public get(id: string): ProjectRequest { const request = this.read().requests.find((r) => r.id === id); if (!request) throw new TrackerError('VALIDATION_FAILED', 'Запрос проекта не найден.'); return this.public(request); }
@@ -51,7 +53,7 @@ export class ProjectRequests {
   private public(request: ProjectRequest): ProjectRequest { const { token: _token, ...value } = request; return value; }
   private read(): HostState {
     const state: HostState = JSON.parse(this.meta.get(STATE_KEY) ?? '{"requests":[]}');
-    for (const request of state.requests) if ((request.status === ProjectRequestStatus.Queued || request.status === ProjectRequestStatus.Running) && this.now() - request.createdAt > PROJECT_LIMITS.requestMs) {
+    for (const request of state.requests) if ((request.status === ProjectRequestStatus.Queued || request.status === ProjectRequestStatus.Running) && this.now() - request.createdAt > (request.action === ProjectAction.Cleanup ? PROJECT_LIMITS.cleanupMs : PROJECT_LIMITS.requestMs)) {
       request.status = ProjectRequestStatus.Failed; request.error = 'Worker не ответил за минуту. Проверьте, что он запущен для этого пространства, и повторите запрос.'; delete request.token;
     }
     return state;

@@ -37,10 +37,12 @@ try {
   await queue.getByRole('button', { name: `Запуск ${task.id} ${run.id}`, exact: true }).click();
   const consoleView = queue.getByRole('region', { name: 'Консоль выполнения' });
   const log = consoleView.getByRole('log');
+  await queue.getByRole('button', { name: 'Подробности запуска', exact: true }).click();
   const timestamps = queue.locator('.run-timestamps dd');
   await timestamps.first().waitFor();
   const displayed = service.detail(run.id).run;
   assert.deepEqual(await timestamps.allTextContents(), [displayed.createdAt, displayed.startedAt, displayed.attemptStartedAt, undefined, displayed.updatedAt].map(value => formatQueueDate(value)));
+  await queue.getByRole('complementary', { name: 'Подробности запуска' }).getByRole('button', { name: 'Закрыть подробности' }).click();
   const payload = JSON.stringify({ type: 'item.completed', item: { id: 'cmd', type: 'command_execution', command: 'npm test',
     aggregated_output: 'PRIVATE_SOURCE_SENTINEL\r\n<img src=x onerror=alert(1)>\n', stderr: 'Error: fixture stderr\n', exit_code: 1 } });
   service.progress(run.id, run.leaseToken!, payload.slice(0, 65));
@@ -96,12 +98,15 @@ try {
   await queue.getByRole('article', { name: 'Детали запуска' }).getByText('Остановлен · карточка: Планирование', { exact: true }).waitFor();
   const stopped = service.detail(run.id).run;
   assert.ok(stopped.finishedAt);
+  await queue.getByRole('button', { name: 'Подробности запуска', exact: true }).click();
   assert.equal(await timestamps.nth(3).textContent(), formatQueueDate(stopped.finishedAt));
+  await queue.getByRole('complementary', { name: 'Подробности запуска' }).getByRole('button', { name: 'Закрыть подробности' }).click();
   for (const viewport of [{ width: 390, height: 844 }, { width: 844, height: 390 }, { width: 1440, height: 1000 }]) {
     await page.setViewportSize(viewport);
     assert.ok(await queue.evaluate((element) => element.scrollWidth <= element.clientWidth + 2), 'Console must stay inside narrow dialog');
   }
   assert.deepEqual(errors, []);
+  assert.ok((await log.boundingBox())!.height >= 140, 'Desktop layout must reserve usable height for the journal');
   const artifacts = path.resolve(import.meta.dirname, '../dist/acceptance'); mkdirSync(artifacts, { recursive: true });
   await consoleView.scrollIntoViewIfNeeded();
   await page.screenshot({ path: path.join(artifacts, 'run-console.png'), fullPage: true });

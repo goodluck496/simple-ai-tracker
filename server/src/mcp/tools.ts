@@ -405,9 +405,13 @@ export class TrackerToolRegistry {
         case AutomationTool.Configure: return json(service.configure(args['settings']));
         case AutomationTool.Settings: return json(service.settings());
         case AutomationTool.HostPoll: return json(service.projects.poll(requireString(args, 'workerId'), asString(args, 'platform')));
-        case AutomationTool.HostComplete: service.projects.complete(id(), token(), args['result'] as import('../../../shared/automation/project.js').ProjectResult | undefined, asString(args, 'error')); return json({ ok: true });
+        case AutomationTool.HostComplete: service.completeHost(id(), token(), args['result'] as import('../../../shared/automation/project.js').ProjectResult | undefined, asString(args, 'error')); return json({ ok: true });
         case AutomationTool.ListRuns: return json(service.list(asString(args, 'taskId')));
         case AutomationTool.GetRun: return json(service.detail(id()));
+        case AutomationTool.History: return json(service.queue(true, asString(args, 'taskId')));
+        case AutomationTool.Archive: service.hide(id()); return json({ ok: true });
+        case AutomationTool.Cleanup: return json(service.cleanup(id(), (args['result'] as { discard?: boolean } | undefined)?.discard === true));
+        case AutomationTool.Delete: service.deleteRun(id()); return json({ ok: true });
         case AutomationTool.Enqueue: return json(service.enqueue(requireString(args, 'taskId'), args['settings'], false));
         case AutomationTool.Claim: return json(service.claim(requireString(args, 'workerId')));
         case AutomationTool.Heartbeat: return json(service.heartbeat(id(), token(), args['phase'] === 'recovery', args['phase'] === 'publish'));

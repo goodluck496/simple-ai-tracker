@@ -1,39 +1,46 @@
 <div class="queue">
-  <div class="queue-toolbar"><p>Запуски сохраняются в трекере. Можно закрыть окно: подключённый worker продолжит выполнение.</p>
-    <button pButton severity="secondary" type="button" (click)="configure.emit()">Настройки команды и подключение worker</button><button pButton severity="secondary" type="button" (click)="openArchive()">Архив запусков</button></div>
-  @if (archived(); as history) { <section aria-label="Архив запусков"><h3>Архив запусков</h3>@for (run of archivedItems(); track run.id) { <div><button pButton severity="secondary" type="button" (click)="openTask.emit(run.taskId)">{{ run.taskId }} · {{ run.id }} · {{ statusTitles[run.status] }}</button><small>Создано: {{ timestamp(run.createdAt) }} · Первый запуск: {{ timestamp(run.startedAt) }}</small><small>Текущая попытка: {{ timestamp(run.attemptStartedAt) }} · Завершено: {{ timestamp(run.finishedAt) }} · Активность: {{ timestamp(run.updatedAt) }}</small><button pButton severity="secondary" type="button" [disabled]="busy()" (click)="restore(run.id)">Вернуть в очередь</button></div> } @empty { <p class="muted">Архив пуст</p> }</section> }
-  <p role="status">Worker: {{ snapshot().host.online ? 'подключён' : 'не подключён' }}. Показаны все активные и последние {{ recentLimit }} завершённых запусков.</p>
+  <header class="queue-controls">
+  <div class="queue-toolbar">
+    <button pButton severity="secondary" type="button" [attr.aria-pressed]="!historyMode()" (click)="historyMode.set(false); historyTask.set('')">Рабочая очередь</button>
+    <button pButton severity="secondary" type="button" [attr.aria-pressed]="historyMode()" (click)="viewHistory()">История запусков</button>
+    <button pButton severity="secondary" type="button" (click)="configure.emit()">Настройки команды и подключение worker</button></div>
+  <p role="status">Worker: {{ snapshot().host.online ? 'подключён' : 'не подключён' }}. {{ historyMode() ? 'История: последние 200 запусков, включая архив.' : 'Только ожидающие и выполняющиеся запуски.' }} @if (historyTask()) { Задача: {{ historyTask() }} }</p>
   <label class="queue-search">Поиск по ID задачи, названию или ID запуска
     <input type="search" [value]="search()" (input)="search.set($any($event.target).value)" aria-label="Поиск запусков" />
   </label>
   @if (search()) { <button pButton severity="secondary" type="button" class="clear-search" (click)="clearSearch()">Очистить поиск</button> }
-  <p class="muted">Поиск только по загруженным запускам: все активные и последние {{ recentLimit }} завершённых. Архив не включён.</p>
   @if (error()) { <p role="alert" class="error">{{ error() }}</p> }
   @if (notice()) { <p role="status">{{ notice() }}</p> }
-  <div class="lanes">
-    @for (lane of lanes; track lane.id) {
+  </header>
+  <div class="queue-board"><div class="lanes" [class.history]="historyMode()">
+    @for (lane of visibleLanes(); track lane.id) {
       <section class="lane" [attr.aria-label]="lane.title"><h3>{{ lane.title }} · {{ items(lane.id).length }} / {{ total(lane.id) }}</h3><div class="lane-items">
         @for (item of items(lane.id); track item.id) {
           <button pButton severity="secondary" type="button" class="run-card" [class.selected]="selectedId() === item.id" (click)="select(item.id)" [attr.aria-label]="'Запуск ' + item.taskId + ' ' + item.id">
             <strong>{{ item.taskId }} · {{ item.title }}</strong><span>{{ statusTitles[item.status] }} @if (item.queuePosition) { · место {{ item.queuePosition }} }</span>
             <span>Этап {{ item.stage < item.pipeline.length ? item.stage + 1 : item.pipeline.length }} / {{ item.pipeline.length }} · {{ currentRole(item) }}</span>
-            <small>Создано: {{ timestamp(item.createdAt) }} · Первый запуск: {{ timestamp(item.startedAt) }}</small>
-            <small>Текущая попытка: {{ timestamp(item.attemptStartedAt) }} · Завершено: {{ timestamp(item.finishedAt) }}</small>
-            <small>Последняя активность: {{ timestamp(item.updatedAt) }}</small>
+            <small>{{ item.finishedAt ? 'Завершено' : 'Последняя активность' }}: {{ timestamp(item.finishedAt || item.updatedAt) }}</small>
             @if (item.tokenUsage; as usage) { <span>{{ tokenMeter.label(usage) }}</span> }
             <small>{{ item.integration ? integrationTitles[item.integration.state] : progress(item.status === runStatus.Running ? item.lastMessage || health(item) : item.summary || item.lastMessage || health(item)) }}</small>
           </button>
           @if (item.status === runStatus.Queued) { <button pButton severity="secondary" type="button" class="dequeue-action" [disabled]="busy()" (click)="dequeue(item)">Убрать из очереди</button> }
           @if (item.status === runStatus.Running || item.status === runStatus.Waiting || item.status === runStatus.Integrating) { <button pButton severity="secondary" type="button" [disabled]="busy() || item.integration?.state === 'publishing'" (click)="action(item, runAction.Cancel)">Остановить</button> }
-          @if (item.status === runStatus.Failed || item.status === runStatus.Cancelled || item.status === runStatus.Interrupted || item.status === runStatus.MergeBlocked || item.status === runStatus.Review || item.status === runStatus.Merged) { <button pButton severity="secondary" type="button" [disabled]="busy()" (click)="hide(item)">Скрыть из списка</button> }
+          @if (manage(item) && item.cleanup?.state !== 'completed') { <button pButton severity="secondary" type="button" [disabled]="busy() || item.cleanup?.state === 'queued'" (click)="select(item.id); requestConfirmation('cleanup')">Очистить файлы</button> }
         } @empty { <p class="muted">{{ search() ? 'Нет совпадений' : 'Нет запусков' }}</p> }
         </div>
       </section>
     }
-  </div>
+  </div></div>
   @if (selected(); as item) {
     <article class="run-detail" aria-label="Детали запуска">
       <h3>{{ item.taskId }} · {{ item.title }}</h3><p>{{ statusTitles[item.status] }} · карточка: {{ taskTitles[item.taskStatus] }}</p>
+      <div class="selected-summary"><span>Этап {{ item.stage < item.pipeline.length ? item.stage + 1 : item.pipeline.length }} / {{ item.pipeline.length }} · {{ currentRole(item) }}</span>@if (item.tokenUsage; as usage) { <span>{{ tokenMeter.label(usage) }}</span> }
+        @if (detail()?.run; as run) { <span>Лимит входа: {{ run.settings.maxInputTokens | number }} · Время: {{ run.settings.maxRunMinutes }} мин</span> }
+        <button pButton severity="secondary" type="button" (click)="showDetails.set(!showDetails())">{{ showDetails() ? 'Закрыть подробности' : 'Подробности запуска' }}</button>
+        <button pButton severity="secondary" type="button" (click)="viewHistory(item.taskId)">История этой задачи</button>
+      </div>
+      @if (showDetails()) { <aside class="run-extra" aria-label="Подробности запуска">
+      <button pButton severity="secondary" type="button" (click)="showDetails.set(false)">Закрыть подробности</button>
       <p class="identifier">ID: {{ item.id }} @if (item.restartedFromId) { · повтор запуска {{ item.restartedFromId }} }</p>
       <dl class="run-timestamps">
         <dt>Создано</dt><dd>{{ timestamp(item.createdAt) }}</dd>
@@ -130,13 +137,26 @@
           </p-table>
         </section>
       }
+      </aside> }
       <div class="actions"><button pButton severity="secondary" type="button" (click)="openTask.emit(item.taskId)">Открыть задачу {{ item.openQuestions ? 'и ответить на вопросы' : '' }}</button>
         @if (item.status === runStatus.Queued) { <button pButton severity="secondary" type="button" class="dequeue-action" [disabled]="busy()" (click)="dequeue(item)">Убрать из очереди</button> }
         @if (item.status === runStatus.Running || item.status === runStatus.Waiting || item.status === runStatus.Integrating) { <button pButton severity="secondary" type="button" [disabled]="busy() || item.integration?.state === 'publishing'" (click)="action(item, runAction.Cancel)">Остановить</button> }
         @if (item.canResume) { <button pButton severity="secondary" type="button" [disabled]="busy()" (click)="action(item, runAction.Resume)">Продолжить с места остановки</button> }
         @if (item.canRestart) { <button pButton severity="secondary" type="button" [disabled]="busy()" (click)="action(item, runAction.Restart)">{{ item.stage >= item.pipeline.length ? 'Начать интеграцию заново' : 'Начать заново' }}</button> }
-        @if (item.status === runStatus.Failed || item.status === runStatus.Cancelled || item.status === runStatus.Interrupted || item.status === runStatus.MergeBlocked || item.status === runStatus.Review || item.status === runStatus.Merged) { <button pButton severity="secondary" type="button" [disabled]="busy()" (click)="hide(item)">Скрыть из списка</button> }
+        @if (manage(item)) {
+          @if (item.cleanup?.state !== 'completed') { <button pButton severity="secondary" type="button" [disabled]="busy() || item.cleanup?.state === 'queued'" (click)="requestConfirmation('cleanup')">Очистить файлы</button> }
+          <button pButton severity="danger" type="button" [disabled]="busy() || (!!detail()?.run?.checkout || !!item.attemptStartedAt) && item.cleanup?.state !== 'completed'" (click)="requestConfirmation('delete')">Удалить запуск навсегда</button>
+        }
       </div>
+      @if (item.cleanup; as cleanup) { <p role="status">Очистка: {{ cleanup.state === 'completed' ? 'файлы очищены, история сохранена' : cleanup.state === 'queued' ? 'ожидает host worker' : cleanup.error }} @if (cleanup.result?.retainedBranches?.length) { Сохранены ветки: {{ cleanup.result?.retainedBranches?.join(', ') }} }</p> }
+      @if (confirmation(); as confirmAction) {
+        <section class="cleanup-confirm" aria-label="Подтверждение удаления">
+          <p>{{ confirmAction === 'cleanup' ? 'Удалить рабочие копии, приватные зависимости и временные артефакты этого запуска?' : 'Удалить историю и журнал этого запуска навсегда? Карточка задачи и приложенные отчёты сохранятся.' }} {{ item.id }}</p>
+          @if (confirmAction === 'cleanup' && item.status !== runStatus.Merged && (detail()?.run?.checkout || item.attemptStartedAt)) { <label><p-checkbox inputId="discard-run" [(ngModel)]="discard" [binary]="true" /> Подтверждаю удаление неперенесённого кода этого запуска</label> }
+          <button pButton severity="danger" type="button" [disabled]="busy() || confirmAction === 'cleanup' && item.status !== runStatus.Merged && (!!detail()?.run?.checkout || !!item.attemptStartedAt) && !discard" (click)="confirm(item)">Подтвердить</button>
+          <button pButton severity="secondary" type="button" (click)="confirmation.set(null)">Отмена</button>
+        </section>
+      }
       @if (item.actionReason) { <p class="muted">{{ item.actionReason }}</p> }
       @if (item.canResume || item.canRestart) { <p class="muted">Продолжение использует прежние настройки и рабочую ветку. «Начать заново» создаёт новый запуск и новую ветку от базовой ветки с сохранёнными настройками команды; старый журнал останется.</p> }
       <h4>Журнал выполнения</h4>

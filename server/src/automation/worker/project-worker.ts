@@ -7,6 +7,7 @@ import { AutomationTool } from '../../../../shared/automation/protocol.js';
 import { ProjectAction, PROJECT_LIMITS, type ProjectInput, type ProjectRequest, type ProjectResult } from '../../../../shared/automation/project.js';
 import { WindowsFolderPicker, type FolderPicker } from './folder-picker.js';
 import { WorkerModelCatalog } from './model-catalog.js';
+import { RunCleanup } from './run-cleanup.js';
 
 export class ProjectWorker {
   private readonly executor = new ProcessExecutor();
@@ -20,6 +21,10 @@ export class ProjectWorker {
     await this.channel.call(AutomationTool.HostComplete, { id: request.id, leaseToken: request.token, result, error });
   }
   public async execute(input: ProjectInput): Promise<ProjectResult> {
+    if (input.action === ProjectAction.Cleanup) {
+      if (!input.cleanup) throw new Error('Missing cleanup identity.');
+      return { path: input.path, cleanup: await new RunCleanup(this.executor).execute(input.cleanup, AbortSignal.timeout(PROJECT_LIMITS.cleanupMs - 5000)) };
+    }
     if (input.action === ProjectAction.Models) {
       if (!input.catalog) throw new Error('Не указано подключение моделей.');
       return { path: '', models: await this.models.list(input.catalog) };

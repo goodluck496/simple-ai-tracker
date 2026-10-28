@@ -14,6 +14,7 @@ import { TokenMeter, type TokenUsage, type UsageAttempt } from '../../../shared/
 import { RunBudget } from '../../../shared/automation/budget.js';
 import { Decomposition } from '../../../shared/automation/decomposition.js';
 import { FeaturePlanning } from './feature-planning.js';
+import { ProjectAction, type ProjectResult } from '../../../shared/automation/project.js';
 
 const SETTINGS_KEY = 'automation_settings_v1';
 const LEASE_MS = AUTOMATION_TIMING.leaseMs;
@@ -21,7 +22,7 @@ const LEASE_MS = AUTOMATION_TIMING.leaseMs;
 export class AutomationService {
   public get projects(): ProjectRequests { return new ProjectRequests(this.repos.meta, this.runs.db); }
   public constructor(private readonly runs: AgentRunRepository, private readonly repos: Repositories,
-    private readonly tasks: TaskService, private readonly clock: Clock) {}
+    private readonly tasks: TaskService, private readonly clock: Clock, private readonly workspace = 'default') {}
 
   public settings(): AutomationSettings {
     const value = this.repos.meta.get(SETTINGS_KEY);
@@ -137,20 +138,21 @@ export class AutomationService {
       return next;
     });
   }
-  public queue(): QueueSnapshot {
+  public queue(includeHistory?: boolean, taskId?: string): QueueSnapshot {
     return this.runs.db.transaction(() => {
       this.expireLeases();
-      const runs = this.runs.queue();
+      const runs = includeHistory === true ? this.runs.history(taskId) : includeHistory === false ? this.runs.queue().filter(run => [RunStatus.Queued, RunStatus.Running, RunStatus.Integrating].includes(run.status as 'queued' | 'running' | 'integrating')) : this.runs.queue();
       const queued = runs.filter((run) => run.status === RunStatus.Queued).sort((a, b) => a.updatedAt.localeCompare(b.updatedAt) || a.id.localeCompare(b.id));
-      const items: QueueItem[] = runs.map((run) => {
+      const items: QueueItem[] = runs.map((entry) => {
+        const run = this.refreshCleanup(entry);
         const task = this.tasks.getTaskCard(run.taskId);
         const otherActive = runs.some((other) => other.taskId === run.taskId && other.id !== run.id && ACTIVE_RUN_STATUSES.includes(other.status));
         const scope = Decomposition.child(run);
         const pendingQuestions = scope ? this.tasks.getTaskCard(scope.taskId).openQuestionsCount : task.openQuestionsCount;
-        const actionReason = pendingQuestions ? `Ответьте на вопросы в карточке ${scope?.taskId ?? task.id}.` : otherActive ? 'У задачи есть другой активный запуск.'
+        const actionReason = run.cleanup ? 'Рабочая копия очищается или уже очищена; продолжение этого запуска недоступно.' : pendingQuestions ? `Ответьте на вопросы в карточке ${scope?.taskId ?? task.id}.` : otherActive ? 'У задачи есть другой активный запуск.'
           : task.status === TaskStatus.Done || (task.status === TaskStatus.Review && !(run.stage >= run.settings.pipeline.length && run.settings.mergePolicy === MergePolicy.Local)) ? 'Задача уже на проверке или завершена.' : '';
         const resumable = RESUMABLE_RUN_STATUSES.includes(run.status) && (run.stage < run.settings.pipeline.length || run.settings.mergePolicy === MergePolicy.Local);
-        return { id: run.id, taskId: run.taskId, title: task.title, taskStatus: task.status, status: run.status, stage: run.stage, revision: run.revision,
+        return { id: run.id, taskId: run.taskId, title: task.title, cleanup: run.cleanup, taskStatus: task.status, status: run.status, stage: run.stage, revision: run.revision,
           pipeline: run.settings.pipeline.map((id) => { const agent = run.settings.agents.find((a) => a.id === id)!; return { role: agent.role, runner: agent.runner, model: agent.model }; }),
           phase: run.phase, phaseStartedAt: run.phaseStartedAt, heartbeatAt: run.heartbeatAt ?? (run.leaseUntil ? new Date(Date.parse(run.leaseUntil) - LEASE_MS).toISOString() : undefined),
           progressAt: run.progressAt, lastMessage: run.lastMessage ?? '', createdAt: run.createdAt, startedAt: run.startedAt,
@@ -374,6 +376,7 @@ export class AutomationService {
   public resume(id: string): AgentRun {
     return this.runs.db.transaction(() => {
     const run = this.requireRun(id);
+    if (run.cleanup) throw new TrackerError('CONFLICT', 'Рабочая копия очищается или уже очищена. Создайте новый запуск.');
     if (!RESUMABLE_RUN_STATUSES.includes(run.status)) throw new TrackerError('CONFLICT', 'Run cannot be resumed.');
     const mergeOnly = run.stage >= run.settings.pipeline.length && run.settings.mergePolicy === MergePolicy.Local;
     const budgetReason = RunBudget.reason(run, Date.parse(this.clock.now()));
@@ -419,6 +422,54 @@ export class AutomationService {
     }
     return run;
   }
+  public cleanup(id: string, discard = false) {
+    return this.runs.db.transaction(() => {
+      const run = this.requireRun(id);
+      if (ACTIVE_RUN_STATUSES.includes(run.status)) throw new TrackerError('CONFLICT', 'Сначала остановите запуск.');
+      if (run.cleanup?.state === 'completed') return run.cleanup;
+      if (run.cleanup?.state === 'queued') {
+        const job = this.projects.get(run.cleanup.requestId!);
+        if (job.status === 'queued' || job.status === 'running') return run.cleanup;
+      }
+      if (!run.checkout && !run.attemptStartedAt) {
+        const cleanup = { state: 'completed' as const, result: { paths: [], branches: [], retainedBranches: [] } };
+        this.runs.save({ ...run, cleanup }); return cleanup;
+      }
+      if (run.status !== RunStatus.Merged && !discard) throw new TrackerError('CONFLICT', 'Запуск не слит автоматически. Подтвердите удаление неперенесённых изменений.');
+      const workspace = this.workspace;
+      const request = this.projects.enqueue({ action: ProjectAction.Cleanup, path: run.settings.repositoryPath, cleanup: {
+        runId: run.id, workspace, repository: run.settings.repositoryPath, directory: run.checkout?.worktreePath,
+        baseBranch: run.settings.baseBranch, sourceSha: run.commitSha ?? undefined, candidateSha: run.integration?.candidateSha,
+        children: run.feature?.children.map(c => ({ key: c.key, sourceSha: c.sourceSha, mergedSha: c.mergedSha })) ?? [], merged: run.status === RunStatus.Merged, discard,
+      } }, true);
+      const cleanup = { state: 'queued' as const, requestId: request.id };
+      this.runs.save({ ...run, cleanup }); this.runs.event(id, 'cleanup', 'Очистка рабочих копий поставлена в очередь host worker.', this.clock.now());
+      return cleanup;
+    });
+  }
+  public completeHost(id: string, token: string, result?: ProjectResult, error?: string): void {
+    this.runs.db.transaction(() => {
+      const request = this.projects.get(id);
+      this.projects.complete(id, token, result, error);
+      if (request.action !== ProjectAction.Cleanup || !request.cleanup) return;
+      const run = this.requireRun(request.cleanup.runId);
+      if (run.cleanup?.requestId !== id) throw new TrackerError('CONFLICT', 'Устаревший результат очистки.');
+      const failure = error ?? (!result?.cleanup ? 'Worker не подтвердил очистку.' : undefined);
+      this.runs.save({ ...run, cleanup: { state: failure ? 'failed' : 'completed', requestId: id, error: failure, result: result?.cleanup } });
+      this.runs.event(run.id, 'cleanup', failure ? `Очистка не завершена: ${failure}` : 'Временные рабочие копии очищены; история и отчёты сохранены.', this.clock.now());
+      if (!failure) this.runs.archive(run.id, this.clock.now());
+    });
+  }
+  public deleteRun(id: string): void {
+    this.runs.db.transaction(() => {
+      const run = this.runs.get(id); if (!run) return;
+      if (ACTIVE_RUN_STATUSES.includes(run.status)) throw new TrackerError('CONFLICT', 'Активный запуск нельзя удалить.');
+      if ((run.checkout || run.attemptStartedAt) && run.cleanup?.state !== 'completed') throw new TrackerError('CONFLICT', 'Сначала очистите рабочую копию. История пока сохранена.');
+      const retained = run.cleanup?.result?.retainedBranches ?? [];
+      this.tasks.addComment({ id: run.taskId, text: `История запуска ${id} удалена пользователем. Карточка и отчёты сохранены.${retained.length ? ` Сохранённые ветки: ${retained.join(', ')}.` : ''}`, kind: 'note', actor: 'agent' });
+      this.runs.delete(id);
+    });
+  }
   public merged(id: string, token: string): void {
     return this.runs.db.transaction(() => {
     const run = this.requireRun(id);
@@ -433,8 +484,22 @@ export class AutomationService {
     this.runs.event(id, 'merged', evidence, now);
     this.tasks.addComment({ id: run.taskId, text: `[AUTOMATION MERGED] ${evidence}. Task remains in review for user acceptance.`, actor: 'agent' });
     });
+    try { this.cleanup(id); } catch (error) {
+      const run = this.requireRun(id);
+      const message = String(error);
+      this.runs.save({ ...run, cleanup: { state: 'failed', error: message } });
+    }
   }
   private publicRun(run: AgentRun): AgentRun { return { ...run, leaseToken: null }; }
+  private refreshCleanup(run: AgentRun): AgentRun {
+    if (run.cleanup?.state !== 'queued' || !run.cleanup.requestId) return run;
+    let failure: string | undefined;
+    try { const job = this.projects.get(run.cleanup.requestId); if (job.status === 'failed') failure = job.error ?? 'Запрос очистки истёк.'; }
+    catch { failure = 'Запрос очистки больше не доступен; повторите очистку.'; }
+    if (!failure) return run;
+    const updated: AgentRun = { ...run, cleanup: { ...run.cleanup, state: 'failed', error: failure } };
+    this.runs.save(updated); return updated;
+  }
   private expireLeases(): void {
     const now = this.clock.now();
     for (const run of this.runs.running()) {
@@ -449,6 +514,6 @@ export class AutomationService {
   private requireRun(id: string): AgentRun {
     const run = this.runs.get(id);
     if (!run) throw new TrackerError('TASK_NOT_FOUND', 'Agent run not found.');
-    return run;
+    return this.refreshCleanup(run);
   }
 }
