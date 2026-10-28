@@ -22,6 +22,7 @@ h3, h4, p { margin: .4rem 0; }
 .run-detail { flex: 1.25; min-height: 180px; min-width: 0; display: flex; flex-direction: column; border-top: 1px solid var(--p-content-border-color); padding-top: .4rem; overflow: hidden; }
 .run-detail > h3, .run-detail > p { margin: .15rem 0; }
 .run-detail > sat-run-console { flex: 1; min-height: 0; }
+.selected-activity { flex: 0 0 auto; margin: .35rem 0; }
 .token-meter { min-width: 0; max-width: 100%; margin-block: 1rem; }
 .token-meter small { display: block; overflow-wrap: anywhere; }
 .facts, .muted, time { color: var(--p-text-muted-color); font-size: .85rem; }

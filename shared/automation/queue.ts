@@ -53,12 +53,12 @@ export class QueuePresentation {
   }
   public static health(item: QueueItem, now: number, host: HostStatus): string {
     if (item.status === RunStatus.Queued) return host.online ? 'Ожидает свободного слота worker.' : 'Нет подключённого worker. Подключите компьютер в настройках команды.';
-    if (item.phase === RunPhase.WaitingSlot && item.status === RunStatus.Running) return 'Worker удерживает lease и ожидает слота проекта. Ожидание не расходует активный бюджет.';
     if (item.status === RunStatus.Waiting) return 'Выполнение остановлено до ответа на вопросы в карточке задачи.';
     if (item.status === RunStatus.Interrupted) return 'Lease worker истёк. Убедитесь, что старый процесс остановлен, затем продолжите запуск.';
     if (item.status === RunStatus.Failed || item.status === RunStatus.MergeBlocked) return item.summary || 'Запуск завершился с ошибкой. Откройте журнал.';
     if (item.status !== RunStatus.Running && item.status !== RunStatus.Integrating) return RUN_STATUS_TITLES[item.status];
     if (!item.heartbeatAt || now - Date.parse(item.heartbeatAt) > AUTOMATION_TIMING.leaseMs) return 'Нет свежего heartbeat этого запуска. Проверяется потеря связи с worker.';
+    if (item.phase === RunPhase.WaitingSlot && item.status === RunStatus.Running) return 'Worker удерживает lease и ожидает слота проекта. Ожидание не расходует активный бюджет.';
     if (now - Date.parse(item.progressAt ?? item.phaseStartedAt ?? item.updatedAt) > QUEUE_LIMITS.quietMs) return 'Worker на связи, но новых событий давно нет. Агент или команда могут ещё работать; это не доказательство зависания.';
     return 'Worker на связи. Выполнение продолжается.';
   }

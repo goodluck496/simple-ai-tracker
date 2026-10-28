@@ -7,9 +7,11 @@ import { CheckboxModule } from 'primeng/checkbox';
 import { TokenMeter } from '../../../../../shared/automation/token-usage';
 import { RunBudget } from '../../../../../shared/automation/budget';
 import { RunConsoleComponent } from '../run-console/run-console.component';
+import { RunActivityComponent } from './run-activity.component';
+import { ACTIVITY_TIMING } from '../../../../../shared/automation/queue-activity';
 import { HttpClient } from '@angular/common/http';
 import { takeUntilDestroyed, toObservable, toSignal } from '@angular/core/rxjs-interop';
-import { EMPTY, Subject, catchError, combineLatest, exhaustMap, finalize, merge, of, switchMap, tap, timer } from 'rxjs';
+import { EMPTY, Subject, catchError, combineLatest, exhaustMap, finalize, map, merge, of, switchMap, tap, timer } from 'rxjs';
 import { AUTOMATION_TIMING, RunStatus, RunAction, type AgentRun, type RunEvent } from '../../../../../shared/automation/contracts';
 import { QUEUE_LANES, QUEUE_LIMITS, RUN_EVENT_TITLES, RUN_PHASE_TITLES, RUN_STATUS_TITLES, INTEGRATION_STATE_TITLES, QueuePresentation, RunProgressText,
   type QueueItem, type QueueSnapshot, type QueueLane } from '../../../../../shared/automation/queue';
@@ -19,7 +21,7 @@ import { WorkspaceService } from '../../services/workspace.service';
 import { filterQueueItems } from './queue-search';
 import { formatQueueDate, sortRunHistory } from './queue-dates';
 
-@Component({ selector: 'sat-automation-queue', standalone: true, imports: [DatePipe, DecimalPipe, RunConsoleComponent, TableModule, ButtonModule, FormsModule, CheckboxModule],
+@Component({ selector: 'sat-automation-queue', standalone: true, imports: [DatePipe, DecimalPipe, RunConsoleComponent, RunActivityComponent, TableModule, ButtonModule, FormsModule, CheckboxModule],
   changeDetection: ChangeDetectionStrategy.OnPush, templateUrl: './automation-queue.component.html', styleUrl: './automation-queue.component.scss' })
 export class AutomationQueueComponent {
   private readonly http = inject(HttpClient);
@@ -38,6 +40,11 @@ export class AutomationQueueComponent {
   @Output() public readonly configure = new EventEmitter<void>();
   @Output() public readonly changed = new EventEmitter<void>();
   public readonly error = signal('');
+  public readonly pollError = signal('');
+  public readonly queueConnected = signal(false);
+  private readonly receivedAt = signal(performance.now());
+  private readonly clock = toSignal(timer(0, ACTIVITY_TIMING.tickMs).pipe(map(() => performance.now())), { initialValue: performance.now() });
+  public readonly dataFresh = computed(() => this.queueConnected() && this.clock() - this.receivedAt() < ACTIVITY_TIMING.snapshotMs);
   public readonly notice = signal('');
   public readonly busy = signal(false);
   public readonly budgetEditing = signal(false);
@@ -72,9 +79,11 @@ export class AutomationQueueComponent {
   public readonly runBudget = RunBudget;
   public readonly snapshot = toSignal(combineLatest([toObservable(this.historyMode), toObservable(this.historyTask), merge(timer(0, AUTOMATION_TIMING.pollMs), this.refresh)]).pipe(
     switchMap(([history, task]) => this.http.get<QueueSnapshot>(history ? `/api/automation/history${task ? '?taskId=' + encodeURIComponent(task) : ''}` : '/api/automation/queue').pipe(
-      catchError((error: unknown) => { this.error.set(this.message(error)); return EMPTY; }),
+      tap(() => { this.receivedAt.set(performance.now()); this.queueConnected.set(true); this.pollError.set(''); }),
+      catchError((error: unknown) => { this.queueConnected.set(false); this.pollError.set(this.message(error)); return EMPTY; }),
     )),
   ), { initialValue: { items: [], host: { online: false }, serverTime: new Date().toISOString() } as QueueSnapshot });
+  public readonly now = computed(() => Date.parse(this.snapshot().serverTime) + Math.max(0, this.clock() - this.receivedAt()));
   public readonly selected = computed(() => this.snapshot().items.find((run) => run.id === this.selectedId()) ?? (this.selectedCache()?.id === this.selectedId() ? this.selectedCache() : undefined));
   public readonly detail = toSignal(combineLatest([toObservable(this.selectedId), merge(timer(0, AUTOMATION_TIMING.pollMs), this.refresh)]).pipe(
     switchMap(([id]) => id ? this.http.get<{ run: AgentRun; events: RunEvent[] }>(`/api/automation/runs/${id}`).pipe(
@@ -89,10 +98,10 @@ export class AutomationQueueComponent {
   public timestamp(value: string | undefined): string { return formatQueueDate(value); }
   public total(lane: QueueLane): number { return this.snapshot().items.filter((item) => QueuePresentation.lane(item) === lane).length; }
   public clearSearch(): void { this.search.set(''); }
-  public health(item: QueueItem): string { return QueuePresentation.health(item, Date.parse(this.snapshot().serverTime), this.snapshot().host); }
+  public health(item: QueueItem): string { return QueuePresentation.health(item, this.now(), this.snapshot().host); }
   public role(role: string): string { return ROLE_OPTIONS.find((entry) => entry.value === role)?.label ?? role; }
   public currentRole(item: QueueItem): string { return item.status === RunStatus.Integrating ? 'Интеграция' : item.phase === 'waiting-slot' ? 'Ожидание слота' : this.role(item.pipeline.at(item.stage)?.role ?? ''); }
-  public duration(at: string | undefined): string { return at ? `${Math.max(0, Math.floor((Date.parse(this.snapshot().serverTime) - Date.parse(at)) / 1000))} с` : 'нет данных'; }
+  public duration(at: string | undefined): string { return at ? `${Math.max(0, Math.floor((this.now() - Date.parse(at)) / 1000))} с` : 'нет данных'; }
   public progress(text: string): string { return RunProgressText.format(text); }
   public select(id: string): void { this.selectedCache.set(this.snapshot().items.find(run => run.id === id)); this.selectedId.set(id); this.error.set(''); this.showDetails.set(false); this.confirmation.set(null); }
   public viewHistory(taskId = ''): void { this.historyTask.set(taskId); this.historyMode.set(true); this.refresh.next(); }
