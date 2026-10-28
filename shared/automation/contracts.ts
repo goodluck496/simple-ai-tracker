@@ -63,6 +63,7 @@ export interface AgentProfile {
 export interface CheckCommand { command: string; args: string[]; }
 
 export interface AutomationSettings {
+  executionMode?: 'team' | 'developer';
   repositoryPath: string;
   baseBranch: string;
   connections: ModelConnection[];

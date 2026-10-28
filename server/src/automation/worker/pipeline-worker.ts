@@ -294,7 +294,7 @@ export class PipelineWorker {
           await checkpoint.save(saved);
         }
         let sha = (await git(['rev-parse', 'HEAD'], cwd)).trim();
-        if (profile.role === AgentRole.Tester && outcome.verdict === AgentVerdict.Pass && !saved.checksComplete) {
+        if ((profile.role === AgentRole.Tester || run.settings.executionMode === 'developer' && profile.role === AgentRole.Developer) && outcome.verdict === AgentVerdict.Pass && !saved.checksComplete) {
           for (const check of run.settings.checks) {
             try {
               await phase(RunPhase.Checks, `Проверка: ${check.command} ${check.args.join(' ')}`);

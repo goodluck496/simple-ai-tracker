@@ -34,7 +34,7 @@ export class AutomationPanelComponent implements OnInit {
   public activeTab: string | number = AutomationTab.Project;
   @Input() public initialMessage = '';
   @Input() public set initialTaskId(id: string | null) {
-    if (id) { this.taskControl.setValue(id); this.activeTab = AutomationTab.Launch; }
+    if (id) { this.taskControl.setValue(id); this.activeTab = AutomationTab.Launch; this.settingsScope = 'task'; }
   }
   private availableTasks: readonly TaskSummary[] = [];
   private latestTasks: readonly TaskLaunchCandidate[] | null = null;
@@ -47,6 +47,53 @@ export class AutomationPanelComponent implements OnInit {
   }
   public readonly taskControl = new FormControl<string | null>(null);
   public get selectedTask(): string | null { return this.taskControl.value; }
+  public settingsScope: 'project' | 'task' = 'project';
+  public taskOverridden = false;
+  public readonly scopeOptions = [{ label: 'Настройки проекта', value: 'project' }, { label: 'Команда выбранной задачи', value: 'task' }];
+  public readonly executionOptions = [{ label: 'Команда агентов', value: 'team' }, { label: 'Один разработчик', value: 'developer' }];
+  private projectDraft?: AutomationSettings;
+  private loadedTask: string | null = null;
+  public get taskTeamReady(): boolean { return this.settingsScope === 'project' || !!this.selectedTask && this.loadedTask === this.selectedTask; }
+  private loadedTeamSignature = '';
+  private readonly taskDrafts = new Map<string, { settings: AutomationSettings; overridden: boolean }>();
+  public get settingsTaskOptions() { return (this.latestTasks ?? this.availableTasks).map(task => ({ label: `${task.id} · ${task.title}`, value: task.id })); }
+  private cacheDraft(): void {
+    if (this.settingsScope === 'project') this.projectDraft = structuredClone(this.settings);
+    else if (this.loadedTask) {
+      if (this.teamSignature(this.settings) === this.loadedTeamSignature) this.taskDrafts.delete(this.loadedTask);
+      else this.taskDrafts.set(this.loadedTask, { settings: structuredClone(this.settings), overridden: this.taskOverridden });
+    }
+  }
+  private teamSignature(settings: AutomationSettings): string { return JSON.stringify([settings.agents, settings.pipeline, settings.executionMode ?? 'team']); }
+  private async loadTaskTeam(id: string): Promise<void> {
+    const value = await firstValueFrom(this.http.get<{ settings: AutomationSettings; overridden: boolean }>(`/api/automation/tasks/${encodeURIComponent(id)}/team`));
+    if (this.settingsScope !== 'task' || id !== this.selectedTask) return;
+    this.loadedTeamSignature = this.teamSignature(value.settings);
+    const draft = this.taskDrafts.get(id)?.settings;
+    this.settings = structuredClone(draft ? { ...value.settings, agents: draft.agents, pipeline: draft.pipeline, executionMode: draft.executionMode } : value.settings);
+    this.taskOverridden = value.overridden; this.loadedTask = id;
+  }
+  public changeScope(scope: 'project' | 'task'): void {
+    this.cacheDraft(); this.settingsScope = scope;
+    if (scope === 'task' && (this.activeTab === AutomationTab.Project || this.activeTab === AutomationTab.Models)) this.activeTab = AutomationTab.Team;
+    void this.act(async () => {
+      if (scope === 'task' && this.selectedTask) await this.loadTaskTeam(this.selectedTask);
+      else if (scope === 'project') this.settings = structuredClone(this.projectDraft ?? await firstValueFrom(this.http.get<AutomationSettings>('/api/automation/settings')));
+    });
+  }
+  public inheritTeam(): void {
+    if (!this.selectedTask) return;
+    const id = this.selectedTask;
+    void this.act(async () => { const value = await firstValueFrom(this.http.post<{ settings: AutomationSettings; overridden: boolean }>(`/api/automation/tasks/${id}/team/reset`, {})); this.taskDrafts.delete(id); this.settings = value.settings; this.loadedTask = id; this.loadedTeamSignature = this.teamSignature(this.settings); this.taskOverridden = false; this.notice = 'Задача наследует команду проекта.'; });
+  }
+  public setExecutionMode(mode: 'team' | 'developer'): void {
+    this.settings.executionMode = mode;
+    if (mode === 'developer') {
+      let agent = this.settings.agents.find(agent => agent.role === AgentRole.Developer);
+      if (!agent) { this.addAgent(AgentRole.Developer); agent = this.settings.agents.find(agent => agent.role === AgentRole.Developer); }
+      this.settings.pipeline = agent ? [agent.id] : [];
+    } else this.settings.pipeline = this.settings.agents.map(agent => agent.id);
+  }
   public get taskOptions() {
     const options = (this.latestTasks ?? this.availableTasks).map((task) => {
       const readiness = TaskAutomationReadiness.evaluate(task, this.settings, this.activeTaskIds.includes(task.id));
@@ -196,10 +243,16 @@ export class AutomationPanelComponent implements OnInit {
   private connectionOptionsCache: { label: string; value: string }[] = [];
   public ngOnInit(): void {
     this.destroyRef.onDestroy(() => { this.destroyed = true; });
-    this.taskControl.valueChanges.pipe(takeUntilDestroyed(this.destroyRef)).subscribe(() => { this.startError = ''; this.changeDetector.markForCheck(); });
+    this.taskControl.valueChanges.pipe(takeUntilDestroyed(this.destroyRef)).subscribe(id => {
+      this.startError = ''; this.cacheDraft();
+      if (id && this.settingsScope === 'task') void this.act(() => this.loadTaskTeam(id));
+      this.changeDetector.markForCheck();
+    });
     void this.act(async () => {
       const prepared = this.teamProfiles.prepare(await firstValueFrom(this.http.get<AutomationSettings>('/api/automation/settings')));
       this.settings = prepared.settings;
+      this.projectDraft = structuredClone(this.settings);
+      if (this.settingsScope === 'task' && this.selectedTask) await this.loadTaskTeam(this.selectedTask);
       if (prepared.repaired) this.repairNotice = 'Исправлены совпадающие ID агентов в черновике. Проверьте порядок этапов и сохраните настройки.';
       await this.refresh();
     });
@@ -276,12 +329,12 @@ export class AutomationPanelComponent implements OnInit {
     finally { this.projectBusy = false; if (!this.destroyed) this.changeDetector.markForCheck(); }
   }
   public get connectionOptions() {
-    const signature = JSON.stringify(this.settings.connections.map(({ id, label }) => ({ id, label })));
+    const signature = JSON.stringify([this.settingsScope, this.settings.connections.map(({ id, label }) => ({ id, label }))]);
     if (signature !== this.connectionOptionsSignature) {
       this.connectionOptionsSignature = signature;
       this.connectionOptionsCache = [
         ...this.settings.connections.map((entry) => ({ label: entry.label || entry.id, value: entry.id })),
-        ...CONNECTION_PRESETS.map(preset => ({ label: `＋ ${preset.label} — добавить подключение`, value: `preset:${preset.id}` })),
+        ...(this.settingsScope === 'project' ? CONNECTION_PRESETS.map(preset => ({ label: `＋ ${preset.label} — добавить подключение`, value: `preset:${preset.id}` })) : []),
       ];
     }
     return this.connectionOptionsCache;
@@ -322,11 +375,20 @@ export class AutomationPanelComponent implements OnInit {
   public changeRole(agent: AgentProfile, role: AgentRole): void { this.teamProfiles.changeRole(agent, role); }
   public resetInstructions(agent: AgentProfile): void { agent.instructions = DEFAULT_ROLE_INSTRUCTIONS[agent.role]; }
   public agentLabel(id: string): string { const agent = this.settings.agents.find((entry) => entry.id === id); return agent ? `${this.roleLabel(agent.role)} · ${agent.runner} · ${agent.model || 'выберите модель'}` : id; }
-  public save(): void { void this.act(async () => { this.settings = await firstValueFrom(this.http.post<AutomationSettings>('/api/automation/settings', this.settings)); this.repairNotice = ''; this.notice = 'Настройки пространства сохранены.'; }); }
+  public save(): void { void this.act(async () => {
+    if (!this.taskTeamReady) throw new Error('Сначала дождитесь загрузки команды выбранной задачи.');
+    if (this.settingsScope === 'task') {
+      if (!this.selectedTask) throw new Error('Выберите задачу для настройки команды.');
+      const value = await firstValueFrom(this.http.post<{ settings: AutomationSettings; overridden: boolean }>(`/api/automation/tasks/${this.selectedTask}/team`, this.settings));
+      this.settings = value.settings; this.taskOverridden = value.overridden; this.loadedTeamSignature = this.teamSignature(this.settings); this.cacheDraft(); this.notice = `Команда задачи ${this.selectedTask} сохранена. Настройки проекта не изменены.`;
+    } else { this.settings = await firstValueFrom(this.http.post<AutomationSettings>('/api/automation/settings', this.settings)); this.projectDraft = structuredClone(this.settings); this.notice = 'Настройки проекта сохранены.'; }
+    this.repairNotice = '';
+  }); }
   public start(): void {
     if (this.starting) return;
     this.startError = ''; this.startNotice = '';
     if (!this.selectedTask) { this.startError = 'Выберите задачу для запуска.'; return; }
+    if (!this.taskTeamReady) { this.startError = 'Команда выбранной задачи ещё не загружена.'; return; }
     if (!this.selectedEligibility?.canStart) { this.startError = this.selectedEligibility?.reasons.join(' ') || 'Задача больше не доступна для запуска. Обновите список.'; return; }
     this.starting = true;
     const taskId = this.selectedTask; const settings = structuredClone(this.settings);

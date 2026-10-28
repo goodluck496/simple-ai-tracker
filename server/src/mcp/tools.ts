@@ -404,6 +404,7 @@ export class TrackerToolRegistry {
       switch (name) {
         case AutomationTool.Configure: return json(service.configure(args['settings']));
         case AutomationTool.Settings: return json(service.settings());
+        case AutomationTool.TaskTeam: return json(service.taskTeam(requireString(args, 'taskId'), args['phase'] === 'reset' ? null : args['settings']));
         case AutomationTool.HostPoll: return json(service.projects.poll(requireString(args, 'workerId'), asString(args, 'platform')));
         case AutomationTool.HostComplete: service.completeHost(id(), token(), args['result'] as import('../../../shared/automation/project.js').ProjectResult | undefined, asString(args, 'error')); return json({ ok: true });
         case AutomationTool.ListRuns: return json(service.list(asString(args, 'taskId')));

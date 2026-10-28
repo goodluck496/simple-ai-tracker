@@ -175,8 +175,8 @@ try {
   await analyst.getByRole('button', { name: 'Обновить модели', exact: true }).waitFor({ state: 'visible' });
   await page.waitForFunction(() => Array.from(document.querySelectorAll('button')).find((b) => b.textContent === 'Обновить модели')?.disabled === false);
   assert.ok((await analyst.innerText()).includes('GPT-6-Luna'));
-  await dialog.getByRole('button', { name: 'Сохранить настройки пространства', exact: true }).click();
-  await dialog.getByText('Настройки пространства сохранены.', { exact: true }).waitFor();
+  await dialog.getByRole('button', { name: 'Сохранить настройки проекта', exact: true }).click();
+  await dialog.getByText('Настройки проекта сохранены.', { exact: true }).waitFor();
   assert.equal(app.automationService.settings().agents[0].model, 'gpt-6-luna', 'Display name must never be sent as model ID');
   catalogFails = true;
   await analyst.getByRole('button', { name: 'Обновить модели', exact: true }).click();
@@ -190,8 +190,8 @@ try {
   await analyst.getByRole('button', { name: 'Указать ID вручную', exact: true }).click();
   console.log('PASS: searchable model catalog stores exact slug; refresh/error/manual fallback preserve selection.');
   await dialog.getByPlaceholder('ID модели').first().fill('saved-model');
-  await dialog.getByRole('button', { name: 'Сохранить настройки пространства', exact: true }).click();
-  await dialog.getByText('Настройки пространства сохранены.', { exact: true }).waitFor().catch(async (error) => {
+  await dialog.getByRole('button', { name: 'Сохранить настройки проекта', exact: true }).click();
+  await dialog.getByText('Настройки проекта сохранены.', { exact: true }).waitFor().catch(async (error) => {
     console.error(JSON.stringify({ errors, alerts: await dialog.getByRole('alert').allTextContents() })); throw error;
   });
   assert.equal(app.automationService.settings().agents[0].model, 'saved-model');
@@ -242,12 +242,12 @@ try {
   await dialog.getByPlaceholder('ID модели').first().fill('submitted-without-save');
   await tab('Запуск');
   await dialog.getByRole('button', { name: 'Запустить', exact: true }).click().catch(async (error) => {
-    console.error(JSON.stringify({ saveEnabled: await dialog.getByRole('button', { name: 'Сохранить настройки пространства', exact: true }).isEnabled(), selects: await dialog.locator('p-select').allTextContents(), alerts: await dialog.getByRole('alert').allTextContents(), errors })); throw error;
+    console.error(JSON.stringify({ saveEnabled: await dialog.getByRole('button', { name: 'Сохранить настройки проекта', exact: true }).isEnabled(), selects: await dialog.locator('p-select').allTextContents(), alerts: await dialog.getByRole('alert').allTextContents(), errors })); throw error;
   });
   await dialog.getByText(/создан для .*Ожидает захвата worker\./).waitFor();
   assert.equal(app.automationService.list(task.id)[0].status, 'queued');
   assert.equal(app.automationService.list(task.id)[0].settings.agents[0].model, 'submitted-without-save');
-  assert.equal(app.automationService.settings().agents[0].model, 'submitted-without-save');
+  assert.equal(app.automationService.settings().agents[0].model, 'saved-model', 'A one-run draft must not replace project defaults');
   await dialog.getByText(`Последний созданный запуск: ${task.id} · queued`, { exact: true }).waitFor();
   await stopQueuedRun();
   if (projectTimer) { clearInterval(projectTimer); projectTimer = undefined; } await pendingProject;
@@ -277,8 +277,8 @@ try {
   await tab('Команда и этапы');
   await assertTeam();
   assert.equal(await (await instructions('Ревьюер — оценка кода')).inputValue(), 'Моя дополнительная инструкция ревьюера');
-  await dialog.getByRole('button', { name: 'Сохранить настройки пространства', exact: true }).click();
-  await dialog.getByText('Настройки пространства сохранены.', { exact: true }).waitFor();
+  await dialog.getByRole('button', { name: 'Сохранить настройки проекта', exact: true }).click();
+  await dialog.getByText('Настройки проекта сохранены.', { exact: true }).waitFor();
   assert.equal(new Set(app.automationService.settings().agents.map((agent) => agent.id)).size, 4);
   await chooseTask('Ready acceptance', ready.id);
   await dialog.getByText(`${ready.id} · DoR: готова`, { exact: true }).waitFor();

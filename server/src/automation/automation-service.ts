@@ -33,6 +33,20 @@ export class AutomationService {
     this.repos.meta.set(SETTINGS_KEY, JSON.stringify(settings));
     return settings;
   }
+  public taskTeam(id: string, input?: unknown) {
+    this.tasks.getTaskCard(id);
+    const key = `automation_task_team_v1:${id}`;
+    if (input !== undefined) {
+      if (input === null) this.repos.meta.set(key, 'null');
+      else {
+        const value = input as AutomationSettings;
+        const checked = new AutomationSettingsValidator().validate({ ...this.settings(), agents: value.agents, pipeline: value.pipeline, executionMode: value.executionMode });
+        this.repos.meta.set(key, JSON.stringify({ agents: checked.agents, pipeline: checked.pipeline, executionMode: checked.executionMode }));
+      }
+    }
+    const override = JSON.parse(this.repos.meta.get(key) ?? 'null') as Partial<AutomationSettings> | null;
+    return { overridden: !!override, settings: new AutomationSettingsValidator().validate({ ...this.settings(), ...override }) };
+  }
   public list(taskId?: string): AgentRun[] {
     return this.runs.db.transaction(() => { this.expireLeases(); return this.runs.list(taskId).map((run) => this.publicRun(run)); });
   }
@@ -92,7 +106,7 @@ export class AutomationService {
       if (task.openQuestionsCount || task.status === TaskStatus.Done) throw new TrackerError('CONFLICT', 'Resolve task questions before starting automation.');
       const integrationRestart = previous && previous.stage >= previous.settings.pipeline.length && previous.settings.mergePolicy === MergePolicy.Local;
       if (!AUTOMATION_START_TASK_STATUSES.includes(task.status) && !(previous && (task.status === TaskStatus.InProgress || task.status === TaskStatus.Testing || (integrationRestart && task.status === TaskStatus.Review)))) throw new TrackerError('CONFLICT', 'Start a new run from backlog, planning or ready; resume an existing run for work already in progress.');
-      const settings = new AutomationSettingsValidator().validate(draft === undefined ? this.settings() : draft);
+      const settings = new AutomationSettingsValidator().validate(draft === undefined ? this.taskTeam(taskId).settings : draft);
       if (integrationRestart && (settings.repositoryPath.replace(/\\/g, '/') !== previous.settings.repositoryPath.replace(/\\/g, '/')
         || settings.baseBranch !== previous.settings.baseBranch || settings.mergePolicy !== MergePolicy.Local)) throw new TrackerError('CONFLICT', 'Integration restart must keep the source repository, target branch and local merge policy.');
       if (!settings.repositoryPath || !settings.pipeline.length || !settings.checks.length) throw new TrackerError('VALIDATION_FAILED', 'Configure repository, pipeline and real check commands first.');
@@ -102,10 +116,11 @@ export class AutomationService {
       const reviewer = roles.indexOf(AgentRole.Reviewer);
       if (roles.filter((role) => role === AgentRole.Analyst).length > 1 || (roles.includes(AgentRole.Analyst) && roles[0] !== AgentRole.Analyst)) throw new TrackerError('VALIDATION_FAILED', 'Optional analyst must be the first stage.');
       if (roles.includes(AgentRole.VisualValidator) && !settings.artifactPaths.some((file) => /\.(png|jpe?g|webp)$/i.test(file))) throw new TrackerError('VALIDATION_FAILED', 'Visual validator requires image artifact paths.');
-      if (developer < 0 || tester <= developer || reviewer <= tester) throw new TrackerError('VALIDATION_FAILED', 'Pipeline must include developer, tester and reviewer in this order.');
+      const solo = settings.executionMode === 'developer';
+      if (solo ? roles.length !== 1 || roles[0] !== AgentRole.Developer : developer < 0 || tester <= developer || reviewer <= tester) throw new TrackerError('VALIDATION_FAILED', solo ? 'Developer mode requires exactly one developer and an approved plan.' : 'Pipeline must include developer, tester and reviewer in this order.');
       const lastTester = roles.lastIndexOf(AgentRole.Tester);
-      if (reviewer < lastTester || roles.some((role, index) => (WRITABLE_AGENT_ROLES.includes(role) && index > tester)
-        || (role === AgentRole.VisualValidator && index < lastTester))) throw new TrackerError('VALIDATION_FAILED', 'Development/design must precede tests; review and visual validation must follow tests.');
+      if (!solo && (reviewer < lastTester || roles.some((role, index) => (WRITABLE_AGENT_ROLES.includes(role) && index > tester)
+        || (role === AgentRole.VisualValidator && index < lastTester)))) throw new TrackerError('VALIDATION_FAILED', 'Development/design must precede tests; review and visual validation must follow tests.');
       if (!task.plan && (roles.indexOf(AgentRole.Analyst) < 0 || roles.indexOf(AgentRole.Analyst) > developer)) throw new TrackerError('VALIDATION_FAILED', 'Task needs an existing plan or an analyst before development.');
       if (!task.plan && roles.some((role, index) => role === AgentRole.Designer && index < roles.indexOf(AgentRole.Analyst))) throw new TrackerError('VALIDATION_FAILED', 'Analyst must precede design changes when the task has no plan.');
       if (this.activeTaskIds().includes(taskId)) throw new TrackerError('CONFLICT', 'Task already has an active run or belongs to an executing feature.');
@@ -133,7 +148,7 @@ export class AutomationService {
         const now = this.clock.now();
         this.runs.save({ ...previous, status: RunStatus.Cancelled, leaseToken: null, updatedAt: now, finishedAt: now });
       }
-      const next = this.createRun(previous.taskId, this.settings(), previous);
+      const next = this.createRun(previous.taskId, this.taskTeam(previous.taskId).settings, previous, false);
       this.runs.event(previous.id, 'restarted', `Новый запуск с начала: ${next.id}. Используются сохранённые настройки команды.`, this.clock.now());
       return next;
     });
@@ -283,7 +298,7 @@ export class AutomationService {
         }
         else updated.mergeMessage = outcome.commitMessage;
       }
-      if (EVIDENCE_AGENT_ROLES.includes(profile.role)) {
+      if (EVIDENCE_AGENT_ROLES.includes(profile.role) || run.settings.executionMode === 'developer') {
         this.tasks.addAttachment(taskId, { kind: 'report', name: `${profile.role}-${run.id}-${run.revision}.md`,
           content: `# ${profile.role}\n\nVerdict: ${outcome.verdict}\nCommit: ${commitSha}\nBranch: ${branch}\n\n${outcome.summary}\n\n## Worker evidence\n${this.runs.events(id).filter((event) => event.kind === 'progress').slice(-10).map((event) => event.text).join('\n')}` });
       }
@@ -328,6 +343,7 @@ export class AutomationService {
         updated = { ...updated, stage: run.stage + 1 };
         if (child && updated.stage === updated.feature?.finalDeveloperStage) updated.stage++;
         if (updated.stage >= updated.settings.pipeline.length) {
+          if (run.settings.executionMode === 'developer' && this.tasks.getTaskCard(run.taskId).status === TaskStatus.InProgress) this.tasks.setStatus({ id: run.taskId, status: TaskStatus.Testing, actor: 'agent' });
           this.tasks.setStatus({ id: run.taskId, status: TaskStatus.Review, actor: 'agent' });
           updated = { ...updated, status: run.settings.mergePolicy === MergePolicy.Local ? RunStatus.Integrating : RunStatus.Review,
             leaseToken: run.settings.mergePolicy === MergePolicy.Local ? run.leaseToken : null };

@@ -1,8 +1,12 @@
-.automation-panel { display: grid; gap: .75rem; color: var(--p-text-color); }
+:host { display: flex; width: 100%; min-width: 0; min-height: 0; }
+.automation-panel { display: flex; flex-direction: column; gap: .6rem; color: var(--p-text-color); width: 100%; min-width: 0; min-height: 0; }
 .tab-content { display: grid; gap: .75rem; min-width: 0; }
-:host ::ng-deep .p-tabs, :host ::ng-deep .p-tabpanels { min-width: 0; max-width: 100%; }
+:host ::ng-deep .p-tabs { display: flex; flex-direction: column; flex: 1; min-height: 0; min-width: 0; max-width: 100%; overflow: hidden; }
+:host ::ng-deep .p-tabpanels { flex: 1; min-height: 0; min-width: 0; max-width: 100%; overflow: auto; }
 :host ::ng-deep .p-tablist { position: sticky; top: 0; z-index: 2; background: var(--p-content-background); }
-.settings-footer { position: sticky; bottom: 0; padding: .6rem 0; background: var(--p-content-background); border-top: 1px solid var(--p-content-border-color); z-index: 2; }
+.settings-footer { flex: 0 0 auto; padding: .6rem 0; background: var(--p-dialog-background, #18181b); border-top: 1px solid var(--p-content-border-color, #3f3f46); z-index: 2; }
+.settings-scope { display: flex; align-items: center; flex-wrap: wrap; gap: .6rem; }
+fieldset[hidden] { display: none; }
 .row { display: flex; flex-wrap: wrap; align-items: end; gap: .65rem; }
 label { display: grid; gap: .35rem; font-size: .85rem; min-width: 0; }
 .checkbox-field { display: flex; align-items: center; gap: .5rem; }
