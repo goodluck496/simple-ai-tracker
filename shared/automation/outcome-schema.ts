@@ -1,4 +1,4 @@
-/** Codex structured output: named fields cannot be buried inside a prose summary. */
+/** Structured CLI output: named fields cannot be buried inside a prose summary. */
 export const AGENT_OUTCOME_SCHEMA = {
   type: 'object', additionalProperties: false,
   properties: {

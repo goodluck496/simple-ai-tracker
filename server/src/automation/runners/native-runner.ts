@@ -8,6 +8,7 @@ import { AGENT_TRACKER_READ_TOOLS, AGENT_TRACKER_SERVER } from '../../../../shar
 import { TaskEnvironment } from './task-environment.js';
 import { AGENT_OUTCOME_SCHEMA } from '../../../../shared/automation/outcome-schema.js';
 import { NativeExecutable } from './native-executable.js';
+import { AntigravityResult } from './antigravity-result.js';
 
 interface Envelope { type?: string; is_error?: boolean; result?: string; response?: string; status?: string; session_id?: string; conversation_id?: string; item?: { type?: string; text?: string }; part?: { type?: string; text?: string }; }
 const NATIVE_SUCCESS_STATUSES = new Set(['SUCCESS', 'success']);
@@ -23,7 +24,7 @@ export class NativeAgentRunner implements AgentRunner {
     let command = ''; let args: string[] = []; let stdin: string | undefined;
     const model = job.profile.model;
     const schemaPath = path.join(promptDir, 'outcome-schema.json');
-    if (this.id === RunnerId.Codex) await fs.writeFile(schemaPath, JSON.stringify(AGENT_OUTCOME_SCHEMA), 'utf8');
+    if (this.id === RunnerId.Codex || this.id === RunnerId.Antigravity) await fs.writeFile(schemaPath, JSON.stringify(AGENT_OUTCOME_SCHEMA), 'utf8');
     switch (this.id) {
       case RunnerId.Codex: command = RunnerId.Codex; args = ['exec', '--json', '--output-schema', schemaPath, '--sandbox', 'workspace-write', '--model', model,
         '-c', 'tool_output_token_limit=800',
@@ -32,7 +33,7 @@ export class NativeAgentRunner implements AgentRunner {
       case RunnerId.ClaudeCode: command = 'claude'; args = ['-p', '--output-format', 'json', '--model', model]; stdin = job.prompt; break;
       case RunnerId.OpenCode: command = RunnerId.OpenCode; args = ['run', '--format', 'json', '--model', model, brief]; break;
       case RunnerId.DeepSeekHarness: command = 'dsh'; args = ['--profile', job.profile.nativeProfile!, brief]; break;
-      case RunnerId.Antigravity: command = NativeExecutable.antigravity(); args = ['-p', brief, '--output-format', 'json', '--model', model]; break;
+      case RunnerId.Antigravity: command = NativeExecutable.antigravity(); args = ['--add-dir', job.cwd, '--output-format', 'json', '--json-schema', schemaPath, '--model', model, '-p', brief]; break;
       case RunnerId.Custom: {
         command = job.profile.command!;
         const values: Record<string, string> = { promptFile, model, cwd: job.cwd, role: job.profile.role, provider: job.connection.id };
@@ -112,8 +113,9 @@ export class NativeAgentRunner implements AgentRunner {
         }
       }
     });
-    let raw: string;
-    try { raw = await this.executor.run({ command, args, cwd: job.cwd, stdin, env: TaskEnvironment.create(), signal: job.signal, compactProgress: true, onProgress, onStdout: (text) => meter.push(text) }); }
+    let raw: string; let diagnosticTail = '';
+    try { raw = await this.executor.run({ command, args, cwd: job.cwd, stdin, env: TaskEnvironment.create(), signal: job.signal, compactProgress: true, onProgress, onStdout: (text) => meter.push(text),
+      onStderr: this.id === RunnerId.Antigravity ? text => { diagnosticTail = (diagnosticTail + text).slice(-8000); } : undefined }); }
     finally { meter.finish(); }
     // Some executors and formatted JSON outputs provide only the final complete document.
     if (!meter.usage) {
@@ -121,6 +123,7 @@ export class NativeAgentRunner implements AgentRunner {
       catch { /* JSONL is consumed by the stream parser. */ }
     }
     if (this.id === RunnerId.Custom) return { text: raw.trim() };
+    if (this.id === RunnerId.Antigravity) return { ...AntigravityResult.parse(raw, diagnosticTail, onProgress), usage: meter.usage };
     let answer = ''; let sessionId: string | undefined;
     const records: string[] = [];
     try { JSON.parse(raw); records.push(raw); } catch { records.push(...raw.split(/\r?\n/)); }

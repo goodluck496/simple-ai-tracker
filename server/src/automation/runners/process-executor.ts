@@ -10,6 +10,7 @@ export interface ProcessRequest {
   maxOutputChars?: number;
   compactProgress?: boolean;
   onStdout?: (text: string) => void;
+  onStderr?: (text: string) => void;
 }
 const MAX_OUTPUT = 256 * 1024;
 
@@ -44,6 +45,7 @@ export class ProcessExecutor {
         if (!request.compactProgress) request.onProgress?.(value);
       });
       child.stderr?.on('data', (value: string) => {
+        request.onStderr?.(value);
         stderr = (stderr + value).slice(-MAX_OUTPUT);
         if (!request.compactProgress) request.onProgress?.(value);
       });

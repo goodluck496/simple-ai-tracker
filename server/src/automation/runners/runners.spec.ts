@@ -28,7 +28,7 @@ test('native adapters preserve model, prompt and native result/error envelopes',
       ['codex', JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: 'codex-answer' } })],
       ['claude-code', JSON.stringify({ result: 'claude-answer', session_id: 's' })],
       ['opencode', JSON.stringify({ type: 'text', part: { text: 'opencode-answer' } })],
-      ['antigravity', JSON.stringify({ status: 'SUCCESS', response: 'agy-answer' }, null, 2)],
+      ['antigravity', JSON.stringify({ status: 'SUCCESS', structured_output: { verdict: 'pass', summary: 'agy-answer' }, response: 'agy-answer' }, null, 2)],
       ['deepseek-harness', '{"verdict":"pass","summary":"headless-answer"}'],
     ];
     for (const [runner, output] of envelopes) {
