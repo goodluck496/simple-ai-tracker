@@ -51,6 +51,10 @@ try {
   assert.equal(await start(feature.id).isEnabled(), true); assert.equal(await start(child.id).isEnabled(), true);
   await start(ready.id).evaluate((button: HTMLButtonElement) => { button.click(); button.click(); });
   const queue = page.getByRole('dialog', { name: 'Очередь агентов', exact: true });
+  const modal = page.getByRole('dialog', { name: 'Команда агентов', exact: true });
+  await modal.getByRole('region', { name: 'Этапы этого запуска' }).waitFor();
+  assert.equal(enqueues, 0, 'A card opens preview without creating any run');
+  await modal.getByRole('button', { name: 'Поставить в очередь', exact: true }).click();
   await queue.getByRole('article', { name: 'Детали запуска' }).waitFor();
   assert.equal(app.automationService.list(ready.id).length, 1); assert.equal(enqueues, 1);
   assert.equal(await page.getByRole('dialog', { name: 'Карточка задачи', exact: true }).count(), 0);
@@ -58,18 +62,21 @@ try {
   const closeQueue = async () => { await queue.locator('.p-dialog-close-button').click(); await queue.waitFor({ state: 'hidden' }); };
   await closeQueue(); await start(ready.id).click(); await queue.getByRole('article', { name: 'Детали запуска' }).waitFor();
   assert.equal(enqueues, 1, 'An active run must be opened without another enqueue'); await closeQueue();
-  await start(backlog.id).click(); await queue.getByRole('article', { name: 'Детали запуска' }).waitFor();
+  await start(backlog.id).click(); await modal.getByRole('region', { name: 'Этапы этого запуска' }).waitFor();
+  await modal.getByRole('button', { name: 'Поставить в очередь', exact: true }).click(); await queue.getByRole('article', { name: 'Детали запуска' }).waitFor();
   assert.equal(app.automationService.list(backlog.id).length, 1); await closeQueue();
   app.automationService.configure({ ...settings, checks: [] });
   await start(unconfigured.id).click();
-  const modal = page.getByRole('dialog', { name: 'Команда агентов', exact: true });
-  await modal.getByRole('alert').filter({ hasText: 'Не удалось поставить задачу в очередь' }).waitFor();
+  await modal.getByRole('region', { name: 'Этапы этого запуска' }).waitFor();
+  await modal.getByRole('button', { name: 'Поставить в очередь', exact: true }).click();
+  await modal.getByRole('alert').filter({ hasText: 'Ошибка запуска:' }).waitFor();
   assert.equal(await modal.getByRole('tab', { name: 'Запуск', exact: true }).getAttribute('aria-selected'), 'true');
   assert.ok((await modal.getByRole('combobox', { name: 'Задача для запуска', exact: true }).innerText()).includes(unconfigured.id));
   assert.equal(app.automationService.list(unconfigured.id).length, 0);
   await modal.locator('.p-dialog-close-button').click(); await modal.waitFor({ state: 'hidden' });
   app.automationService.configure(settings);
-  await start(feature.id).click(); await queue.getByRole('article', { name: 'Детали запуска' }).waitFor();
+  await start(feature.id).click(); await modal.getByRole('region', { name: 'Этапы этого запуска' }).waitFor();
+  await modal.getByRole('button', { name: 'Поставить в очередь', exact: true }).click(); await queue.getByRole('article', { name: 'Детали запуска' }).waitFor();
   assert.equal(app.automationService.list(feature.id).length, 1); await closeQueue();
   for (const viewport of [{ width: 390, height: 844 }, { width: 844, height: 390 }]) {
     await page.setViewportSize(viewport);

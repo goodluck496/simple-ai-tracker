@@ -65,11 +65,12 @@ export class AppComponent implements OnInit {
     this.automationTaskId = taskId; this.automationMessage = message; this.showAutomation = true;
   }
   public launchTask(id: string): void {
-    this.openAutomation(id);
+    this.automationLauncher.preview(id).pipe(tap(runId => runId ? this.openQueue(runId) : this.openAutomation(id)),
+      catchError(() => { this.openAutomation(id); return EMPTY; }), takeUntilDestroyed(this.destroyRef)).subscribe();
   }
   public showQueue = false;
   public queueRunId: string | null = null;
-  public openQueue(id: string | null): void { this.queueRunId = id; this.showQueue = true; }
+  public openQueue(id: string | null): void { if (this.automationTaskId) this.showAutomation = false; this.queueRunId = id; this.showQueue = true; }
   public openQueueTask(id: string): void { this.showQueue = false; this.showAutomation = false; void this.store.openCard(id); }
   public readonly createMode = signal(false);
   public readonly createType = signal<TaskType>('task');

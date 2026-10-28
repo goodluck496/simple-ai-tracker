@@ -106,7 +106,7 @@
       </div>
 
       <div class="sat-card__actions">
-        <span (pointerdown)="$event.stopPropagation()" [pTooltip]="automationReason(task) || 'Запустить в разработку'" tooltipPosition="top">
+        <span (pointerdown)="$event.stopPropagation()" [pTooltip]="automationReason(task) || 'Выбрать исполнителей и запустить'" tooltipPosition="top">
           <p-button [ariaLabel]="'Запустить в разработку ' + task.id" icon="pi pi-play" size="small" severity="success" [text]="true" [rounded]="true"
             [disabled]="!!automationReason(task)" [loading]="automationPending().has(task.id)" (onClick)="onStart($event, task)" />
         </span>
@@ -251,7 +251,7 @@
                   tooltipPosition="top"
                   (onClick)="onEdit($event, group.feature)"
                 ></p-button>
-                <span [pTooltip]="automationReason(group.feature) || 'Запустить в разработку'" tooltipPosition="top" (click)="$event.stopPropagation()" (pointerdown)="$event.stopPropagation()">
+                <span [pTooltip]="automationReason(group.feature) || 'Выбрать исполнителей и запустить'" tooltipPosition="top" (click)="$event.stopPropagation()" (pointerdown)="$event.stopPropagation()">
                   <p-button [ariaLabel]="'Запустить в разработку ' + group.feature.id" icon="pi pi-play" severity="success" [text]="true" [rounded]="true" size="small"
                     [disabled]="!!automationReason(group.feature)" [loading]="automationPending().has(group.feature.id)" (onClick)="onStart($event, group.feature)" />
                 </span>

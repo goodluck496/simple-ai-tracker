@@ -138,7 +138,7 @@ export class BoardComponent implements AfterViewInit, OnDestroy {
   public readonly startRequested = output<string>();
   public readonly automationPending = input<ReadonlySet<string>>(new Set());
   public automationReason(task: TaskSummary): string {
-    if (this.automationPending().has(task.id)) return 'Задача отправляется в очередь.';
+    if (this.automationPending().has(task.id)) return 'Открываются настройки запуска.';
     if (task.openQuestionsCount) return 'Сначала ответьте на вопросы в карточке.';
     if (!AUTOMATION_START_TASK_STATUSES.includes(task.status)) return 'Новый запуск доступен из backlog, planning или ready. Текущий запуск можно продолжить в очереди.';
     return '';
