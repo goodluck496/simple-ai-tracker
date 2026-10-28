@@ -39,7 +39,7 @@
   </p-accordion-content></p-accordion-panel></p-accordion>
   @if (showLaunchCommand) {
     <label>Команда запуска PowerShell <textarea #commandText readonly rows="10" [value]="launchCommand" aria-label="Команда запуска PowerShell"></textarea></label>
-    <p class="hint">Нужны Node.js 22+ и Docker CLI. Команда копирует переносимый worker из контейнера в LocalAppData и запускает его. Работает из любой папки, без npm install и исходников трекера. Оставьте окно PowerShell открытым; Ctrl+C останавливает worker. Для обновления остановите старый worker и скопируйте команду снова.</p>
+    <p class="hint">Нужны Node.js 22+, Docker CLI, Git и CodeGraph. Команда запускает локальный host в фоне из любой папки, без npm install и исходников трекера. После подключения исполнителем можно управлять кнопками «Запустить worker» и «Остановить worker».</p>
     @if (!launchCommand) { <p class="error">Проверьте имя контейнера: допустимы буквы, цифры, точка, дефис и подчёркивание.</p> }
   }
   <h3>2. Проект и проверки</h3>
@@ -50,7 +50,7 @@
   </div>
   @if (pendingFolderPick) {
     <p role="status">Выполните скопированную команду в PowerShell. Когда worker подключится, выбор папки откроется автоматически.</p>
-    <button pButton severity="secondary" type="button" (click)="pendingFolderPick = false">Отменить ожидание выбора</button>
+    <button pButton severity="secondary" type="button" (click)="cancelFolderConnection()">Отменить ожидание выбора</button>
   }
   <div class="row">
     <p-button data-project-picker label="Обзор каталогов worker" severity="secondary" [disabled]="projectBusy || !host.online" (onClick)="browse(settings.repositoryPath)" />
@@ -262,3 +262,22 @@
   </p-tabs>
   <div class="settings-footer"><p-button [label]="settingsScope === 'task' ? 'Сохранить команду задачи' : 'Сохранить настройки проекта'" [disabled]="busy || !taskTeamReady" (onClick)="save()" /></div>
 </div>
+<p-dialog header="Подключить компьютер для выбора папки" [visible]="folderConnectOpen" (visibleChange)="!$event && cancelFolderConnection()"
+  [modal]="true" appendTo="body" [style]="{width: '44rem', maxWidth: 'calc(100vw - 2rem)'}">
+  <p>Системное окно выбора открывается на компьютере с подключённым host. Браузер сам не может запустить локальный процесс.</p>
+  <p class="hint">На компьютере нужны Node.js 22+, Docker CLI, Git и CodeGraph. Docker должен быть запущен.</p>
+  <ol>
+    <li>Скопируйте команду ниже.</li>
+    <li>Выполните её в PowerShell на компьютере с проектом.</li>
+    <li>После подключения окно выбора папки откроется автоматически.</li>
+  </ol>
+  <label>Команда подключения
+    <textarea #folderCommandText readonly rows="8" [value]="launchCommand" aria-label="Команда подключения для выбора папки"></textarea>
+  </label>
+  @if (launchNotice) { <p role="status">{{ launchNotice }}</p> }
+  <p role="status">Ожидаем подключения компьютера…</p>
+  <ng-template pTemplate="footer">
+    <p-button label="Отменить ожидание выбора" severity="secondary" (onClick)="cancelFolderConnection()" />
+    <p-button label="Скопировать команду" (onClick)="copyLaunchCommand()" />
+  </ng-template>
+</p-dialog>

@@ -9,6 +9,7 @@ import { CheckboxModule } from 'primeng/checkbox';
 import { InputTextModule } from 'primeng/inputtext';
 import { TabsModule } from 'primeng/tabs';
 import { AccordionModule } from 'primeng/accordion';
+import { DialogModule } from 'primeng/dialog';
 import { AUTOMATION_TABS, AutomationTab } from './automation-panel.types';
 import { AGENT_ROLES, RUNNER_IDS, DEFAULT_AUTOMATION_SETTINGS, PROVIDER_KINDS, REASONING_EFFORTS, MERGE_POLICIES,
   AUTOMATION_LIMITS, AUTOMATION_TIMING,
@@ -25,7 +26,7 @@ import { TaskAutomationReadiness, TASK_STATUS_TITLES, TASK_SELECTION_LIMIT, type
 import { ModelCatalogKey, type ModelOption } from '../../../../../shared/automation/model-catalog';
 
 @Component({ selector: 'sat-automation-panel', standalone: true,
-  imports: [FormsModule, ReactiveFormsModule, SelectModule, ButtonModule, CheckboxModule, InputTextModule, TabsModule, AccordionModule],
+  imports: [FormsModule, ReactiveFormsModule, SelectModule, ButtonModule, CheckboxModule, InputTextModule, TabsModule, AccordionModule, DialogModule],
   templateUrl: './automation-panel.component.html', styleUrl: './automation-panel.component.scss' })
 export class AutomationPanelComponent implements OnInit {
   @Output() public readonly openQueue = new EventEmitter<string | null>();
@@ -109,6 +110,9 @@ export class AutomationPanelComponent implements OnInit {
   private readonly changeDetector = inject(ChangeDetectorRef);
   private readonly workspace = inject(WorkspaceService);
   @ViewChild('commandText') private commandText?: ElementRef<HTMLTextAreaElement>;
+  @ViewChild('folderCommandText') private folderCommandText?: ElementRef<HTMLTextAreaElement>;
+  public folderConnectOpen = false;
+  public cancelFolderConnection(): void { this.pendingFolderPick = false; this.folderConnectOpen = false; }
   public settings = structuredClone(DEFAULT_AUTOMATION_SETTINGS);
   private readonly modelCatalogs = new Map<string, ModelOption[]>();
   private readonly modelMessages = new Map<string, string>();
@@ -243,7 +247,8 @@ export class AutomationPanelComponent implements OnInit {
       this.showLaunchCommand = true;
       this.launchNotice = 'Браузер запретил буфер обмена. Команда выделена ниже: нажмите Ctrl+C.';
       this.changeDetector.detectChanges();
-      this.commandText?.nativeElement.focus(); this.commandText?.nativeElement.select();
+      const field = this.folderConnectOpen ? this.folderCommandText : this.commandText;
+      field?.nativeElement.focus(); field?.nativeElement.select();
     }
     this.changeDetector.markForCheck();
   }
@@ -289,6 +294,8 @@ export class AutomationPanelComponent implements OnInit {
   public async pickFolder(): Promise<void> {
     if (!this.host.online) {
       this.pendingFolderPick = true;
+      this.folderConnectOpen = true;
+      this.changeDetector.detectChanges();
       await this.copyLaunchCommand();
       return;
     }
@@ -428,6 +435,7 @@ export class AutomationPanelComponent implements OnInit {
     this.host = await firstValueFrom(this.http.get<HostStatus>('/api/automation/host'));
     if (!this.destroyed && this.host.online && this.pendingFolderPick && !this.projectBusy) {
       this.pendingFolderPick = false;
+      this.folderConnectOpen = false;
       void this.pickFolder();
     }
     const response = await firstValueFrom(this.http.get<{ runs: AgentRun[]; activeTaskIds: string[]; tasks: TaskLaunchCandidate[] }>('/api/automation/runs'));
