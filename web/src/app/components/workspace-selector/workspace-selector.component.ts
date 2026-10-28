@@ -7,6 +7,7 @@ import { InputTextModule } from 'primeng/inputtext';
 import { ConfirmationService } from 'primeng/api';
 import { ConfirmPopupModule } from 'primeng/confirmpopup';
 import { TooltipModule } from 'primeng/tooltip';
+import { DialogModule } from 'primeng/dialog';
 import { WorkspaceService } from '../../services/workspace.service';
 
 /** Переключатель пространств задач — p-select + кнопки создания/удаления. */
@@ -14,7 +15,7 @@ import { WorkspaceService } from '../../services/workspace.service';
   selector: 'sat-workspace-selector',
   providers: [ConfirmationService],
   standalone: true,
-  imports: [CommonModule, FormsModule, SelectModule, ButtonModule, InputTextModule, ConfirmPopupModule, TooltipModule],
+  imports: [CommonModule, FormsModule, SelectModule, ButtonModule, InputTextModule, ConfirmPopupModule, TooltipModule, DialogModule],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     <div class="workspace-selector">
@@ -42,6 +43,9 @@ import { WorkspaceService } from '../../services/workspace.service';
         (onClick)="onShowCreate()"
       ></p-button>
 
+      <p-button icon="pi pi-pencil" severity="secondary" [text]="true" [rounded]="true" size="small"
+        ariaLabel="Переименовать пространство" pTooltip="Переименовать пространство" tooltipPosition="bottom"
+        [disabled]="ws.loading()" (onClick)="onShowRename()" />
       <p-button
         icon="pi pi-trash"
         severity="secondary"
@@ -55,6 +59,19 @@ import { WorkspaceService } from '../../services/workspace.service';
       ></p-button>
     </div>
 
+    <p-dialog header="Переименовать пространство" [visible]="showRename()" (visibleChange)="showRename.set($event)"
+      [modal]="true" appendTo="body" [style]="{width: '26rem', maxWidth: 'calc(100vw - 2rem)'}" [closable]="!renaming()" [closeOnEscape]="!renaming()">
+      <form (ngSubmit)="onRename()">
+        <label class="ws-create-label">Название пространства
+          <input pInputText name="workspaceLabel" [ngModel]="renameLabel()" (ngModelChange)="renameLabel.set($event)" maxlength="100" autofocus [disabled]="renaming()" />
+        </label>
+        @if (renameError()) { <p role="alert">{{ renameError() }}</p> }
+        <div class="ws-create-actions">
+          <p-button label="Отмена" severity="secondary" [disabled]="renaming()" (onClick)="showRename.set(false)" />
+          <p-button type="submit" label="Сохранить название" [loading]="renaming()" [disabled]="!renameLabel().trim() || renaming()" />
+        </div>
+      </form>
+    </p-dialog>
     <!-- Диалог создания -->
     @if (showCreate()) {
       <div class="ws-create-overlay" (click)="showCreate.set(false)">
@@ -147,6 +164,27 @@ export class WorkspaceSelectorComponent implements OnInit {
   public readonly creating = signal(false);
   public readonly newName = signal('');
   public readonly newLabel = signal('');
+  public readonly showRename = signal(false);
+  public readonly renaming = signal(false);
+  public readonly renameLabel = signal('');
+  public readonly renameError = signal('');
+  private renameTarget = '';
+
+  public onShowRename(): void {
+    this.renameTarget = this.ws.current();
+    this.renameLabel.set(this.ws.workspaces().find(ws => ws.name === this.renameTarget)?.label ?? this.renameTarget);
+    this.renameError.set('');
+    this.showRename.set(true);
+  }
+  public async onRename(): Promise<void> {
+    if (this.renaming() || !this.renameLabel().trim()) return;
+    this.renaming.set(true); this.renameError.set('');
+    try { await this.ws.rename(this.renameTarget, this.renameLabel().trim()); this.showRename.set(false); }
+    catch (error) {
+      const response = error as { error?: { error?: { message?: string } } };
+      this.renameError.set(response.error?.error?.message ?? 'Не удалось переименовать пространство. Попробуйте ещё раз.');
+    } finally { this.renaming.set(false); }
+  }
 
   /** Нельзя удалить "default" — его создаём автоматически. */
   public readonly canDelete = () => this.ws.current() !== 'default';

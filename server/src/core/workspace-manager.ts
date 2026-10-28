@@ -141,6 +141,18 @@ export class WorkspaceManager {
     return ws;
   }
 
+  /** Rename the display label without changing task/worker/storage identity. */
+  public renameLabel(name: string, label: string): WorkspaceInfo {
+    const current = this.get(name);
+    if (typeof label !== 'string' || !label.trim() || label.trim().length > 100 || /[\u0000-\u001f\u007f]/.test(label)) {
+      throw new TrackerError('VALIDATION_FAILED', 'Название пространства: от 1 до 100 символов без управляющих символов.');
+    }
+    const renamed = { ...current, label: label.trim() };
+    this.registry.workspaces = this.registry.workspaces.map(ws => ws.name === name ? renamed : ws);
+    this.saveRegistry();
+    return renamed;
+  }
+
   /** Переключить активное пространство. */
   activate(name: string): WorkspaceInfo {
     const ws = this.get(name);

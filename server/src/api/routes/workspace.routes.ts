@@ -26,6 +26,10 @@ export function registerWorkspaceRoutes(router: Router, app: AppContainer, manag
     sendJson(res, 201, { workspace: ws });
   });
 
+  router.post('/api/workspaces/:name/rename', ({ params, body, res }) => {
+    sendJson(res, 200, { workspace: manager.renameLabel(params.name, requireBodyField<string>(body, 'label')) });
+  });
+
   // POST /api/workspaces/:name/activate — переключить
   router.post('/api/workspaces/:name/activate', ({ params, res }) => {
     const ws = manager.get(params.name);

@@ -59,6 +59,11 @@ export class WorkspaceService {
     await this.load();
   }
 
+  public async rename(name: string, label: string): Promise<void> {
+    await firstValueFrom(this.http.post(`${API_BASE}/workspaces/${encodeURIComponent(name)}/rename`, { label }));
+    await this.load();
+  }
+
   /** Переключить активное пространство. */
   public async activate(name: string): Promise<void> {
     await firstValueFrom(this.http.post(`${API_BASE}/workspaces/${encodeURIComponent(name)}/activate`, {}));
