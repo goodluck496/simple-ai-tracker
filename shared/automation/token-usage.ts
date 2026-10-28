@@ -1,6 +1,6 @@
 import type { AgentRole, RunnerId } from './contracts.js';
 
-export const UsageSource = { Codex: 'codex-json', Claude: 'claude-json', Compatible: 'chat-completions' } as const;
+export const UsageSource = { Codex: 'codex-json', Claude: 'claude-json', Antigravity: 'antigravity-json', Compatible: 'chat-completions' } as const;
 export type UsageSource = typeof UsageSource[keyof typeof UsageSource];
 /** Cache counts are included in input; reasoning is included in output. Never add them again. */
 export interface TokenUsage {

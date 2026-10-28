@@ -44,15 +44,15 @@ test('native Antigravity passes schema and worktree; captures stderr even on exi
   const executor = new Fixture(); const lines: string[] = [];
   const job = { cwd, prompt: 'Fixture instructions', profile: { role: 'analyst', runner: 'antigravity', model: 'fixture' }, signal: AbortSignal.timeout(10000) } as AgentJob;
   try {
-    const result = await new NativeAgentRunner('antigravity', executor).run(job, line => lines.push(line));
+    const result = await new NativeAgentRunner('antigravity', executor, { async verify() {} }).run(job, line => lines.push(line));
     assert.equal(JSON.parse(result.text).verdict, 'pass');
     const args = executor.request!.args;
     assert.equal(args[args.indexOf('--add-dir') + 1], cwd);
     assert.deepEqual(JSON.parse(await fs.readFile(args[args.indexOf('--json-schema') + 1], 'utf8')), AGENT_OUTCOME_SCHEMA);
-    assert.equal(args.includes('--dangerously-skip-permissions'), false);
+    assert.equal(args.includes('--dangerously-skip-permissions'), true);
     assert.equal(lines.join('').includes('DO_NOT_LOG_RAW_RESPONSE'), false);
     executor.denied = true;
-    await assert.rejects(new NativeAgentRunner('antigravity', executor).run(job, () => {}), /permissions.allow/);
+    await assert.rejects(new NativeAgentRunner('antigravity', executor, { async verify() {} }).run(job, () => {}), /permissions.allow/);
     let diagnostic = '';
     const stdout = await new ProcessExecutor().run({ command: process.execPath, args: ['-e', 'process.stderr.write("fixture auto-denied")'], cwd,
       signal: AbortSignal.timeout(5000), onStderr: text => { diagnostic += text; } });

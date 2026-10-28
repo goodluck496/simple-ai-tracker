@@ -36,7 +36,7 @@ test('native adapters preserve model, prompt and native result/error envelopes',
       const job: AgentJob = { runId: 'test', cwd, prompt: 'Инструкции задачи', signal: AbortSignal.timeout(5000),
         profile: { id: 'dev', role: 'developer', runner, connectionId: 'native', model: 'chosen-model', nativeProfile: 'configured-headless', instructions: '' },
         connection: { id: 'native', label: 'Native', kind: 'native', supportsImages: false }, settings: structuredClone(DEFAULT_AUTOMATION_SETTINGS) };
-      const result = await new NativeAgentRunner(runner, executor).run(job, () => undefined);
+      const result = await new NativeAgentRunner(runner, executor, { async verify() {} }).run(job, () => undefined);
       assert.ok(result.text.includes('answer'));
       assert.ok(executor.request!.args.includes(runner === 'deepseek-harness' ? 'configured-headless' : 'chosen-model'));
       assert.equal(executor.request!.env?.SAT_WORKSPACE, undefined);

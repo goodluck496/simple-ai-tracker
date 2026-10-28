@@ -9,13 +9,20 @@ import { TaskEnvironment } from './task-environment.js';
 import { AGENT_OUTCOME_SCHEMA } from '../../../../shared/automation/outcome-schema.js';
 import { NativeExecutable } from './native-executable.js';
 import { AntigravityResult } from './antigravity-result.js';
+import { WorktreePermissions } from './worktree-permissions.js';
+import { AntigravityStream } from './antigravity-stream.js';
 
 interface Envelope { type?: string; is_error?: boolean; result?: string; response?: string; status?: string; session_id?: string; conversation_id?: string; item?: { type?: string; text?: string }; part?: { type?: string; text?: string }; }
 const NATIVE_SUCCESS_STATUSES = new Set(['SUCCESS', 'success']);
 
 export class NativeAgentRunner implements AgentRunner {
-  public constructor(public readonly id: RunnerId, private readonly executor = new ProcessExecutor()) {}
+  public constructor(public readonly id: RunnerId, private readonly executor = new ProcessExecutor(),
+    private readonly worktreePermissions: Pick<WorktreePermissions, 'verify'> = new WorktreePermissions()) {}
   public async run(job: AgentJob, onProgress: (text: string) => void): Promise<RunnerResult> {
+    if (this.id === RunnerId.Antigravity) {
+      await this.worktreePermissions.verify(job);
+      onProgress('Antigravity: YOLO включён для проверенной отдельной worktree.\n');
+    }
     const promptDir = path.join(job.cwd, '.sat');
     await fs.mkdir(promptDir, { recursive: true });
     const promptFile = path.join(promptDir, 'instructions.md');
@@ -33,7 +40,7 @@ export class NativeAgentRunner implements AgentRunner {
       case RunnerId.ClaudeCode: command = 'claude'; args = ['-p', '--output-format', 'json', '--model', model]; stdin = job.prompt; break;
       case RunnerId.OpenCode: command = RunnerId.OpenCode; args = ['run', '--format', 'json', '--model', model, brief]; break;
       case RunnerId.DeepSeekHarness: command = 'dsh'; args = ['--profile', job.profile.nativeProfile!, brief]; break;
-      case RunnerId.Antigravity: command = NativeExecutable.antigravity(); args = ['--add-dir', job.cwd, '--output-format', 'json', '--json-schema', schemaPath, '--model', model, '-p', brief]; break;
+      case RunnerId.Antigravity: command = NativeExecutable.antigravity(); args = ['--add-dir', job.cwd, '--dangerously-skip-permissions', '--output-format', 'stream-json', '--json-schema', schemaPath, '--model', model, '-p', brief]; break;
       case RunnerId.Custom: {
         command = job.profile.command!;
         const values: Record<string, string> = { promptFile, model, cwd: job.cwd, role: job.profile.role, provider: job.connection.id };
@@ -102,7 +109,9 @@ export class NativeAgentRunner implements AgentRunner {
     if (this.id !== RunnerId.Custom) args.push(...(job.profile.args ?? []));
     const toolIds = new Set<string>();
     let toolThresholdReported = false;
+    const antigravity = this.id === RunnerId.Antigravity ? new AntigravityStream(onProgress, job.onUsage) : undefined;
     const meter = new NativeUsageStream(this.id, sample => job.onUsage?.(sample, { terminal: true }), (value) => {
+      if (antigravity) { antigravity.record(value); return; }
       for (const line of CompactProgress.record(value)) onProgress(line + '\n');
       const record = value as { type?: string; item?: { id?: string; type?: string } };
       if (job.maxToolCalls && record.item?.id && ['command_execution', 'mcp_tool_call', 'web_search', 'file_change'].includes(record.item.type ?? '')) {
@@ -123,7 +132,7 @@ export class NativeAgentRunner implements AgentRunner {
       catch { /* JSONL is consumed by the stream parser. */ }
     }
     if (this.id === RunnerId.Custom) return { text: raw.trim() };
-    if (this.id === RunnerId.Antigravity) return { ...AntigravityResult.parse(raw, diagnosticTail, onProgress), usage: meter.usage };
+    if (this.id === RunnerId.Antigravity) return { ...AntigravityResult.parse(antigravity?.result ?? raw, diagnosticTail, onProgress), usage: antigravity?.usage ?? meter.usage };
     let answer = ''; let sessionId: string | undefined;
     const records: string[] = [];
     try { JSON.parse(raw); records.push(raw); } catch { records.push(...raw.split(/\r?\n/)); }
