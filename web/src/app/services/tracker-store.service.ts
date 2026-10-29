@@ -18,6 +18,8 @@ import type {
 } from '../models/tracker.models';
 import { DEFAULT_SEARCH_SCOPES, SEARCH_SCOPE_OPTIONS } from '../models/tracker.models';
 import { TrackerApiService } from './tracker-api.service';
+import { BoardSortService } from './board-sort.service';
+import { ColumnSorting } from '../../../../shared/board/column-sort';
 
 /** Метаданные статусов на случай, если /api/meta ещё не загружен. */
 const FALLBACK_STATUSES: readonly StatusMeta[] = [
@@ -40,6 +42,7 @@ export interface FeatureGroup {
 @Injectable({ providedIn: 'root' })
 export class TrackerStore {
   private readonly api = inject(TrackerApiService);
+  private readonly sorting = inject(BoardSortService);
   private readonly search$ = new Subject<void>();
 
   /** Подписи задач прошлого опроса: по ним переиспользуются неизменившиеся объекты. */
@@ -112,7 +115,7 @@ export class TrackerStore {
       const list = map.get(task.status);
       if (list) list.push(task);
     }
-    for (const list of map.values()) list.sort((a, b) => a.position - b.position || a.seq - b.seq);
+    for (const [status, list] of map) list.sort((a, b) => ColumnSorting.compare(a, b, this.sorting.mode(status)));
     return map;
   });
 
@@ -137,13 +140,13 @@ export class TrackerStore {
       if (feature.type !== 'feature') continue;
       const subtasks = tasks
         .filter((task) => task.parentId === feature.id && handled.has(task.id))
-        .sort((a, b) => a.position - b.position || a.seq - b.seq);
+        .sort((a, b) => ColumnSorting.compare(a, b, this.sorting.mode(feature.status)));
       if (subtasks.length === 0) continue;
       const groups = result.get(feature.status);
       if (groups) groups.push({ feature, subtasks });
     }
 
-    for (const groups of result.values()) groups.sort((a, b) => a.feature.position - b.feature.position);
+    for (const [status, groups] of result) groups.sort((a, b) => ColumnSorting.compare(a.feature, b.feature, this.sorting.mode(status)));
     return result;
   });
 
@@ -163,7 +166,7 @@ export class TrackerStore {
       const list = result.get(task.status);
       if (list) list.push(task);
     }
-    for (const list of result.values()) list.sort((a, b) => a.position - b.position || a.seq - b.seq);
+    for (const [status, list] of result) list.sort((a, b) => ColumnSorting.compare(a, b, this.sorting.mode(status)));
     return result;
   });
 

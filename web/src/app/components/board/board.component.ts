@@ -18,6 +18,10 @@ import { ButtonModule } from 'primeng/button';
 import { ChipModule } from 'primeng/chip';
 import { TagModule } from 'primeng/tag';
 import { TooltipModule } from 'primeng/tooltip';
+import { FormsModule } from '@angular/forms';
+import { SelectModule } from 'primeng/select';
+import { BoardSortService } from '../../services/board-sort.service';
+import { COLUMN_SORT_OPTIONS, ColumnSorting } from '../../../../../shared/board/column-sort';
 import type { StatusMeta, TaskStatus, TaskSummary, TaskType } from '../../models/tracker.models';
 import { TrackerStore, type FeatureGroup } from '../../services/tracker-store.service';
 import { AUTOMATION_START_TASK_STATUSES } from '../../../../../shared/automation/contracts';
@@ -84,7 +88,9 @@ interface ColumnView {
   readonly groups: readonly FeatureGroup[];
   readonly tasks: readonly TaskSummary[];
   readonly hidden: number;
+  readonly entries?: readonly ColumnEntry[];
 }
+interface ColumnEntry { readonly task: TaskSummary; readonly group?: FeatureGroup }
 
 /** Константы относительных дат (без сторонних библиотек). */
 const MS_PER_DAY = 86_400_000;
@@ -113,13 +119,15 @@ function formatRelativeDate(isoDate: string, now: number = Date.now()): string {
 @Component({
   selector: 'sat-board',
   standalone: true,
-  imports: [CommonModule, BadgeModule, ButtonModule, ChipModule, TagModule, TooltipModule],
+  imports: [CommonModule, FormsModule, SelectModule, BadgeModule, ButtonModule, ChipModule, TagModule, TooltipModule],
   templateUrl: './board.component.html',
   styleUrl: './board.component.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class BoardComponent implements AfterViewInit, OnDestroy {
   private readonly store = inject(TrackerStore);
+  public readonly sorting = inject(BoardSortService);
+  public readonly sortOptions = COLUMN_SORT_OPTIONS.map(option => ({ ...option }));
   private readonly ngZone = inject(NgZone);
 
   /** Контейнер доски: горизонтальный скролл колесом мыши. */
@@ -379,6 +387,25 @@ export class BoardComponent implements AfterViewInit, OnDestroy {
       const limit = limits[status] ?? CARDS_PER_PAGE;
       const allGroups = groupsByStatus.get(status) ?? EMPTY_GROUPS;
       const allTasks = tasksByStatus.get(status) ?? EMPTY_TASKS;
+      const mode = this.sorting.mode(status);
+      if (mode !== 'manual') {
+        const grouped = new Set(allGroups.flatMap(group => [group.feature.id, ...group.subtasks.map(task => task.id)]));
+        const ordered: ColumnEntry[] = [
+          ...allGroups.map(group => ({ task: group.feature, group })),
+          ...allTasks.filter(task => !grouped.has(task.id)).map(task => ({ task })),
+        ];
+        ordered.sort((a, b) => ColumnSorting.compare(a.task, b.task, mode));
+        const entries: ColumnEntry[] = []; let remaining = limit, shown = 0;
+        for (const entry of ordered) {
+          if (remaining <= 0) break;
+          const group = entry.group ? { ...entry.group, subtasks: entry.group.subtasks.slice(0, remaining - 1) } : undefined;
+          const size = 1 + (group?.subtasks.length ?? 0);
+          entries.push({ task: entry.task, group }); remaining -= size; shown += size;
+        }
+        const total = ordered.reduce((sum, entry) => sum + 1 + (entry.group?.subtasks.length ?? 0), 0);
+        result.set(status, { groups: [], tasks: [], entries, hidden: Math.max(0, total - shown) });
+        continue;
+      }
 
       // Фича «стоит» одну единицу бюджета, каждая её подзадача — тоже одну.
       let budget = limit;
@@ -407,6 +434,9 @@ export class BoardComponent implements AfterViewInit, OnDestroy {
   /** Группы фич с учётом лимита порционной отрисовки. */
   public visibleFeatureGroups(status: TaskStatus): readonly FeatureGroup[] {
     return this.columnViews().get(status)?.groups ?? EMPTY_GROUPS;
+  }
+  public visibleSortedEntries(status: TaskStatus): readonly ColumnEntry[] {
+    return this.columnViews().get(status)?.entries ?? [];
   }
 
   /** Одиночные карточки колонки в пределах остатка бюджета. */
@@ -479,18 +509,21 @@ export class BoardComponent implements AfterViewInit, OnDestroy {
 
   /** Первая карточка в колонке статуса (для disabled «вверх»). */
   public isFirstInColumn(task: TaskSummary): boolean {
+    if (this.sorting.mode(task.status) !== 'manual') return true;
     const column = this.columnTasks(task.status);
     return column.length === 0 || column[0].id === task.id;
   }
 
   /** Последняя карточка в колонке статуса (для disabled «вниз»). */
   public isLastInColumn(task: TaskSummary): boolean {
+    if (this.sorting.mode(task.status) !== 'manual') return true;
     const column = this.columnTasks(task.status);
     return column.length === 0 || column[column.length - 1].id === task.id;
   }
 
   public onMoveOrder(event: Event, task: TaskSummary, direction: 'up' | 'down'): void {
     event.stopPropagation();
+    if (this.sorting.mode(task.status) !== 'manual') return;
     void this.store.moveInColumn(task.id, direction);
   }
 
@@ -612,8 +645,13 @@ export class BoardComponent implements AfterViewInit, OnDestroy {
         this.ngZone.run(() => this.onDragEnd());
         return;
       }
-      const afterId = this.resolveAfterId(event, draggedId, column.element);
       const status = column.status;
+      const manual = this.sorting.mode(status) === 'manual';
+      if (!manual && this.store.getTaskById(draggedId)?.status === status) {
+        this.ngZone.run(() => this.onDragEnd());
+        return;
+      }
+      const afterId = manual ? this.resolveAfterId(event, draggedId, column.element) : undefined;
       this.ngZone.run(() => {
         this.onDragEnd();
         void this.store.moveTask(draggedId, { status, afterId });

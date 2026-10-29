@@ -1,0 +1,87 @@
+import assert from 'node:assert/strict';
+import { mkdtempSync, rmSync } from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import type { AddressInfo } from 'node:net';
+import { chromium } from 'playwright';
+import { createContainer } from '../server/src/bootstrap/container.js';
+import { createApiServer } from '../server/src/api/http-server.js';
+import { SilentLogger } from '../server/src/core/logger.js';
+
+const root = mkdtempSync(path.join(os.tmpdir(), 'sat-column-sort-'));
+let now = '2026-01-01T00:00:00.000Z';
+const app = createContainer({ clock: { now: () => now }, config: { appRoot: root, dbPath: path.join(root, 'fixture.db'), webDistDir: path.resolve(process.env.SAT_WEB_DIST ?? 'dist/web/browser') }, logger: new SilentLogger() });
+const server = createApiServer(app), browser = await chromium.launch({ headless: true });
+try {
+  const ids: string[] = [];
+  for (let index = 0; index < 25; index++) {
+    now = new Date(Date.UTC(2026, 0, index + 1)).toISOString();
+    ids.push(app.taskService.createTask({ title: `Dated task ${index}` }).id);
+  }
+  const planFirst = app.taskService.createTask({ title: 'Planning older', status: 'planning', actor: 'user' });
+  now = '2026-01-27T00:00:00.000Z';
+  const feature = app.taskService.createTask({ title: 'Grouped feature', type: 'feature', status: 'planning', actor: 'user' });
+  now = '2026-01-28T00:00:00.000Z';
+  const childFirst = app.taskService.createTask({ title: 'Older child', parentId: feature.id, status: 'planning', actor: 'user' });
+  now = '2026-01-29T00:00:00.000Z';
+  const childLast = app.taskService.createTask({ title: 'Newer child', parentId: feature.id, status: 'planning', actor: 'user' });
+  now = '2026-02-01T00:00:00.000Z';
+  const planLast = app.taskService.createTask({ title: 'Planning newer', status: 'planning', actor: 'user' });
+  now = '2026-03-01T00:00:00.000Z';
+  app.taskService.updateTask({ id: ids[0], title: 'Oldest task recently updated', actor: 'user' });
+  const originalPositions = app.taskService.listTasks({}).map(task => [task.id, task.position]);
+  app.workspaceManager.create('other', 'Other fixture');
+  await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+  const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
+  const errors: string[] = []; page.on('pageerror', error => errors.push(error.message));
+  const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  await page.goto(url);
+  const column = (status: string) => page.locator(`section.sat-col[data-status="${status}"]`);
+  const first = (status: string) => column(status).locator('article[data-task-id]').first();
+  const select = async (status: string, label: string) => {
+    await column(status).getByRole('combobox').click();
+    await page.getByRole('option', { name: label, exact: true }).click();
+  };
+  await first('backlog').waitFor();
+  const manualFirst = await first('backlog').getAttribute('data-task-id');
+  await select('backlog', 'Созданы: сначала новые');
+  await page.waitForFunction(id => document.querySelector('section[data-status="backlog"] article')?.getAttribute('data-task-id') === id, ids[24]);
+  assert.match(await column('planning').getByRole('combobox').textContent() ?? '', /Ручной порядок/);
+  await select('planning', 'Созданы: сначала старые');
+  assert.equal(await first('planning').getAttribute('data-task-id'), planFirst.id);
+  assert.equal(await column('planning').locator('.sat-col__body > :first-child').getAttribute('data-task-id'), planFirst.id, 'Old feature groups must not precede newer/older standalone cards unconditionally');
+  assert.equal(await column('planning').locator('.sat-feature').count(), 1);
+  assert.equal(await column('planning').locator(`article[data-task-id="${childFirst.id}"]`).count(), 1);
+  assert.deepEqual(await column('planning').locator('.sat-feature article').evaluateAll(nodes => nodes.map(node => node.getAttribute('data-task-id'))), [childFirst.id, childLast.id]);
+  await select('backlog', 'Обновлены: сначала новые');
+  assert.equal(await first('backlog').getAttribute('data-task-id'), ids[0]);
+  assert.ok(await first('backlog').locator('.sat-card__order button').first().isDisabled());
+  await page.reload();
+  await first('backlog').waitFor();
+  assert.equal(await first('backlog').getAttribute('data-task-id'), ids[0]);
+  assert.match(await column('planning').getByRole('combobox').textContent() ?? '', /Созданы: сначала старые/);
+  await select('planning', 'Созданы: сначала новые');
+  assert.equal(await first('planning').getAttribute('data-task-id'), planLast.id);
+  assert.deepEqual(await column('planning').locator('.sat-feature article').evaluateAll(nodes => nodes.map(node => node.getAttribute('data-task-id'))), [childLast.id, childFirst.id]);
+  await select('backlog', 'Ручной порядок');
+  assert.equal(await first('backlog').getAttribute('data-task-id'), manualFirst);
+  await page.evaluate(() => sessionStorage.setItem('sat.workspace', 'other'));
+  await page.reload();
+  await column('backlog').getByRole('combobox').waitFor();
+  assert.match(await column('backlog').getByRole('combobox').textContent() ?? '', /Ручной порядок/);
+  await select('backlog', 'Созданы: сначала старые');
+  await page.evaluate(() => sessionStorage.setItem('sat.workspace', 'default'));
+  await page.reload();
+  await first('backlog').waitFor();
+  assert.match(await column('backlog').getByRole('combobox').textContent() ?? '', /Ручной порядок/);
+  await page.evaluate(() => localStorage.setItem('sat.board.column-sort.v1:default', 'invalid JSON'));
+  await page.reload();
+  await first('backlog').waitFor();
+  assert.match(await column('backlog').getByRole('combobox').textContent() ?? '', /Ручной порядок/);
+  assert.deepEqual(app.taskService.listTasks({}).map(task => [task.id, task.position]), originalPositions);
+  assert.deepEqual(errors, []);
+  console.log('PASS: independent column dates, sorting before pagination, persistence, updated dates and manual-order restoration; no data mutations or browser errors.');
+} finally {
+  await browser.close(); server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve()));
+  app.close(); rmSync(root, { recursive: true, force: true });
+}

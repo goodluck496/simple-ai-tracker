@@ -160,29 +160,7 @@
   </article>
 </ng-template>
 
-<div class="sat-board" #boardScroll role="list" aria-label="Канбан-доска задач">
-  @for (status of statuses(); track status.status) {
-    <section
-      [class]="columnClasses(status)"
-      role="listitem"
-      [attr.data-status]="status.status"
-      [attr.aria-label]="status.title + ': ' + countOf(status.status)"
-    >
-      <!-- Подсветка колонки-приёмника: отдельный слой, включается инлайновой opacity -->
-      <div class="sat-col__drop" aria-hidden="true"></div>
-      <!-- Заголовок колонки -->
-      <header class="sat-col__head" [attr.data-status]="status.status">
-        <div class="sat-col__title-wrap">
-          <i [class]="status.icon + ' sat-col__icon'" aria-hidden="true"></i>
-          <h3 class="sat-col__title" [title]="status.description || status.title">{{ status.title }}</h3>
-        </div>
-        <span class="sat-col__count" [title]="'Всего задач: ' + countOf(status.status)">{{ countOf(status.status) }}</span>
-      </header>
-
-      <!-- Прокручиваемое тело колонки -->
-      <div class="sat-col__body">
-        <!-- 1. Группы «фича → её подзадачи» (видны всегда) -->
-        @for (group of visibleFeatureGroups(status.status); track group.feature.id) {
+<ng-template #featureGroup let-group>
           <div class="sat-feature">
             <div class="sat-feature__head">
               <button pButton severity="secondary"
@@ -316,6 +294,40 @@
               }
             </div>
           </div>
+</ng-template>
+
+<div class="sat-board" #boardScroll role="list" aria-label="Канбан-доска задач">
+  @for (status of statuses(); track status.status) {
+    <section
+      [class]="columnClasses(status)"
+      role="listitem"
+      [attr.data-status]="status.status"
+      [attr.aria-label]="status.title + ': ' + countOf(status.status)"
+    >
+      <!-- Подсветка колонки-приёмника: отдельный слой, включается инлайновой opacity -->
+      <div class="sat-col__drop" aria-hidden="true"></div>
+      <!-- Заголовок колонки -->
+      <header class="sat-col__head" [attr.data-status]="status.status">
+        <div class="sat-col__title-wrap">
+          <i [class]="status.icon + ' sat-col__icon'" aria-hidden="true"></i>
+          <h3 class="sat-col__title" [title]="status.description || status.title">{{ status.title }}</h3>
+        </div>
+        <span class="sat-col__count" [title]="'Всего задач: ' + countOf(status.status)">{{ countOf(status.status) }}</span>
+      </header>
+
+      <div class="sat-col__sort">
+        <p-select [options]="sortOptions" optionLabel="label" optionValue="value"
+          [ngModel]="sorting.mode(status.status)" (ngModelChange)="sorting.set(status.status, $event)"
+          [ariaLabel]="'Сортировка: ' + status.title" appendTo="body"
+          [pTooltip]="'Порядок только этой колонки. Для перестановки карточек выберите ручной порядок.'" tooltipPosition="bottom" />
+      </div>
+
+      <!-- Прокручиваемое тело колонки -->
+      <div class="sat-col__body">
+        @if (sorting.mode(status.status) === 'manual') {
+        <!-- 1. Группы «фича → её подзадачи» (видны всегда) -->
+        @for (group of visibleFeatureGroups(status.status); track group.feature.id) {
+          <ng-container [ngTemplateOutlet]="featureGroup" [ngTemplateOutletContext]="{ $implicit: group }" />
         }
 
         <!-- 2. Отдельные задачи без фичи -->
@@ -335,6 +347,16 @@
               <ng-container [ngTemplateOutlet]="taskCard" [ngTemplateOutletContext]="{ $implicit: task }" />
             }
           </div>
+        }
+
+        } @else {
+          @for (entry of visibleSortedEntries(status.status); track entry.task.id) {
+            @if (entry.group; as group) {
+              <ng-container [ngTemplateOutlet]="featureGroup" [ngTemplateOutletContext]="{ $implicit: group }" />
+            } @else {
+              <ng-container [ngTemplateOutlet]="taskCard" [ngTemplateOutletContext]="{ $implicit: entry.task }" />
+            }
+          }
         }
 
         <!-- Пустая колонка -->
