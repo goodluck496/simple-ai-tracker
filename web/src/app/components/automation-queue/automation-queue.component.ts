@@ -33,6 +33,8 @@ export class AutomationQueueComponent {
   public readonly historyMode = signal(false);
   public readonly historyTask = signal('');
   public readonly showDetails = signal(false);
+  public readonly leftSidebarOpen = signal(true);
+  public readonly activeLaneFilter = signal<string>('all');
   public readonly confirmation = signal<'cleanup' | 'delete' | null>(null);
   public discard = false;
   private readonly selectedCache = signal<QueueItem | undefined>(undefined);
@@ -103,7 +105,11 @@ export class AutomationQueueComponent {
   public currentRole(item: QueueItem): string { return item.status === RunStatus.Integrating ? 'Интеграция' : item.phase === 'waiting-slot' ? 'Ожидание слота' : this.role(item.pipeline.at(item.stage)?.role ?? ''); }
   public duration(at: string | undefined): string { return at ? `${Math.max(0, Math.floor((this.now() - Date.parse(at)) / 1000))} с` : 'нет данных'; }
   public progress(text: string): string { return RunProgressText.format(text); }
-  public select(id: string): void { this.selectedCache.set(this.snapshot().items.find(run => run.id === id)); this.selectedId.set(id); this.error.set(''); this.showDetails.set(false); this.confirmation.set(null); }
+  public select(id: string): void { this.selectedCache.set(this.snapshot().items.find(run => run.id === id)); this.selectedId.set(id); this.error.set(''); this.confirmation.set(null); }
+  public toggleLeftSidebar(): void { this.leftSidebarOpen.update(v => !v); }
+  public switchMode(history: boolean): void { this.historyMode.set(history); if (!history) this.historyTask.set(''); this.activeLaneFilter.set('all'); }
+  public filteredLanes() { return this.activeLaneFilter() === 'all' ? this.visibleLanes() : this.visibleLanes().filter(lane => lane.id === this.activeLaneFilter()); }
+  public totalActive(): number { return this.items('queued').length + this.items('running').length; }
   public viewHistory(taskId = ''): void { this.historyTask.set(taskId); this.historyMode.set(true); this.refresh.next(); }
   public visibleLanes() { return this.historyMode() ? this.lanes : this.lanes.filter(lane => lane.id === 'queued' || lane.id === 'running'); }
   public manage(item: QueueItem): boolean { return !['queued', 'running', 'integrating', 'waiting'].includes(item.status); }
@@ -125,6 +131,16 @@ export class AutomationQueueComponent {
     effect(() => {
       const run = this.detail()?.run;
       if (run && run.id === this.selectedId() && !['queued', 'running', 'integrating'].includes(run.status)) this.historyMode.set(true);
+    });
+    effect(() => {
+      const items = this.snapshot().items;
+      if (!this.selectedId() && items.length > 0) {
+        const running = items.find(i => i.status === RunStatus.Running || i.status === RunStatus.Integrating) ?? items[0];
+        if (running) {
+          this.selectedId.set(running.id);
+          this.selectedCache.set(running);
+        }
+      }
     });
   }
   public action(item: QueueItem, action: RunAction): void {

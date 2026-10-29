@@ -419,6 +419,7 @@ export class TrackerToolRegistry {
         case AutomationTool.Delete: service.deleteRun(id()); return json({ ok: true });
         case AutomationTool.Enqueue: return json(service.enqueue(requireString(args, 'taskId'), args['settings'], false));
         case AutomationTool.EnqueueBatch: return json({ runs: service.enqueueBatch(args['taskIds'], args['settings'], args['requestId']) });
+        case AutomationTool.ExtendBudget: return json(service.extendBudget(id(), args['settings']));
         case AutomationTool.Claim: return json(service.claim(requireString(args, 'workerId')));
         case AutomationTool.Heartbeat: return json(service.heartbeat(id(), token(), args['phase'] === 'recovery', args['phase'] === 'publish'));
         case AutomationTool.Progress: service.progress(id(), token(), requireString(args, 'text'), asString(args, 'phase') as RunPhase | undefined); return json({ ok: true });
