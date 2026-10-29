@@ -178,9 +178,13 @@ export class TaskDialogComponent {
   public constructor() {
     effect(() => {
       const card = this.task();
+      const initialType = this.createType();
+      const initialStatus = this.createStatus();
       untracked(() => {
         if (!card) {
           this.lastSyncedTaskId.set(null);
+          this.type.set(initialType);
+          this.status.set(initialStatus);
           return;
         }
         this.syncFrom(card);
