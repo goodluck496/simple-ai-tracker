@@ -24,10 +24,14 @@ export class MigrationRunner {
 
     const applied: string[] = [];
     for (const migration of pending) {
-      this.db.transaction(() => {
+      const changed = this.db.transaction(() => {
+        // Another API/MCP process may have migrated while this process waited for the write lock.
+        if (this.db.getSchemaVersion() >= migration.version) return false;
         this.db.exec(migration.sql);
         this.db.setSchemaVersion(migration.version);
+        return true;
       });
+      if (!changed) continue;
       applied.push(`${String(migration.version).padStart(3, '0')}-${migration.name}`);
       this.logger?.info('Применена миграция схемы', { version: migration.version, name: migration.name });
     }

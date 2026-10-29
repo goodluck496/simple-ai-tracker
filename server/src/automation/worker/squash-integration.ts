@@ -10,7 +10,7 @@ import { RunWorkspace } from './run-workspace.js';
 
 export interface IntegrationJob {
   runId: string; taskId: string; repository: string; common: string; sourceSha: string;
-  targetBranch: string; directory: string; message: string; contextKey: string; maxAttempts: number;
+  targetBranch: string; directory: string; message: string; contextKey: string; maxAttempts?: number;
   signal: AbortSignal;
   recoveryOnly?: boolean;
   prepare(cwd: string): Promise<void>;
@@ -64,13 +64,13 @@ export class SquashIntegration {
       await job.authorize(); await write({ ...receipt, state: 'publishing' }); return receipt;
     }
     if (job.recoveryOnly) throw new Error('Budget exhausted: no published receipt can be acknowledged without executing more work. Restart integration explicitly for a new budget.');
-    for (let attempt = receipt?.attempt ?? 1; attempt <= job.maxAttempts; attempt++) {
+    for (let attempt = receipt?.attempt ?? 1; job.maxAttempts === undefined || attempt <= job.maxAttempts; attempt++) {
       job.signal.throwIfAborted(); await job.authorize();
       const base = await head();
       if ((await git(['branch', '--show-current'])).trim() !== job.targetBranch || (await git(['status', '--porcelain'])).trim())
         throw new Error('Target checkout must be clean and on the configured integration branch.');
       if (receipt && receipt.baseSha !== base) { attempt = Math.max(attempt, receipt.attempt + 1); receipt = undefined; }
-      if (attempt > job.maxAttempts) throw new Error('Target branch moved; integration retry budget exhausted.');
+      if (job.maxAttempts !== undefined && attempt > job.maxAttempts) throw new Error('Target branch moved; integration retry budget exhausted.');
       const cwd = `${job.directory}-integration-${attempt}`;
       const branch = `sat-integration/${job.runId}-${attempt}`;
       if (!receipt) {

@@ -138,6 +138,7 @@ export class TaskDialogComponent {
   public readonly type = signal<TaskType>('task');
   public readonly status = signal<TaskStatus>('backlog');
   public readonly requiresManualTest = signal(false);
+  public readonly trustedExecution = signal(false);
   public readonly tags = signal<readonly string[]>([]);
   public readonly tagDraft = signal('');
   public readonly commentDraft = signal('');
@@ -331,6 +332,7 @@ export class TaskDialogComponent {
         parentId: this.parentId(),
         tags: this.tags(),
         requiresManualTest: this.requiresManualTest(),
+        trustedExecution: this.trustedExecution(),
         images: this.images(),
       });
       if (!created) {
@@ -356,6 +358,7 @@ export class TaskDialogComponent {
       type: this.type(),
       tags: this.tags(),
       requiresManualTest: this.requiresManualTest(),
+        trustedExecution: this.trustedExecution(),
       images: this.images(),
     });
     if (!updated) {
@@ -646,6 +649,7 @@ export class TaskDialogComponent {
     this.type.set(card.type);
     this.status.set(card.status);
     this.requiresManualTest.set(card.requiresManualTest);
+    this.trustedExecution.set(card.trustedExecution ?? false);
     this.tags.set(card.tags.map((tag) => tag.name));
     this.images.set(card.images.map((image) => image.url));
     this.attachments.set(card.attachments);
@@ -660,6 +664,7 @@ export class TaskDialogComponent {
     this.type.set(this.createType());
     this.status.set(this.createStatus());
     this.requiresManualTest.set(false);
+    this.trustedExecution.set(false);
     this.lastSyncedTaskId.set(null);
   }
 }

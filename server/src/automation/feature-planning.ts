@@ -32,7 +32,7 @@ export class FeaturePlanning {
     const resolver = run.settings.mergePolicy === 'local' && run.settings.resolveConflicts !== false
       ? Math.max(0, (run.settings.maxResolverCalls ?? 1) - (run.usageAttempts ?? []).filter(a => a.kind === 'resolver').length) : 0;
     const limit = planned + revisions + resolver;
-    if (limit > 100) throw new Error('Feature exceeds the hard limit of 100 calls. Simplify the plan or reduce the configured revision allowance.');
+    if (limit > 100 && !run.trustedExecution) throw new Error('Feature exceeds the hard limit of 100 calls. Simplify the plan or reduce the configured revision allowance.');
     return { planned, revisions, resolver, limit };
   }
 }

@@ -15,6 +15,7 @@
     <div class="sat-card__top">
       <span class="sat-card__id">{{ task.id }}</span>
       <p-tag [value]="typeLabel(task.type)" [icon]="typeIcon(task.type)" [severity]="typeSeverity(task.type)"></p-tag>
+      @if (task.trustedExecution) { <p-tag value="Без лимитов" severity="warn" icon="pi pi-bolt" /> }
     </div>
 
     <h4 class="sat-card__title" [title]="task.title">{{ task.title }}</h4>

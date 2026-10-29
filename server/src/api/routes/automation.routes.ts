@@ -26,7 +26,7 @@ export function registerAutomationRoutes(router: Router, app: AppContainer): voi
   router.post('/api/automation/settings', ({ body, res }) => sendJson(res, 200, app.automationService.configure(body)));
   router.get('/api/automation/runs', ({ query, res }) => sendJson(res, 200, {
     runs: app.automationService.list(query.get('taskId') ?? undefined), activeTaskIds: app.automationService.activeTaskIds(),
-    tasks: app.taskService.listTasks({ limit: TASK_SELECTION_LIMIT }).map(({ id, title, status, hasPlan, openQuestionsCount }) => ({ id, title, status, hasPlan, openQuestionsCount })),
+    tasks: app.taskService.listTasks({ limit: TASK_SELECTION_LIMIT }).map(({ id, title, status, hasPlan, openQuestionsCount, trustedExecution }) => ({ id, title, status, hasPlan, openQuestionsCount, trustedExecution: trustedExecution === true })),
   }));
   router.get('/api/automation/runs/:id', ({ params, res }) => sendJson(res, 200, app.automationService.detail(params.id)));
   router.get('/api/automation/runs/:id/log', ({ params, res }) => new RunLogDownload(app.automationService).send(params.id, res));

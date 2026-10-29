@@ -44,6 +44,7 @@ export interface AgentContextPack {
   readonly status: TaskStatus;
   readonly statusTitle: string;
   readonly requiresManualTest: boolean;
+  readonly trustedExecution?: boolean;
   readonly parentId: string | null;
   readonly description: string;
   readonly tags: readonly string[];
@@ -149,6 +150,7 @@ export class ContextService {
       status: card.status,
       statusTitle: STATUS_META[card.status].title,
       requiresManualTest: card.requiresManualTest,
+      trustedExecution: card.trustedExecution ?? false,
       parentId: card.parentId,
       description: card.description,
       tags: card.tags.map((tag) => tag.name),

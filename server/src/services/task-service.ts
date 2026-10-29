@@ -40,6 +40,7 @@ export interface CreateTaskRequest {
   readonly parentId?: string | null;
   readonly tags?: readonly string[];
   readonly requiresManualTest?: boolean;
+  readonly trustedExecution?: boolean;
   readonly relatedTaskIds?: readonly string[];
   readonly initialComment?: string;
   /** Скриншоты карточки (URL из /api/images). */
@@ -58,6 +59,7 @@ export interface UpdateTaskRequest {
   readonly addTags?: readonly string[];
   readonly removeTags?: readonly string[];
   readonly requiresManualTest?: boolean;
+  readonly trustedExecution?: boolean;
   readonly parentId?: string | null;
   /** Полный новый набор скриншотов (URL из /api/images). */
   readonly images?: readonly string[];
@@ -164,7 +166,13 @@ export class TaskService {
 
   // ---------------------------------------------------------------- создание
 
+  private assertTrustChange(value: unknown, actor?: Actor): void {
+    if (value === undefined) return;
+    if (typeof value !== 'boolean') throw new TrackerError('VALIDATION_FAILED', 'trustedExecution must be boolean.');
+    if (actor !== 'user') throw new TrackerError('CONFLICT', 'Только пользователь может менять доверенный режим выполнения.');
+  }
   public createTask(request: CreateTaskRequest): TaskCard {
+    this.assertTrustChange(request.trustedExecution, request.actor);
     const title = (request.title ?? '').trim();
     if (!title) throw new TrackerError('VALIDATION_FAILED', 'Название задачи не может быть пустым.');
 
@@ -193,6 +201,7 @@ export class TaskService {
       parentId,
       position,
       requiresManualTest: request.requiresManualTest ?? false,
+      trustedExecution: request.trustedExecution ?? false,
       createdAt: now,
       updatedAt: now,
     });
@@ -315,6 +324,7 @@ export class TaskService {
   // ------------------------------------------------------------- обновление
 
   public updateTask(request: UpdateTaskRequest): TaskCard {
+    this.assertTrustChange(request.trustedExecution, request.actor);
     const task = this.requireTask(request.id);
     const now = this.clock.now();
 
@@ -336,6 +346,7 @@ export class TaskService {
       type: request.type ? assertTaskType(request.type) : undefined,
       parentId: request.parentId === undefined ? undefined : request.parentId,
       requiresManualTest: request.requiresManualTest,
+      trustedExecution: request.trustedExecution,
       updatedAt: now,
     });
 

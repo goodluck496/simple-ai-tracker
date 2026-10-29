@@ -6,7 +6,7 @@ export class RunBudget {
   public static time(run: AgentRun, now: number) {
     const limitMs = this.limits(run).minutes * 60000;
     const usedMs = this.elapsed(run, now);
-    return { usedMs, limitMs, remainingMs: Math.max(0, limitMs - usedMs) };
+    return { disabled: run.trustedExecution === true, usedMs, limitMs, remainingMs: Math.max(0, limitMs - usedMs) };
   }
   public static stopReason(run: AgentRun): string {
     const summary = run.summary ?? '';
@@ -22,9 +22,9 @@ export class RunBudget {
     const cached = cacheKnown ? observed.reduce((sum, attempt) => sum + attempt.usage!.cachedInputTokens!, 0) : undefined;
     const nonCached = cached === undefined ? undefined : total.inputTokens - cached;
     const limit = this.limits(run).input;
-    return { input: total.inputTokens, cached, nonCached, limit, percent: Math.floor(total.inputTokens * 100 / limit),
+    return { disabled: run.trustedExecution === true, input: total.inputTokens, cached, nonCached, limit, percent: Math.floor(total.inputTokens * 100 / limit),
       partial: total.partial, measured: total.measuredAttempts,
-      advice: total.inputTokens >= limit
+      advice: run.trustedExecution ? 'Доверенный запуск: квоты отключены. Токены продолжают учитываться, автоматического денежного потолка нет.' : total.inputTokens >= limit
         ? 'Лимит накопленного входа достигнут. Сначала проверьте повторные чтения и шаг плана, сохраните результат. Увеличивайте лимит только для измеренной оставшейся работы; продолжение сохраняет уже потраченный бюджет.'
         : 'Лимит считает суммарный вход всех обращений, включая кеш. Это не размер одного окна контекста и не денежная стоимость. Рост кеша не означает столько же нового текста.' };
   }
@@ -37,6 +37,7 @@ export class RunBudget {
       ? Math.max(0, now - Date.parse(run.budgetUpdatedAt)) : 0);
   }
   public static reason(run: AgentRun, now: number, beforeCall = false): string | undefined {
+    if (run.trustedExecution) return undefined;
     const limits = this.limits(run);
     if (this.elapsed(run, now) >= limits.minutes * 60000) return `Run budget exhausted: active time limit ${limits.minutes} min.`;
     if (TokenMeter.summary(run.usageAttempts).inputTokens >= limits.input) return `Run budget exhausted: input token limit ${limits.input} (cached included).`;

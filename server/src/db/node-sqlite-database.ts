@@ -22,9 +22,9 @@ export class NodeSqliteDatabase implements SqlDatabase, SqlDatabaseFactory {
       enableForeignKeyConstraints: true,
     });
     if (!options.readOnly) {
+      this.db.exec('PRAGMA busy_timeout = 5000');
       this.db.exec('PRAGMA journal_mode = WAL');
       this.db.exec('PRAGMA synchronous = NORMAL');
-      this.db.exec('PRAGMA busy_timeout = 5000');
     }
   }
 

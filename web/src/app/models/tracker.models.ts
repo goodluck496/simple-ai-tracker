@@ -139,6 +139,7 @@ export interface TaskSummary {
   readonly parentId: string | null;
   readonly position: number;
   readonly requiresManualTest: boolean;
+  readonly trustedExecution?: boolean;
   readonly tags: readonly Tag[];
   readonly createdAt: string;
   readonly updatedAt: string;
@@ -217,6 +218,7 @@ export interface CreateTaskPayload {
   readonly parentId?: string | null;
   readonly tags?: readonly string[];
   readonly requiresManualTest?: boolean;
+  readonly trustedExecution?: boolean;
   /** Скриншоты карточки (URL из /api/images). */
   readonly images?: readonly string[];
 }
@@ -227,6 +229,7 @@ export interface UpdateTaskPayload {
   readonly type?: TaskType;
   readonly tags?: readonly string[];
   readonly requiresManualTest?: boolean;
+  readonly trustedExecution?: boolean;
   readonly parentId?: string | null;
   /** Полный новый набор скриншотов (URL из /api/images). */
   readonly images?: readonly string[];

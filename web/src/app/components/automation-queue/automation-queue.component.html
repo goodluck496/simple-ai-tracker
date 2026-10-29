@@ -67,6 +67,7 @@
                 <div class="card-header">
                   <span class="card-task-id">{{ item.taskId }}</span>
                   <span class="card-status-pill" [attr.data-status]="item.status">{{ statusTitles[item.status] }}</span>
+                  @if (item.trustedExecution) { <span class="card-pos">Без лимитов</span> }
                   @if (item.queuePosition) { <span class="card-pos">#{{ item.queuePosition }}</span> }
                 </div>
                 <div class="card-title">{{ item.title }}</div>
@@ -120,7 +121,7 @@
                 <span class="badge-task-status">Карточка: {{ taskTitles[item.taskStatus] }}</span>
                 <span class="badge-stage">Этап {{ item.stage < item.pipeline.length ? item.stage + 1 : item.pipeline.length }}/{{ item.pipeline.length }} · {{ currentRole(item) }}</span>
                 @if (detail()?.run; as run) {
-                  <span class="badge-limits">Лимит: {{ run.settings.maxInputTokens | number }} вх · {{ run.settings.maxRunMinutes }} мин</span>
+                  <span class="badge-limits">@if (run.trustedExecution) { Без лимитов } @else { Лимит: {{ run.settings.maxInputTokens | number }} вх · {{ run.settings.maxRunMinutes }} мин }</span>
                 }
                 <button pButton [text]="true" size="small" class="history-link-btn" (click)="viewHistory(item.taskId)">
                   <i class="pi pi-history"></i>
@@ -190,8 +191,12 @@
         @if (run.id === item.id) {
           @let time = runBudget.time(run, now());
           <div class="run-budget-summary" role="status">
+            @if (time.disabled) {
+              Доверенный запуск без лимитов. Потрачено {{ time.usedMs / 60000 | number:'1.1-1' }} мин. Можно остановить вручную.
+            } @else {
             Время: {{ time.usedMs / 60000 | number:'1.1-1' }} из {{ time.limitMs / 60000 | number:'1.0-0' }} мин ·
             Осталось {{ time.remainingMs / 60000 | number:'1.1-1' }} мин. Учитываются все попытки запуска.
+            }
           </div>
           @if (item.status === runStatus.Failed || item.status === runStatus.Interrupted || item.status === runStatus.MergeBlocked) {
             <div class="run-stop-reason" role="alert">

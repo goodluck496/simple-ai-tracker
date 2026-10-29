@@ -22,7 +22,7 @@ test('batch enqueue is atomic, bounded, immutable and idempotent through MCP', a
     assert.throws(() => service.enqueueBatch([a.id, blocked.id], analysis), /Ни одна задача/);
     assert.equal(service.list().length, 0);
     for (const ids of [[], [a.id, a.id], Array(51).fill(a.id), [5], 'bad']) assert.throws(() => service.enqueueBatch(ids, analysis), /разных задач/);
-    assert.throws(() => service.enqueueBatch([a.id, b.id], { ...settings, pipeline: ['developer'] }), /plan|analyst/);
+    assert.throws(() => service.enqueueBatch([a.id, b.id], { ...settings, pipeline: ['developer'], checks: [] }), /Ни одна задача/);
     assert.equal(service.list().length, 0);
     const registry = new TrackerToolRegistry(app); const requestId = randomUUID();
     const response = await registry.call('tracker_automation_enqueue_batch', { taskIds: [a.id, b.id], settings: analysis, requestId });

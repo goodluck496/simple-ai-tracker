@@ -55,6 +55,7 @@ export class PipelineWorker {
     const recoveryOnly = run.stage >= run.settings.pipeline.length && run.settings.mergePolicy === MergePolicy.Local && !!RunBudget.reason(run, Date.now());
     let timeout: ReturnType<typeof setTimeout> | undefined;
     const armBudget = () => {
+      if (run.trustedExecution) return;
       const remainingMs = RunBudget.limits(run).minutes * 60000 - RunBudget.elapsed(run, Date.now());
       timeout = setTimeout(() => { budgetError = 'Run stopped: execution time budget exhausted.'; controller.abort(); },
         recoveryOnly ? 30000 : Math.max(0, Math.min(run.settings.timeoutMinutes * 60_000, remainingMs)));
@@ -83,7 +84,12 @@ export class PipelineWorker {
           const text = redact(pending.take());
           await this.channel.call(AutomationTool.Progress, { id: run!.id, leaseToken: token, text });
         }
-      })().catch((error: unknown) => { if (!finished) { channelError = error; if (!publishing) controller.abort(); } }).finally(() => { heartbeatBusy = false; });
+      })().catch((error: unknown) => { if (!finished) {
+        channelError = error;
+        const message = error instanceof Error ? error.message : String(error);
+        if (/budget exhausted/i.test(message)) budgetError = message;
+        if (!publishing) controller.abort();
+      } }).finally(() => { heartbeatBusy = false; });
     }, AUTOMATION_TIMING.heartbeatMs);
     const progress = (text: string) => { pending.append(text); };
     const phase = async (value: RunPhase, text: string) => { await this.channel.call(AutomationTool.Progress, { id: run!.id, leaseToken: token, phase: value, text }); };
@@ -113,7 +119,7 @@ export class PipelineWorker {
           try {
             const connection = run!.settings.connections.find(c => c.id === profile.connectionId)!;
             const result = await this.registry.get(profile.runner).run({ runId: run!.id, cwd: directory, profile, connection,
-              prompt, settings: run!.settings, signal, maxToolCalls: maxTools,
+              prompt, settings: run!.settings, trustedExecution: run!.trustedExecution, signal, maxToolCalls: maxTools,
               onUsage: usage => { if (metering) metering = { ...metering, usage }; } }, progress);
             if (result.usage && metering) metering = { ...metering, usage: result.usage };
             const outcome = this.parseOutcome(result.text); outcome.summary = redact(outcome.summary);
@@ -123,7 +129,7 @@ export class PipelineWorker {
         });
         await new SquashIntegration(this.executor).run({ runId: run!.id, taskId: run!.taskId, repository, common,
           sourceSha: run!.commitSha!, targetBranch: run!.settings.baseBranch, directory: cwd,
-          message: run!.mergeMessage ?? '', contextKey: StageCheckpoint.key(context), maxAttempts: run!.settings.maxMergeAttempts ?? 2,
+          message: run!.mergeMessage ?? '', contextKey: StageCheckpoint.key(context), maxAttempts: run!.trustedExecution ? undefined : run!.settings.maxMergeAttempts ?? 2,
           signal: controller.signal, recoveryOnly,
           authorize: async () => { run = await this.channel.call<AgentRun>(AutomationTool.Heartbeat, { id: run!.id, leaseToken: token, phase: recoveryOnly ? 'recovery' : undefined }); },
           record: async info => { publishing = info.state === 'publishing'; await this.channel.call(AutomationTool.Integration, { id: run!.id, leaseToken: token, result: info }); },
@@ -206,12 +212,15 @@ export class PipelineWorker {
         const relations = pack.relations as { parent?: { id: string }; subtasks?: { id: string }[]; links?: { relation: string; task: { id: string } }[] } | undefined;
         const relationKey = { parent: relations?.parent?.id, subtasks: relations?.subtasks?.map(t => t.id).sort(),
           links: relations?.links?.filter(l => l.relation === 'blocks' || l.relation === 'blocked_by').map(l => `${l.relation}:${l.task.id}`).sort() };
-        const requirementsKey = StageCheckpoint.key({ description: pack.description, plan: pack.plan, questions: pack.questions, relations: relationKey });
+        let requirementsKey = StageCheckpoint.key({ description: pack.description, plan: pack.plan, questions: pack.questions, relations: relationKey });
         // Failure comments and run.summary change on infrastructure failure, so they are not cache keys.
         const checkpoint = new StageCheckpoint(cwd, run.stage, run.revision, (args) => git(args, cwd));
         const { maxAgentCalls, maxInputTokens, maxRunMinutes, maxStageToolCalls, timeoutMinutes, ...semanticSettings } = run.settings;
+        const plan = pack.plan as { version?: number; content?: string } | null;
+        const selfPlanned = run.workPlan && run.workPlan.taskId === pack.id && run.workPlan.stage === run.stage && run.workPlan.revision === run.revision
+          && run.workPlan.version === plan?.version && run.workPlan.contentHash === StageCheckpoint.key(plan?.content);
         const keyInput = { id: run.id, stage: run.stage, revision: run.revision, settings: semanticSettings,
-          task: { id: pack.id, title: pack.title, description: pack.description, plan: pack.plan, questions: pack.questions, relations: relationKey } };
+          task: { id: pack.id, title: pack.title, description: pack.description, plan: selfPlanned ? null : pack.plan, questions: pack.questions, relations: relationKey } };
         const key = StageCheckpoint.key(keyInput);
         const legacyKey = StageCheckpoint.key({ ...keyInput, task: { ...keyInput.task, relations: pack.relations }, settings: { ...run.settings, ...run.checkpointBudgets } });
         let saved = await checkpoint.load([key, legacyKey]);
@@ -233,15 +242,16 @@ export class PipelineWorker {
         if (run.stageMemory?.note && run.stageMemory.taskId === pack.id) {
           delete rolePacket.task.progressNotes;
           rolePacket.partialCheckpoint = { taskId: run.stageMemory.taskId,
-            currentContext: !!memory, note: run.stageMemory.note, warning: 'Unverified progress hints only. Recheck current files and checks before relying on them.' };
+            currentContext: !!memory, note: memory ? run.stageMemory.note : { summary: run.stageMemory.note.summary, files: run.stageMemory.note.files, checks: run.stageMemory.note.checks, completedSteps: run.stageMemory.note.completedSteps }, warning: 'Unverified progress hints only. Recheck current files and checks before relying on them.' };
         }
         if (run.feature && !child) rolePacket.featureDeliveries = run.feature.children.map(c => ({ taskId: c.taskId, key: c.key, state: c.state, sourceSha: c.sourceSha, mergedSha: c.mergedSha }));
         const packet = JSON.stringify(rolePacket);
         if (packet.length > HANDOFF_LIMITS.taskChars) throw new Error('Role handoff with checkpoints exceeds the context limit; split the task.');
-        const diff = profile.role === AgentRole.Reviewer ? await git(['diff', `${baseline}...HEAD`, '--', '.', ':!.sat'], cwd) : '';
+        const diff = ''; // Every role reads focused current Git/source evidence; no source dump is transferred.
         const feedback = previous && run.summary.startsWith(previous.summary) ? '' : run.summary;
         const prompt = this.prompt(profile.role, profile.instructions, context, feedback, diff, run.settings.artifactPaths, run.settings.checks, run.checkout, packet)
-          + `\nObserved tool budget for this stage: ${run.settings.maxStageToolCalls ?? 24}. Save factual checkpoints at least every 5 tools, then finish with the requested outcome.\n`
+          + (run.trustedExecution ? '\nTrusted execution: worker token/time/tool/call/revision quotas are disabled. Continue to completion unless blocked or manually stopped.\n'
+            : `\nObserved tool budget for this stage: ${run.settings.maxStageToolCalls ?? 24}. Use tools for the current implementation/check, then finish with the requested outcome.\n`)
           + `\nSelected execution stages: ${PipelinePolicy.roles(run.settings).join(' → ')}. No missing roles may be added. `
           + (profile.role === AgentRole.Analyst && !PipelinePolicy.canDecompose(run.settings) ? 'Return decomposition: []; describe proposed subtasks in plan text if useful, without dispatching other roles.\n' : '');
         let outcome: AgentOutcome;
@@ -264,7 +274,8 @@ export class PipelineWorker {
         }, progress, () => controller.abort());
         await journal.start(memory);
         try {
-          const result = await this.registry.get(profile.runner).run({ runId: run.id, cwd, prompt, profile, connection, settings: run.settings, signal: controller.signal,
+          const result = await this.registry.get(profile.runner).run({ runId: run.id, cwd, prompt, profile, connection, settings: run.settings, trustedExecution: run.trustedExecution, signal: controller.signal,
+            baseSha: baseline, onCheckpoint: note => journal.checkpoint(note),
             sessionId: profile.runner === 'antigravity' ? memory?.conversationId : undefined,
             sessionUsage: memory?.conversationId ? (run.usageAttempts ?? [])
               .filter(attempt => attempt.nativeSessionId === memory.conversationId && attempt.usage?.source === 'antigravity-json')
@@ -276,7 +287,7 @@ export class PipelineWorker {
                 metering = { ...metering, usage, terminal: state?.terminal };
                 const previous = (run!.usageAttempts ?? []).filter(a => a.id !== metering!.attemptId);
                 const total = previous.reduce((sum, a) => sum + (a.usage?.inputTokens ?? 0), 0) + usage.inputTokens;
-                if (total >= RunBudget.limits(run!).input && !state?.terminal) {
+                if (!run!.trustedExecution && total >= RunBudget.limits(run!).input && !state?.terminal) {
                   budgetError = `Run stopped: input token budget exhausted (${total}; cached included).`;
                   controller.abort();
                 }
@@ -307,6 +318,11 @@ export class PipelineWorker {
         }
         saved = { key, head: priorSha, fingerprint: '', priorHead: priorSha, priorStatus, outcome };
         if (outcome.verdict === AgentVerdict.Pass) await checkpoint.save(saved);
+        }
+        if (profile.role === AgentRole.Developer && !pack.plan && outcome.verdict === AgentVerdict.Pass) {
+          const latest = await this.channel.call<Record<string, unknown>>('tracker_get_task', { id: stageTaskId, commentsLimit: 1 });
+          if (!latest.plan) { await checkpoint.invalidate(); throw new Error('Developer must save implementationPlan through the stage checkpoint before editing sources.'); }
+          requirementsKey = StageCheckpoint.key({ description: pack.description, plan: latest.plan, questions: pack.questions, relations: relationKey });
         }
         if (READ_ONLY_AGENT_ROLES.includes(profile.role)) {
           if ((await git(['rev-parse', 'HEAD'], cwd)).trim() !== saved.priorHead || (await git(['status', '--porcelain', '--', '.', ':!.sat'], cwd)) !== saved.priorStatus) throw new Error('Read-only stage modified the worktree or HEAD.');
@@ -388,13 +404,13 @@ export class PipelineWorker {
   private prompt(role: AgentRole, instructions: string, context: unknown, feedback: string, diff: string, artifacts: string[], checks: unknown, checkout?: AgentRun['checkout'], packet?: string): string {
     const roleInstructions: Record<AgentRole, string> = {
       [AgentRole.Analyst]: 'Investigate only the affected path. Produce an executable numbered work order: each step names exact files/symbols, the change, dependencies and a focused check. Keep all acceptance criteria and constraints. For a feature with separable deliverables, return decomposition of 2–12 small tasks: each has key, title, description, complete numbered plan with focused checks, dependsOn keys. Define shared contracts in the parent plan; do not omit acceptance criteria. Never recursively split children. A small atomic task uses decomposition: []. If boundaries, contracts, or dependencies need a user decision, return questions before any development; include the proposed split in plan. Otherwise pass dispatches developers automatically. No vague repeat-the-research steps. Missing implementation and failing pre-change checks are expected. Never return changes_requested.',
-      [AgentRole.Developer]: 'Execute the approved workOrder steps in order, one focused change at a time. Read required repository instructions once; inspect only files/symbols needed for the current step. Do not redo general analysis or replace an agreed plan. If a step is invalid or ambiguous, return questions with the concrete blocker. Add focused regressions, report completed/remaining step IDs, and pass only after implementation.',
+      [AgentRole.Developer]: 'Own the task end-to-end: analyze the affected path, implement and write focused unit tests. When no workOrder exists, localize the problem and publish a concise implementationPlan array in .sat/stage-note.json BEFORE editing project sources; the worker attaches it to the card. Continue implementation in this same conversation without waiting for an analyst. If requirements are ambiguous, return concrete questions. If a workOrder exists, follow it without repeating broad analysis. Read applicable project skills and use its configured MCP. Pass only after the planned change and focused regressions. The worker owns full configured checks, Git and lifecycle.',
       [AgentRole.Designer]: 'Implement the requested visual design in project files, following the accepted plan and supplied references.',
-      [AgentRole.Tester]: 'Assess the implemented behavior and test coverage. Use the configured checks when helpful. Return changes_requested for defects or missing coverage. Do not edit files.',
+      [AgentRole.Tester]: 'Independently review the focused current diff and test actual behavior using existing Playwright/browser scenarios or other configured project tools. Check requirements, regressions and test coverage. Reuse current worker check evidence; do not rerun the full matrix just to repeat it. Use focused scenarios and return reproducible steps, expected/actual behavior and material errors for confirmed defects. Return changes_requested for defects or missing coverage. Do not change project sources. Missing browser/environment capability is a concrete blocked/questions result, never a fabricated pass.',
       [AgentRole.Reviewer]: 'Independently inspect the current diff against requirements, workOrder and current previousStage checks. Do not repeat unchanged successful checks without a concrete concern. Stale previousStage evidence is not proof for current requirements. Report concrete defects with changes_requested, otherwise pass. Do not edit files.',
       [AgentRole.VisualValidator]: 'Inspect the actual supplied images against the visual requirements. State the affected area and severity for each issue. Do not infer working behavior from appearance alone. Do not edit files.',
     };
-    return `You are the ${role}. ${instructions.trim() || DEFAULT_ROLE_INSTRUCTIONS[role]}\nRead repository AGENTS.md and applicable instructions before work.\n`
+    return `You are the ${role}. ${instructions.trim() || DEFAULT_ROLE_INSTRUCTIONS[role]}\nUse the project policy injected below; do not reread AGENTS.md when its current content is already supplied. Read only applicable additional skills/instructions as needed.\n`
       + `${roleInstructions[role]}\n`
       + `Tracker workspace: ${this.channel.workspace ?? process.env.SAT_WORKSPACE ?? 'default'}. The worker supplies the current task context via MCP. If you consult tracker tools, always pass this explicit workspace. Do not change tracker data yourself.\n`
       + `${AgentHandoff.instructions}\nTask context (approved work order and bounded previous-stage evidence):\n${packet ?? AgentHandoff.task(context)}\nPrevious feedback:\n${AgentHandoff.feedback(feedback)}\nChanges (full preview only for review; use changedFiles for focused reads):\n${AgentHandoff.diff(diff)}\n`

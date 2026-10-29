@@ -65,6 +65,7 @@ export function registerTaskRoutes(router: Router, app: AppContainer): void {
       parentId: bodyField<string | null>(body, 'parentId') ?? null,
       tags: bodyField<string[]>(body, 'tags') ?? [],
       requiresManualTest: bodyField<boolean>(body, 'requiresManualTest') ?? false,
+      trustedExecution: bodyField<boolean>(body, 'trustedExecution'),
       images: bodyField<string[]>(body, 'images') ?? [],
       relatedTaskIds: bodyField<string[]>(body, 'relatedTaskIds') ?? [],
       initialComment: bodyField<string>(body, 'initialComment'),
@@ -85,6 +86,7 @@ export function registerTaskRoutes(router: Router, app: AppContainer): void {
         ? bodyField<string[]>(body, 'removeTags')
         : undefined,
       requiresManualTest: bodyField<boolean>(body, 'requiresManualTest'),
+      trustedExecution: bodyField<boolean>(body, 'trustedExecution'),
       images: Array.isArray(bodyField<string[]>(body, 'images')) ? bodyField<string[]>(body, 'images') : undefined,
       parentId: body && typeof body === 'object' && 'parentId' in body ? bodyField<string | null>(body, 'parentId') ?? null : undefined,
       actor: 'user',

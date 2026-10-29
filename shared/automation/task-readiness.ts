@@ -8,7 +8,7 @@ export const TASK_STATUS_TITLES: Readonly<Record<TaskStatus, string>> = {
   [TaskStatus.Review]: 'Ревью', [TaskStatus.Done]: 'Готово',
 };
 export interface TaskReadinessInput { status: TaskStatus; hasPlan: boolean; openQuestionsCount: number; }
-export interface TaskLaunchCandidate extends TaskReadinessInput { id: string; title: string; }
+export interface TaskLaunchCandidate extends TaskReadinessInput { id: string; title: string; trustedExecution?: boolean; }
 export const TASK_SELECTION_LIMIT = 1000;
 export interface TaskReadiness { dorReady: boolean; canStart: boolean; needsAnalysis: boolean; reasons: string[]; dorReasons: string[]; summary: string; }
 /** Structural DoR, not a substitute for a human assessment of the plan's quality. */
@@ -25,6 +25,6 @@ export class TaskAutomationReadiness {
     if (PipelinePolicy.needsPlan(settings, task.hasPlan)) reasons.push('Нет плана: добавьте аналитика перед реализацией.');
     const dorReady = dorReasons.length === 0;
     return { dorReady, canStart: reasons.length === 0, needsAnalysis, reasons, dorReasons,
-      summary: reasons.length ? 'Запуск заблокирован' : dorReady ? 'DoR: готова' : needsAnalysis ? 'Сначала анализ (не DoR)' : 'Запуск до DoR' };
+      summary: reasons.length ? 'Запуск заблокирован' : dorReady ? 'DoR: готова' : needsAnalysis ? 'Сначала анализ (не DoR)' : firstAgent?.role === AgentRole.Developer && !task.hasPlan ? 'Разработчик составит план и выполнит задачу' : 'Запуск до DoR' };
   }
 }

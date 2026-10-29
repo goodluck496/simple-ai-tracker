@@ -33,7 +33,7 @@ test('run budgets survive resume, include cached input once, and fence new agent
     assert.equal(service.detail(run.id).item.canResume, true);
     assert.equal(service.queue(false).items.length, 0);
     now = '2026-10-26T00:00:00.000Z';
-    assert.deepEqual(RunBudget.time(service.detail(run.id).run, Date.parse(now)), { usedMs: 30000, limitMs: 60000, remainingMs: 30000 });
+    assert.deepEqual(RunBudget.time(service.detail(run.id).run, Date.parse(now)), { disabled: false, usedMs: 30000, limitMs: 60000, remainingMs: 30000 });
     service.resume(queued.id);
     const resumed = service.claim('worker-2')!;
     assert.equal(resumed.budgetElapsedMs, 30000, 'waiting time does not consume active budget');

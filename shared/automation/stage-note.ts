@@ -5,6 +5,7 @@ export interface StageNote {
   nextStep?: string;
   files?: string[];
   checks?: string[];
+  implementationPlan?: string[];
 }
 export interface StageMemory {
   key: string;
@@ -22,7 +23,7 @@ export class StageNotes {
   public static parse(value: unknown): StageNote {
     if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Checkpoint must be a prose object.');
     const note = value as Record<string, unknown>;
-    const allowed = ['summary', 'findings', 'completedSteps', 'nextStep', 'files', 'checks'];
+    const allowed = ['summary', 'findings', 'completedSteps', 'nextStep', 'files', 'checks', 'implementationPlan'];
     if (Object.keys(note).some(key => !allowed.includes(key)) || JSON.stringify(note).length > STAGE_NOTE_LIMITS.textChars) throw new Error('Checkpoint has unknown fields or exceeds 3000 characters.');
     const prose = (text: unknown, max: number): string => {
       if (typeof text !== 'string' || !text.trim() || text.length > max || /[\r\n\x00-\x1f{}]|```|~~~|=>|\w+\([^)]*\);|^(?:import |export |const |let |class |function |diff --git|@@)/.test(text)) throw new Error('Checkpoint accepts short prose only; code, patches and command output are forbidden.');
@@ -30,12 +31,15 @@ export class StageNotes {
     };
     const result: StageNote = { summary: prose(note.summary, 600) };
     if (note.nextStep !== undefined) result.nextStep = prose(note.nextStep, 300);
-    for (const key of ['findings', 'completedSteps', 'files', 'checks'] as const) {
+    for (const key of ['findings', 'completedSteps', 'files', 'checks', 'implementationPlan'] as const) {
       if (note[key] === undefined) continue;
       if (!Array.isArray(note[key]) || note[key].length > 6) throw new Error('Checkpoint lists accept at most six items.');
       result[key] = note[key].map(item => prose(item, 220));
     }
     return result;
+  }
+  public static plan(note: StageNote): string | undefined {
+    return note.implementationPlan?.length ? '# План разработчика\n\n' + note.implementationPlan.map((step, index) => `${index + 1}. ${step}`).join('\n') : undefined;
   }
   public static session(value: unknown): string {
     if (typeof value !== 'string' || !/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$/.test(value)) throw new Error('Invalid native conversation ID.');

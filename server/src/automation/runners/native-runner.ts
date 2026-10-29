@@ -44,7 +44,7 @@ export class NativeAgentRunner implements AgentRunner {
       case RunnerId.Antigravity: {
         command = NativeExecutable.antigravity();
         args = ['--add-dir', job.cwd, '--dangerously-skip-permissions', '--output-format', 'stream-json', '--json-schema', schemaPath, '--model', model,
-          '--print-timeout', `${job.settings.timeoutMinutes}m`];
+          '--print-timeout', job.trustedExecution ? '0' : `${job.settings.timeoutMinutes}m`];
         if (job.sessionId) args.push('--conversation', StageNotes.session(job.sessionId));
         args.push('-p', job.sessionId ? brief + ' Continue the saved stage only. Re-read current instructions, partialCheckpoint and .sat/stage-context.json currentNote: recovered progress and repository files may have changed. Do not repeat completed research.' : brief);
         break;
@@ -123,7 +123,7 @@ export class NativeAgentRunner implements AgentRunner {
       if (job.sessionId && id !== job.sessionId) { nativeError = 'Antigravity resumed a different conversation; refusing a silent restart.'; nativeStop.abort(); return; }
       job.onSession?.(id);
     }, count => {
-      if (job.maxToolCalls && count > job.maxToolCalls && !nativeError) {
+      if (!job.trustedExecution && job.maxToolCalls && count > job.maxToolCalls && !nativeError) {
         nativeError = `Antigravity остановлен: превышен предел ${job.maxToolCalls} наблюдаемых вызовов инструментов. Последний checkpoint и worktree сохранены; автоматического повтора нет.`;
         onProgress(nativeError + '\n'); nativeStop.abort();
       }
@@ -132,7 +132,7 @@ export class NativeAgentRunner implements AgentRunner {
       if (antigravity) { antigravity.record(value); return; }
       for (const line of CompactProgress.record(value)) onProgress(line + '\n');
       const record = value as { type?: string; item?: { id?: string; type?: string } };
-      if (job.maxToolCalls && record.item?.id && ['command_execution', 'mcp_tool_call', 'web_search', 'file_change'].includes(record.item.type ?? '')) {
+      if (!job.trustedExecution && job.maxToolCalls && record.item?.id && ['command_execution', 'mcp_tool_call', 'web_search', 'file_change'].includes(record.item.type ?? '')) {
         toolIds.add(record.item.id);
         if (toolIds.size > job.maxToolCalls && !toolThresholdReported) {
           toolThresholdReported = true;

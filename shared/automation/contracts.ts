@@ -97,6 +97,8 @@ export const DEFAULT_AUTOMATION_SETTINGS: AutomationSettings = {
 export const DEFAULT_CHECK_COMMAND: CheckCommand = { command: 'npm', args: ['test'] };
 export const DEFAULT_SETUP_COMMAND: CheckCommand = { command: 'npm', args: ['ci'] };
 export interface AgentRun {
+  trustedExecution?: boolean;
+  workPlan?: { taskId: string; version: number; contentHash: string; stage: number; revision: number };
   stageMemory?: import('./stage-note.js').StageMemory;
   cleanup?: import('./cleanup.js').CleanupState;
   budgetApproval?: { requiredCalls: number; currentCalls: number };
@@ -152,6 +154,9 @@ export interface AgentOutcome {
 }
 
 export interface AgentJob {
+  baseSha?: string;
+  onCheckpoint?: (note: unknown) => Promise<void>;
+  trustedExecution?: boolean;
   sessionId?: string;
   sessionUsage?: import('./token-usage.js').TokenUsage;
   onSession?: (sessionId: string) => void;

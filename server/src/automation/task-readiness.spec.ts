@@ -5,13 +5,13 @@ import { SilentLogger } from '../core/logger.js';
 import { TaskStatus } from '../../../shared/tasks/status.js';
 import { TaskAutomationReadiness } from '../../../shared/automation/task-readiness.js';
 import { DEFAULT_AUTOMATION_SETTINGS, type AutomationSettings } from '../../../shared/automation/contracts.js';
-import { STANDARD_TEAM_ROLES } from '../../../shared/automation/presets.js';
+import { FULL_TEAM_ROLES } from '../../../shared/automation/presets.js';
 
 function exampleSettings(): AutomationSettings {
   return { ...structuredClone(DEFAULT_AUTOMATION_SETTINGS), repositoryPath: '/project',
     connections: [{ id: 'native', label: 'CLI', kind: 'native', supportsImages: false }],
-    agents: STANDARD_TEAM_ROLES.map((role) => ({ id: role, role, runner: 'codex', connectionId: 'native', model: 'selected-model', instructions: '' })),
-    pipeline: [...STANDARD_TEAM_ROLES], checks: [{ command: 'npm', args: ['test'] }] };
+    agents: FULL_TEAM_ROLES.map((role) => ({ id: role, role, runner: 'codex', connectionId: 'native', model: 'selected-model', instructions: '' })),
+    pipeline: [...FULL_TEAM_ROLES], checks: [{ command: 'npm', args: ['test'] }] };
 }
 
 test('task readiness distinguishes DoR, analysis entry, questions, active runs and wrong statuses', () => {
@@ -24,7 +24,7 @@ test('task readiness distinguishes DoR, analysis entry, questions, active runs a
   assert.equal(TaskAutomationReadiness.evaluate(task, settings, true).canStart, false);
   assert.equal(TaskAutomationReadiness.evaluate({ ...task, status: TaskStatus.Testing }, settings, false).canStart, false);
   settings.pipeline.shift();
-  assert.ok(TaskAutomationReadiness.evaluate({ ...task, hasPlan: false }, settings, false).reasons.some((reason) => reason.includes('аналитика')));
+  assert.equal(TaskAutomationReadiness.evaluate({ ...task, hasPlan: false }, settings, false).canStart, true);
 });
 
 test('enqueue atomically saves the submitted draft and run, leaves settings unchanged on validation and duplicate failures', () => {

@@ -3,7 +3,7 @@ import { AgentHandoff } from '../../../../shared/automation/handoff.js';
 import { ProcessExecutor } from '../runners/process-executor.js';
 import { StageCheckpoint } from './stage-checkpoint.js';
 
-type Invoke = (profile: AgentProfile, prompt: string, cwd: string, signal: AbortSignal, maxTools: number) => Promise<AgentOutcome>;
+type Invoke = (profile: AgentProfile, prompt: string, cwd: string, signal: AbortSignal, maxTools: number | undefined) => Promise<AgentOutcome>;
 
 /** Bounded conflict-only model operation; successful output is checkpointed before Git staging. */
 export class MergeResolver {
@@ -13,7 +13,7 @@ export class MergeResolver {
     if (files.length > 10) throw new Error('Too many conflict files for automatic resolution; inspect the preserved integration worktree.');
     const profile = run.settings.agents.find(agent => agent.role === 'developer')!;
     if (!['codex', 'model-api', 'custom'].includes(profile.runner)) throw new Error('This native runner does not expose bounded resolver steps; resolve manually or select Codex/model-api.');
-    const resolverSignal = AbortSignal.any([signal, AbortSignal.timeout((run.settings.resolverTimeoutMinutes ?? 3) * 60000)]);
+    const resolverSignal = run.trustedExecution ? signal : AbortSignal.any([signal, AbortSignal.timeout((run.settings.resolverTimeoutMinutes ?? 3) * 60000)]);
     const git = (args: string[]) => this.executor.run({ command: 'git', args, cwd, signal: resolverSignal, maxOutputChars: 50000 });
     const checkpoint = new StageCheckpoint(cwd, run.settings.pipeline.length, run.revision, git);
     const key = StageCheckpoint.key({ run: run.id, source: run.commitSha, baseSha, context, files });
@@ -39,7 +39,7 @@ export class MergeResolver {
       + `${AgentHandoff.instructions}\nTask context:\n${AgentHandoff.task(context)}\nConflicts (base/target/task):\n${JSON.stringify(descriptions)}`;
     const priorHead = (await git(['rev-parse', 'HEAD'])).trim();
     const priorStatus = await git(['status', '--porcelain']);
-    const outcome = await this.invoke(profile, prompt, cwd, resolverSignal, run.settings.maxResolverToolCalls ?? 16);
+    const outcome = await this.invoke(profile, prompt, cwd, resolverSignal, run.trustedExecution ? undefined : run.settings.maxResolverToolCalls ?? 16);
     if (outcome.verdict !== 'pass') throw new Error(`Conflict resolver blocked: ${outcome.summary}`);
     await checkpoint.save({ key, head: priorHead, fingerprint: '', priorHead, priorStatus, outcome });
   }

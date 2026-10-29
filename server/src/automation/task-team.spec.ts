@@ -28,6 +28,6 @@ test('task team overrides inherit project infrastructure and snapshots never cha
     assert.equal(service.taskTeam(first.id, null).overridden, false);
     assert.deepEqual(service.taskTeam(first.id).settings.pipeline, base.pipeline);
     const noPlan = app.taskService.createTask({ title: 'No approved plan' });
-    assert.throws(() => service.enqueue(noPlan.id, { ...base, pipeline: ['developer'] }, false), /existing plan|analyst/);
+    assert.equal(service.enqueue(noPlan.id, { ...base, pipeline: ['developer'] }, false).status, 'queued', 'Developer can own analysis without a separate analyst');
   } finally { app.close(); }
 });

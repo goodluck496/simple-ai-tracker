@@ -29,6 +29,7 @@ export interface TaskRow {
   parent_id: string | null;
   position: number;
   requires_manual_test: number;
+  trusted_execution?: number;
   created_at: string;
   updated_at: string;
 }
@@ -121,6 +122,7 @@ export function mapTask(row: TaskRow): Task {
     parentId: row.parent_id,
     position: row.position,
     requiresManualTest: row.requires_manual_test === 1,
+    trustedExecution: row.trusted_execution === 1,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -225,6 +227,7 @@ export function mapSummary(row: SummaryRow, tags: readonly Tag[]): TaskSummary {
     parentId: row.parent_id,
     position: row.position,
     requiresManualTest: row.requires_manual_test === 1,
+    trustedExecution: row.trusted_execution === 1,
     tags,
     createdAt: row.created_at,
     updatedAt: row.updated_at,

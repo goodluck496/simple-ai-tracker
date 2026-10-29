@@ -81,7 +81,7 @@ export class ProjectEnvironment {
         || Object.keys(server).some(k => !['name', 'command', 'args', 'envVars', 'tools', 'roles'].includes(k))) throw new Error('Invalid project MCP rule.');
       names.add(server.name);
       if (!selected(server)) continue;
-      if (job.profile.runner !== RunnerId.Codex) throw new Error('Managed project MCP currently requires the Codex runner; no model was called.');
+      if (job.profile.runner !== RunnerId.Codex && job.profile.runner !== RunnerId.ModelApi) throw new Error('Managed project MCP requires Codex or Model API/Ollama; this CLI adapter does not support isolated project tools. No model was called.');
       const environment = TaskEnvironment.create();
       for (const name of server.envVars) if (!environment[name]) throw new Error('Missing or host-reserved project MCP environment variable: ' + name);
       const bind = (value: string) => value.replaceAll('{worktreeRoot}', root);

@@ -142,7 +142,7 @@ export class AutomationPanelComponent implements OnInit {
   public get taskOptions() {
     const options = (this.latestTasks ?? this.availableTasks).map((task) => {
       const readiness = TaskAutomationReadiness.evaluate(task, this.settings, this.activeTaskIds.includes(task.id));
-      return { value: task.id, title: task.title, label: `${task.id} · ${task.title} · ${TASK_STATUS_TITLES[task.status]} · ${readiness.summary}`,
+      return { value: task.id, title: task.title, label: `${task.id} · ${task.title} · ${TASK_STATUS_TITLES[task.status]} · ${readiness.summary}${task.trustedExecution ? ' · Без лимитов' : ''}`,
         disabled: !readiness.canStart, readiness };
     });
     const signature = JSON.stringify(options);
@@ -411,7 +411,7 @@ export class AutomationPanelComponent implements OnInit {
   public addStandardTeam(): void {
     if (this.settings.agents.length) return;
     for (const role of STANDARD_TEAM_ROLES) this.addAgent(role);
-    this.notice = 'Четыре роли добавлены. Укажите модель каждой роли; подключение можно менять отдельно.';
+    this.notice = 'Добавлены разработчик и тестировщик. Разработчик сам анализирует и пишет код/юнит-тесты; тестировщик проверяет поведение. Выберите модели отдельно.';
   }
   public selectConnection(agent: AgentProfile): void {
     if (agent.connectionId.startsWith('preset:')) {

@@ -27,7 +27,7 @@ export class StageJournal {
     await this.flush();
     if (this.failure) throw this.failure;
     await RunWorkspace.atomic(path.join(this.cwd, '.sat', 'stage-context.json'), { key: this.key,
-      noteFile: '.sat/stage-note.json', noteSchema: { summary: 'short prose', findings: ['confirmed fact'], completedSteps: ['S1'], nextStep: 'one concrete action', files: ['path#symbol'], checks: ['command: exit/count/result'] },
+      noteFile: '.sat/stage-note.json', noteSchema: { summary: 'short prose', implementationPlan: ['exact file/symbol, change, focused check; required before source edits when no plan exists'], findings: ['confirmed fact'], completedSteps: ['S1'], nextStep: 'one concrete action', files: ['path#symbol'], checks: ['command: exit/count/result'] },
       currentNote: this.note ?? (memory?.key === this.key ? memory.note : undefined) });
     this.timer = setInterval(() => { void this.flush().catch(error => { this.failure = error; this.onError(); }); }, STAGE_NOTE_LIMITS.pollMs);
   }
@@ -35,6 +35,13 @@ export class StageJournal {
     if (this.conversationId === id) return;
     this.conversationId = StageNotes.session(id);
     this.enqueue({ key: this.key, conversationId: this.conversationId });
+  }
+  public async checkpoint(value: unknown): Promise<void> {
+    const note = StageNotes.parse(value);
+    this.note = note;
+    this.enqueue({ key: this.key, note });
+    await this.pending;
+    if (this.failure) throw this.failure;
   }
   private enqueue(value: CheckpointUpdate): void {
     this.pending = this.pending.then(async () => { if (!this.failure) await this.publish(value); }).catch(error => {

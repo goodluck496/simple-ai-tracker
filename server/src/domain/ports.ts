@@ -33,6 +33,7 @@ export interface CreateTaskRecord {
   readonly parentId: string | null;
   readonly position: number;
   readonly requiresManualTest: boolean;
+  readonly trustedExecution?: boolean;
   readonly createdAt: string;
   readonly updatedAt: string;
 }
@@ -45,6 +46,7 @@ export interface TaskPatch {
   readonly parentId?: string | null;
   readonly position?: number;
   readonly requiresManualTest?: boolean;
+  readonly trustedExecution?: boolean;
   readonly updatedAt: string;
 }
 

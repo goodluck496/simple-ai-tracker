@@ -276,7 +276,7 @@
     </p-select></label> } @else { <p class="grow">Задача для запуска: {{ selectedTask || 'выберите задачу вверху' }}</p> }
     <p-button [label]="executorReady ? 'Запустить' : 'Поставить в очередь'" [loading]="starting"
       [disabled]="busy || starting || !selectedTask || !taskTeamReady || !settings.pipeline.length || !selectedEligibility?.canStart" (onClick)="start()" /></div>
-  <p class="hint">DoR означает: статус ready, есть план, нет открытых вопросов. Состав исполнителей задаётся выше. Перед изменением кода нужен готовый план или выбранный этап аналитики. Вопросы и активный запуск блокируют новую очередь.</p>
+  <p class="hint">Разработчик может начать без готового плана: он сохранит короткий план в карточку и продолжит реализацию. Открытые вопросы блокируют запуск. Флаг «Без лимитов» включается отдельно в карточке задачи.</p>
   @if (taskListLimited) { <p class="hint">Показаны первые {{ taskSelectionLimit }} задач пространства.</p> }
   @if (selectedEligibility; as eligibility) {
     <div class="launch-feedback"><strong>{{ selectedTask }} · {{ eligibility.summary }}</strong>

@@ -106,7 +106,14 @@
         pTooltip="Нужна ручная проверка пользователем после автотестов"
         tooltipPosition="bottom"
       ></p-togglebutton>
+      <label class="trust-toggle" for="sat-trusted-execution" pTooltip="Настройка действует только на новые запуски. Действующую попытку можно остановить вручную." tooltipPosition="bottom">
+        <p-checkbox inputId="sat-trusted-execution" [binary]="true" [ngModel]="trustedExecution()" (ngModelChange)="trustedExecution.set($event)" />
+        Доверенный запуск — без лимитов
+      </label>
     </div>
+    @if (trustedExecution()) {
+      <p-message severity="warn" text="Для новых запусков этой задачи отключены лимиты времени, токенов, вызовов и циклов исправления. Денежного потолка нет. Проверки, ручная остановка и контроль связи сохраняются. Уже запущенные попытки не меняются." />
+    }
 
     @if (error(); as message) {
       <p-message severity="error" [text]="message"></p-message>
@@ -638,6 +645,7 @@
       <p-button label="Закрыть" severity="secondary" [text]="true" size="small" (onClick)="close()"></p-button>
       <p-button
         [label]="isCreate() ? 'Создать' : 'Сохранить'"
+        [ariaLabel]="isCreate() ? 'Создать' : 'Сохранить'"
         icon="pi pi-check"
         size="small"
         [disabled]="!title().trim() || store.busy()"

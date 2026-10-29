@@ -58,6 +58,7 @@ export interface Task {
   readonly parentId: string | null;
   readonly position: number;
   readonly requiresManualTest: boolean;
+  readonly trustedExecution?: boolean;
   readonly createdAt: string;
   readonly updatedAt: string;
 }
@@ -146,6 +147,7 @@ export interface TaskSummary {
   readonly parentId: string | null;
   readonly position: number;
   readonly requiresManualTest: boolean;
+  readonly trustedExecution?: boolean;
   readonly tags: readonly Tag[];
   readonly createdAt: string;
   readonly updatedAt: string;

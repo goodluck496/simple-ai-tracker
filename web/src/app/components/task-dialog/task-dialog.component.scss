@@ -638,3 +638,4 @@
     background: var(--sat-bg);
   }
 }
+:host .trust-toggle { display: inline-flex; align-items: center; gap: 0.5rem; font-size: 0.85rem; cursor: pointer; }

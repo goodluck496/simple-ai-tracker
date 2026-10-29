@@ -34,6 +34,7 @@ export class StageCheckpoint {
     await fs.writeFile(temporary, JSON.stringify(result), 'utf8');
     await fs.rename(temporary, this.file);
   }
+  public async invalidate(): Promise<void> { await fs.rm(this.file, { force: true }); }
   private async fingerprint(): Promise<string> {
     const hash = createHash('sha256');
     // Hash actual changed files, not a possibly truncated textual/binary Git diff.

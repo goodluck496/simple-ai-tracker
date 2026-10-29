@@ -5,14 +5,15 @@ import { ProcessExecutor } from './process-executor.js';
 import { UsageParser } from './usage-parser.js';
 import { TokenMeter, type TokenUsage } from '../../../../shared/automation/token-usage.js';
 import { CompactProgress } from '../../../../shared/automation/compact-progress.js';
+import { ProjectMcpTools } from './project-mcp-tools.js';
 
 interface ToolCall { id: string; function: { name: string; arguments: string }; }
 interface Message { role: string; content: unknown; tool_calls?: ToolCall[]; tool_call_id?: string; }
 const MAX_TURNS = AUTOMATION_LIMITS.modelToolTurns;
 const MAX_FILE_BYTES = 256 * 1024;
 const EXCLUDED_DIRECTORY_NAMES = new Set(['.git', '.sat', '.codegraph', 'node_modules']);
-const ModelTool = { ListFiles: 'list_files', ReadFile: 'read_file', RunCheck: 'run_check', WriteFile: 'write_file', EditFile: 'edit_file', Explore: 'explore_code' } as const;
-const READ_MODEL_TOOLS = [ModelTool.ListFiles, ModelTool.ReadFile, ModelTool.RunCheck, ModelTool.Explore];
+const ModelTool = { ListFiles: 'list_files', ReadFile: 'read_file', RunCheck: 'run_check', WriteFile: 'write_file', EditFile: 'edit_file', Explore: 'explore_code', Checkpoint: 'save_progress', Changes: 'inspect_changes', Project: 'call_project_tool' } as const;
+const READ_MODEL_TOOLS = [ModelTool.ListFiles, ModelTool.ReadFile, ModelTool.RunCheck, ModelTool.Explore, ModelTool.Checkpoint, ModelTool.Changes];
 
 /** A small, bounded tool loop for Ollama and compatible APIs; no shell supplied by the model. */
 export class ModelApiRunner implements AgentRunner {
@@ -38,18 +39,31 @@ export class ModelApiRunner implements AgentRunner {
       }
       if (job.profile.role === AgentRole.VisualValidator && contents.length < 2) throw new Error('Visual validator requires at least one generated image artifact.');
     }
-    const messages: Message[] = [{ role: 'system', content: 'Follow the task instructions and return the requested JSON outcome. Use only the supplied tools.' }, { role: 'user', content: contents.length > 1 ? contents : job.prompt }];
-    const names: string[] = job.profile.role === AgentRole.VisualValidator ? [] : [...READ_MODEL_TOOLS, ...(writable ? [ModelTool.WriteFile, ModelTool.EditFile] : [])];
+    const messages: Message[] = [{ role: 'system', content: 'Follow the task instructions and return the requested JSON outcome. Use only the supplied tools. Use save_progress(note) to save findings and implementationPlan, not .sat filesystem writes. inspect_changes() lists changed files, inspect_changes(path) reads a focused current Git diff.' }, { role: 'user', content: contents.length > 1 ? contents : job.prompt }];
+    const names: string[] = job.profile.role === AgentRole.VisualValidator ? [] : [...READ_MODEL_TOOLS, ...(job.projectMcp?.length ? [ModelTool.Project] : []), ...(writable ? [ModelTool.WriteFile, ModelTool.EditFile] : [])];
+    if (job.projectMcp?.length) messages.push({ role: 'system', content: 'Approved project MCP tools: ' + JSON.stringify(job.projectMcp.map(server => ({ server: server.name, tools: server.tools }))) + '. Call them using call_project_tool(server, tool, arguments). Non-text content is reported as omitted; never claim to have inspected an omitted image.' });
+    const parameters = (name: string) => {
+      const fields: Record<string, string[]> = { list_files: ['path'], read_file: ['path', 'startLine', 'endLine'], run_check: ['index'],
+        write_file: ['path', 'content'], edit_file: ['path', 'oldText', 'newText'], explore_code: ['symbol'], save_progress: ['note'], inspect_changes: ['path'], call_project_tool: ['server', 'tool', 'arguments'] };
+      const definitions: Record<string, unknown> = { server: { type: 'string' }, tool: { type: 'string' }, arguments: { type: 'object' }, note: { type: 'object' },
+        path: { type: 'string' }, content: { type: 'string' }, index: { type: 'integer' }, startLine: { type: 'integer' }, endLine: { type: 'integer' }, oldText: { type: 'string' }, newText: { type: 'string' }, symbol: { type: 'string' } };
+      return { type: 'object', properties: Object.fromEntries(fields[name].map(field => [field, definitions[field]])), additionalProperties: false };
+    };
     const tools = names.map((name) => ({ type: 'function', function: { name,
       description: name === ModelTool.RunCheck ? 'Run a configured check by numeric index; success returns only exitCode.'
+        : name === ModelTool.Checkpoint ? 'Save a short prose note to the task through the worker. If no plan exists, save implementationPlan steps before changing source. No code or raw output.'
+        : name === ModelTool.Changes ? 'Inspect current Git changes: omit path for filenames only, provide one relative path for bounded diff.'
+        : name === ModelTool.Project ? 'Call one explicitly approved project MCP tool with structured arguments. The response is bounded and non-text artifacts are omitted.'
         : name === ModelTool.ReadFile ? 'Read one source range of at most 40 lines using startLine/endLine.'
         : name === ModelTool.EditFile ? 'Patch an existing file by replacing exactly one oldText fragment with newText.'
         : name === ModelTool.WriteFile ? 'Create a new file only; use edit_file for existing files.'
         : name === ModelTool.Explore ? 'Use CodeGraph to inspect exactly one symbol such as ExactClass.method.' : `${name} relative to the project worktree.`,
-      parameters: { type: 'object', properties: { path: { type: 'string' }, content: { type: 'string' }, index: { type: 'integer' }, startLine: { type: 'integer' }, endLine: { type: 'integer' }, oldText: { type: 'string' }, newText: { type: 'string' }, symbol: { type: 'string' } }, additionalProperties: false } } }));
+      parameters: parameters(name) } }));
     let usage: TokenUsage | undefined; let missingRequests = 0;
     let calls = 0;
-    for (let turn = 0; turn < Math.min(MAX_TURNS, (job.maxToolCalls ?? MAX_TURNS) + 1); turn += 1) {
+    const project = new ProjectMcpTools(job);
+    try {
+    for (let turn = 0; job.trustedExecution || turn < Math.min(MAX_TURNS, (job.maxToolCalls ?? MAX_TURNS) + 1); turn += 1) {
       job.signal.throwIfAborted();
       const response = await this.request(url, { method: 'POST', signal: job.signal,
         headers: { 'Content-Type': 'application/json', ...(secret ? { Authorization: `Bearer ${secret}` } : {}) },
@@ -68,10 +82,12 @@ export class ModelApiRunner implements AgentRunner {
         return { text: message.content, usage };
       }
       for (const call of message.tool_calls) {
-        if (++calls > (job.maxToolCalls ?? MAX_TURNS)) throw new Error('Model tool-call limit exceeded.');
+        if (++calls > (job.maxToolCalls ?? MAX_TURNS) && !job.trustedExecution) throw new Error('Model tool-call limit exceeded.');
         if (!names.includes(call.function.name)) throw new Error('Model requested a tool outside its role.');
         let result: unknown;
-        try { result = await this.tool(job, call.function.name, JSON.parse(call.function.arguments) as Record<string, unknown>); }
+        try { result = call.function.name === ModelTool.Project
+          ? await (async () => { const args = JSON.parse(call.function.arguments); return project.call(args.server, args.tool, args.arguments); })()
+          : await this.tool(job, call.function.name, JSON.parse(call.function.arguments) as Record<string, unknown>); }
         catch (error) { result = { error: error instanceof Error ? error.message : String(error) }; }
         const error = result && typeof result === 'object' ? (result as { error?: unknown }).error : undefined;
         onProgress(`Инструмент ${call.function.name}: ${error ? 'ошибка' : 'завершён'}.\n`);
@@ -80,9 +96,21 @@ export class ModelApiRunner implements AgentRunner {
       }
     }
     throw new Error('Model tool-call limit reached.');
+    } finally { await project.close(); }
   }
 
   private async tool(job: AgentJob, name: string, args: Record<string, unknown>): Promise<unknown> {
+    if (name === ModelTool.Checkpoint) {
+      if (!job.onCheckpoint) throw new Error('Worker checkpoint channel is unavailable.');
+      await job.onCheckpoint(args.note); return { saved: true };
+    }
+    if (name === ModelTool.Changes) {
+      if (!job.baseSha) throw new Error('Review baseline is unavailable.');
+      const file = typeof args.path === 'string' ? args.path : undefined;
+      if (file) await this.safePath(job.cwd, file, true);
+      const output = await this.executor.run({ command: 'git', args: ['diff', ...(file ? [] : ['--name-only']), job.baseSha, '--', ...(file ? [`:(literal)${file}`] : ['.', ':!.sat'])], cwd: job.cwd, signal: job.signal, maxOutputChars: 7000 });
+      return { content: output.slice(0, 6000), limited: output.length > 6000, advice: 'Read only the relevant source ranges for current code.' };
+    }
     if (name === ModelTool.Explore) {
       if (typeof args.symbol !== 'string' || !/^[\p{L}_$][\p{L}\p{N}_$]*(?:[.:][\p{L}_$][\p{L}\p{N}_$]*)*$/u.test(args.symbol)) throw new Error('Explore exactly one symbol, such as ExactClass.method.');
       const source = await this.executor.run({ command: 'codegraph', args: ['explore', '--path', job.cwd, '--max-files', '1', args.symbol], cwd: job.cwd, signal: job.signal, maxOutputChars: 16000 });

@@ -19,6 +19,6 @@ export class PipelinePolicy {
   public static canDecompose(settings: AutomationSettings): boolean { return this.roles(settings).join(',') === [AgentRole.Analyst, AgentRole.Developer, AgentRole.Tester, AgentRole.Reviewer].join(','); }
   public static needsPlan(settings: AutomationSettings, hasPlan: boolean): boolean {
     const roles = this.roles(settings); const writer = roles.findIndex(role => WRITABLE_AGENT_ROLES.includes(role));
-    return !hasPlan && writer >= 0 && !roles.slice(0, writer).includes(AgentRole.Analyst);
+    return !hasPlan && writer >= 0 && roles[writer] !== AgentRole.Developer && !roles.slice(0, writer).includes(AgentRole.Analyst);
   }
 }

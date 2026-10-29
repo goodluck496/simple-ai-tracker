@@ -10,7 +10,7 @@ import type { Tag } from '../../domain/entities.js';
 const SUMMARY_SELECT = `
   SELECT
     t.id, t.seq, t.title, t.description, t.type, t.status, t.parent_id,
-    t.position, t.requires_manual_test, t.created_at, t.updated_at,
+    t.position, t.requires_manual_test, t.trusted_execution, t.created_at, t.updated_at,
     (SELECT COUNT(*) FROM task_comments c WHERE c.task_id = t.id) AS comments_count,
     (SELECT COUNT(*) FROM task_images i WHERE i.task_id = t.id) AS images_count,
     (SELECT COUNT(*) FROM task_attachments a WHERE a.task_id = t.id) AS attachments_count,
@@ -37,8 +37,8 @@ export class SqliteTaskRepository implements TaskRepository {
   public insert(record: CreateTaskRecord): Task {
     this.db
       .prepare(
-        `INSERT INTO tasks (id, seq, title, description, type, status, parent_id, position, requires_manual_test, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO tasks (id, seq, title, description, type, status, parent_id, position, requires_manual_test, trusted_execution, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run([
         record.id,
@@ -50,6 +50,7 @@ export class SqliteTaskRepository implements TaskRepository {
         record.parentId,
         record.position,
         record.requiresManualTest ? 1 : 0,
+        record.trustedExecution ? 1 : 0,
         record.createdAt,
         record.updatedAt,
       ]);
@@ -73,6 +74,7 @@ export class SqliteTaskRepository implements TaskRepository {
     if (patch.status !== undefined) push('status', patch.status);
     if (patch.parentId !== undefined) push('parent_id', patch.parentId);
     if (patch.position !== undefined) push('position', patch.position);
+    if (patch.trustedExecution !== undefined) push('trusted_execution', patch.trustedExecution ? 1 : 0);
     if (patch.requiresManualTest !== undefined) push('requires_manual_test', patch.requiresManualTest ? 1 : 0);
     push('updated_at', patch.updatedAt);
 
