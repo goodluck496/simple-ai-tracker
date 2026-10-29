@@ -36,6 +36,10 @@ export class AutomationPanelComponent implements OnInit {
   public readonly tabs = AUTOMATION_TABS;
   public readonly tab = AutomationTab;
   public activeTab: string | number = AutomationTab.Project;
+  public sidebarCollapsed = false;
+  public toggleSidebar(): void { this.sidebarCollapsed = !this.sidebarCollapsed; }
+  public isTabDisabled(value: AutomationTab): boolean { return this.settingsScope === 'task' && (value === AutomationTab.Project || value === AutomationTab.Models); }
+  public selectTab(value: AutomationTab): void { if (!this.isTabDisabled(value)) this.activeTab = value; }
   @Input() public initialMessage = '';
   @Input() public set initialBatch(value: boolean) { if (value) { this.batchMode = true; this.activeTab = AutomationTab.Launch; } }
   public batchMode = false;

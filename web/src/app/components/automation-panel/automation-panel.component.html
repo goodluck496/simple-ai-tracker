@@ -1,323 +1,754 @@
-<div class="automation-panel">
-  <div class="settings-scope">
-    <label>Область настроек <p-select [options]="scopeOptions" optionLabel="label" optionValue="value" [ngModel]="settingsScope" (ngModelChange)="changeScope($event)" [disabled]="busy || starting" ariaLabel="Область настроек" /></label>
-    @if (settingsScope === 'task') {
-      <label>Задача <p-select [options]="settingsTaskOptions" optionLabel="label" optionValue="value" [formControl]="taskControl" [filter]="true" [disabled]="busy || starting" ariaLabel="Задача для настройки команды" placeholder="Выберите задачу" /></label>
-      <span>{{ taskOverridden ? 'Собственная команда задачи' : 'Наследует команду проекта' }}</span>
-      <p-button label="Наследовать команду проекта" severity="secondary" [disabled]="busy || !selectedTask" (onClick)="inheritTeam()" />
-    }
-  </div>
-  <div class="worker-control" aria-label="Управление worker">
-    <span role="status">Исполнитель: {{ executorTitle }} @if (host.execution?.hostName) { · {{ host.execution?.hostName }} }</span>
-    @if (host.online && host.execution) {
-      <p-button label="Запустить worker" severity="secondary" [disabled]="projectBusy || host.execution.state !== 'stopped'" (onClick)="controlWorker(true)" />
-      <p-button label="Остановить worker" severity="secondary" [disabled]="projectBusy || host.execution.state === 'stopped'" (onClick)="controlWorker(false)" />
-      <small>Остановка прерывает текущие задачи; рабочие копии и checkpoints сохраняются.</small>
-    } @else { <p-button label="Подключение компьютера" severity="secondary" (onClick)="showHostConnection()" /> }
-    @if (host.execution?.error) { <small role="alert">{{ host.execution?.error }}</small> }
-  </div>
-  @if (error) { <p role="alert" class="error">{{ error }}</p> }
-  @if (notice) { <p role="status">{{ notice }}</p> }
-  @if (repairNotice) { <p role="status">{{ repairNotice }}</p> }
-  @if (initialMessage) { <p role="alert" class="error">{{ initialMessage }}</p> }
-  <p-tabs [(value)]="activeTab" [scrollable]="true" [lazy]="false">
-    <p-tablist>@for (item of tabs; track item.value) { <p-tab [value]="item.value" [disabled]="settingsScope === 'task' && (item.value === tab.Project || item.value === tab.Models)">{{ item.label }}</p-tab> }</p-tablist>
-    <p-tabpanels><p-tabpanel [value]="tab.Project"><div class="tab-content">
-  <h3>1. Подключение компьютера</h3>
-  @if (returnToTaskLaunch) {
-    <p class="hint">После настройки папки и проверок сохраните настройки проекта, затем вернитесь к запуску. Выбранные исполнители задачи сохранены в черновике.</p>
-    <p-button label="Вернуться к запуску задачи" severity="secondary" [disabled]="busy" (onClick)="backToTaskLaunch()" />
-  }
-  <p class="hint">Сначала подключите worker на компьютере с проектами. Этот шаг выполняется один раз на время работы; выбирать папку заранее не нужно.</p>
-  <p role="status">Worker: {{ host.online ? 'подключён · ' + host.workerId : 'не подключён' }}</p>
-  @if (!host.online) { <p class="hint">Браузер не видит абсолютные пути Windows без подключения компьютера. Скопируйте команду и выполните в PowerShell из любой папки. Команда не зависит от пути проекта; этот worker обслуживает выбранное пространство.</p> }
-  <p class="hint">Трекер работает отдельно. Копировать его репозиторий в проекты не нужно.</p>
-  <div class="row">
-    <p-button [label]="host.online ? 'Worker уже подключён' : 'Подключить worker'" [severity]="host.online ? 'secondary' : 'success'" [disabled]="busy || host.online || !launchCommand" (onClick)="copyLaunchCommand()" />
-    <button pButton severity="secondary" type="button" (click)="showLaunchCommand = !showLaunchCommand; launchNotice = ''">{{ showLaunchCommand ? 'Скрыть команду' : 'Показать команду' }}</button>
-  </div>
-  @if (launchNotice) { <p role="status">{{ launchNotice }}</p> }
-  <p-accordion><p-accordion-panel value="connection"><p-accordion-header>Расширенные настройки подключения</p-accordion-header><p-accordion-content>
-    <label>Имя Docker-контейнера трекера <input pInputText [(ngModel)]="workerContainer" /></label>
-    <p class="hint">Обычно simple-ai-tracker. Меняйте только если контейнер был переименован.</p>
-  </p-accordion-content></p-accordion-panel></p-accordion>
-  @if (showLaunchCommand) {
-    <label>Команда запуска PowerShell <textarea #commandText readonly rows="10" [value]="launchCommand" aria-label="Команда запуска PowerShell"></textarea></label>
-    <p class="hint">Нужны Node.js 22+, Docker CLI, Git и CodeGraph. Команда запускает локальный host в фоне из любой папки, без npm install и исходников трекера. После подключения исполнителем можно управлять кнопками «Запустить worker» и «Остановить worker».</p>
-    @if (!launchCommand) { <p class="error">Проверьте имя контейнера: допустимы буквы, цифры, точка, дефис и подчёркивание.</p> }
-  }
-  <h3>2. Проект и проверки</h3>
-  <p class="hint">Выберите папку Git-проекта — ветки и команды загрузятся автоматически. При ручном вводе нажмите Enter или выйдите из поля. Настройки относятся к текущему пространству.</p>
-  <div class="row folder-row">
-    <label class="grow">Папка Git-проекта на worker <input pInputText [disabled]="projectBusy" [ngModel]="settings.repositoryPath" (ngModelChange)="setProjectPath($event)" (blur)="readProjectIfNeeded($event)" (keydown.enter)="readProjectIfNeeded()" placeholder="E:\projects\my-app" /></label>
-    <p-button data-project-picker [label]="host.online ? 'Выбрать папку' : 'Подключить и выбрать папку'" severity="secondary" [disabled]="projectBusy || !launchCommand" (onClick)="pickFolder()" />
-  </div>
-  @if (pendingFolderPick) {
-    <p role="status">Выполните скопированную команду в PowerShell. Когда worker подключится, выбор папки откроется автоматически.</p>
-    <button pButton severity="secondary" type="button" (click)="cancelFolderConnection()">Отменить ожидание выбора</button>
-  }
-  <div class="row">
-    <p-button data-project-picker label="Обзор каталогов worker" severity="secondary" [disabled]="projectBusy || !host.online" (onClick)="browse(settings.repositoryPath)" />
-    <p-button data-project-picker label="Прочитать проект и ветки" severity="secondary" [disabled]="projectBusy || !host.online || !settings.repositoryPath" (onClick)="inspect()" />
-    @if (projectBusy) { <span role="status">Ожидание ответа worker…</span> }
-  </div>
-  @if (host.online && host.platform !== workerPlatform.Windows) { <p class="hint">Системный выбор папки требует обновлённый Windows worker. Сейчас доступен обзор каталогов worker.</p> }
-  @if (browserOpen && directory) {
-    <fieldset aria-label="Папки на worker">
-      <strong>{{ directory.path }}</strong>
-      <div class="row"><button pButton severity="secondary" type="button" [disabled]="projectBusy || directory.parent === directory.path" (click)="browse(directory.parent)">↑ На уровень выше</button>
-        <button pButton severity="secondary" type="button" [disabled]="projectBusy" (click)="chooseDirectory()">Выбрать эту папку</button>
-        <button pButton severity="secondary" type="button" (click)="browserOpen = false">Закрыть выбор</button></div>
-      <div class="directories">@for (entry of directory.directories; track entry.path) { <button pButton severity="secondary" type="button" [disabled]="projectBusy" (click)="browse(entry.path)">📁 {{ entry.name }}</button> }</div>
-      @if (directory.truncated) { <p class="hint">Показаны первые 200 папок. Введите точный путь проекта выше.</p> }
-    </fieldset>
-  }
-  <div class="row">
-    <label>Базовая ветка
-      @if (branchOptions.length) { <p-select [options]="branchOptions" [(ngModel)]="settings.baseBranch" [filter]="true" /> }
-      @else { <input pInputText [(ngModel)]="settings.baseBranch" placeholder="main или master" /> }
-    </label>
-    <label>Лимит минут <input pInputText type="number" [(ngModel)]="settings.timeoutMinutes" [min]="limits.timeoutMinutes.min" [max]="limits.timeoutMinutes.max" /></label>
-    <label>Доработок <input pInputText type="number" [(ngModel)]="settings.maxRevisions" [min]="limits.revisions.min" [max]="limits.revisions.max" /></label>
-    <label>Всего активных минут <input pInputText type="number" [(ngModel)]="settings.maxRunMinutes" min="1" max="240" /></label>
-    <label>Вызовов агентов <input pInputText type="number" [(ngModel)]="settings.maxAgentCalls" min="1" max="100" /></label>
-    <label>Операций инструментами на этап <input pInputText type="number" [(ngModel)]="settings.maxStageToolCalls" min="1" max="80" /></label>
-    <p class="hint">Один вызов агента — целая роль с несколькими обращениями к модели. Для фич число вызовов автоматически рассчитывается по разбиению и общему резерву исправлений; указанное поле применяется к атомарным задачам. Лимиты токенов и времени автоматически не увеличиваются. Порог операций считается по событиям инструментов исполнителя, а не по внутренним API-запросам.</p>
-    <label>Входных токенов (включая кеш) <input pInputText type="number" [(ngModel)]="settings.maxInputTokens" min="1" max="100000000" /></label>
-    <p>Лимиты общие для запуска и сохраняются при продолжении. Токены ограничиваются по отчётам провайдера: возможен перерасход до следующего отчёта; при отсутствии данных действуют лимиты времени и вызовов.</p>
-    <label>Слияние <p-select [options]="mergePolicies" [(ngModel)]="settings.mergePolicy" /></label>
-    <label>Параллельных задач <input pInputText type="number" [(ngModel)]="settings.maxParallelRuns" min="1" max="8" /></label>
-    <label>Зависимости <p-select [options]="dependencyModes" [(ngModel)]="settings.dependencyMode" /></label>
-    @if (settings.mergePolicy === 'local') {
-      <label class="checkbox-field"><p-checkbox [binary]="true" [(ngModel)]="settings.resolveConflicts" ariaLabel="Автоматически разрешать конфликты" /> Автоматически разрешать конфликты</label>
-      <label>Попыток интеграции <input pInputText type="number" [(ngModel)]="settings.maxMergeAttempts" min="1" max="3" /></label>
-      <label>Вызовов resolver <input pInputText type="number" [(ngModel)]="settings.maxResolverCalls" min="0" max="3" /></label>
-      <label>Минут на resolver <input pInputText type="number" [(ngModel)]="settings.resolverTimeoutMinutes" min="1" max="10" /></label>
-      <label>Инструментов resolver <input pInputText type="number" [(ngModel)]="settings.maxResolverToolCalls" min="1" max="40" /></label>
-    }
-  </div>
-  <div class="row"><label class="grow">Новая ветка от выбранной <input pInputText [(ngModel)]="newBranch" placeholder="feature/my-project" /></label>
-    <p-button label="Создать ветку" severity="secondary" [disabled]="projectBusy || !host.online || !branchOptions.length || !newBranch" (onClick)="createBranch()" /></div>
-  <p class="hint">Новая ветка создаётся от выбранной без checkout. Для каждой задачи worker создаёт отдельную рабочую ветку sat/… от этой базы.</p>
-  <p class="hint">manual — локальная ветка для ручной проверки; local — один squash-коммит на задачу после проверок объединённого результата. Слияния одного репозитория выполняются последовательно. Целевая ветка должна быть открыта в исходной папке и чистой. Ветка задачи сохраняется, карточку закрывает пользователь.</p>
-  <p class="hint">linked — пакеты из управляемого readonly кеша через junction/symlink; .bin и .cache отдельные для worktree. При несовместимом проекте используются isolated зависимости. Пользовательский node_modules не изменяется. Число параллельных слотов host worker обновляется при его следующем подключении.</p>
-  <p class="hint">Resolver входит в общий бюджет. Для Codex/model-api ограничены шаги; неподдерживаемый runner блокирует автоматическое разрешение. Начатая публикация Git завершается перед остановкой worker; во время неё нет новых вызовов модели. Push и публикация MR автоматически не выполняются.</p>
-  <h4>Подготовка рабочей папки</h4>
-  <p class="hint">Один раз перед первым этапом: обычно установка зависимостей. Нажмите тег, чтобы включить или убрать команду. Для проекта с package-lock.json выберите npm ci.</p>
-  <div class="chips">@for (preset of setupPresets; track preset.id) { <button pButton severity="secondary" type="button" class="chip" [class.selected]="commandSelected(preset.value, true)" [attr.aria-pressed]="commandSelected(preset.value, true)" [title]="preset.description" (click)="toggleCommand(preset.value, true)">{{ preset.label }}</button> }</div>
-  <h4>Проверки после изменений</h4>
-  <p class="hint">Worker сам выполняет эти команды после разработчика. Ошибка возвращает задачу на доработку. После чтения проекта здесь появляются его scripts из package.json — команды не запускаются при выборе.</p>
-  <div class="chips">@for (preset of checkPresets; track preset.id) { <button pButton severity="secondary" type="button" class="chip" [class.selected]="commandSelected(preset.value, false)" [attr.aria-pressed]="commandSelected(preset.value, false)" [title]="preset.description" (click)="toggleCommand(preset.value, false)">{{ preset.label }}</button> }</div>
-  <div class="selected-commands"><strong>Выбрано:</strong>
-    @for (command of settings.setup; track $index; let i = $index) { <button pButton severity="secondary" type="button" class="chip selected" (click)="settings.setup.splice(i, 1)">Подготовка: {{ commandLabel(command) }} ×</button> }
-    @for (command of settings.checks; track $index; let i = $index) { <button pButton severity="secondary" type="button" class="chip selected" (click)="settings.checks.splice(i, 1)">Проверка: {{ commandLabel(command) }} ×</button> }
-    @if (!settings.setup.length && !settings.checks.length) { <span class="hint">Пока ничего. Для запуска нужна хотя бы одна проверка.</span> }
-  </div>
-  <label class="checkbox-field"><p-checkbox [binary]="true" [(ngModel)]="advancedCommands" ariaLabel="Свои команды (расширенная настройка)" /> Свои команды (расширенная настройка)</label>
-  @if (advancedCommands) {
-  <p class="hint">Команда — имя программы, аргументы — JSON-массив. Например npm и ["run","test:e2e"].</p>
-  <h4>Команды подготовки</h4>
-  @for (check of settings.setup; track $index; let i = $index) {
-    <div class="row"><input pInputText aria-label="Команда подготовки" [(ngModel)]="check.command" />
-      <input pInputText class="grow" aria-label="Аргументы подготовки" [ngModel]="json(check.args)" (ngModelChange)="setArgs(i, $event, false, true)" />
-      <button pButton severity="secondary" type="button" (click)="settings.setup.splice(i, 1)">Убрать</button></div>
-  }
-  <p-button label="Добавить подготовку" severity="secondary" size="small" (onClick)="addSetup()" />
-  <h4>Обязательные проверки</h4>
-  @for (check of settings.checks; track $index; let i = $index) {
-    <div class="row"><input pInputText aria-label="Команда проверки" [(ngModel)]="check.command" />
-      <input pInputText class="grow" aria-label="Аргументы проверки" [ngModel]="json(check.args)" (ngModelChange)="setArgs(i, $event)" />
-      <button pButton severity="secondary" type="button" (click)="settings.checks.splice(i, 1)">Убрать</button></div>
-  }
-  <p-button label="Добавить проверку" severity="secondary" size="small" (onClick)="addCheck()" />
-  }
-  <p-accordion><p-accordion-panel value="artifacts"><p-accordion-header>Скриншоты для визуального валидатора (необязательно)</p-accordion-header><p-accordion-content>
-  <p class="hint">Для обычной разработки оставьте пустым. Для проверки внешнего вида добавьте роль visual-validator и модель с поддержкой изображений. Команда проверки (например Playwright) должна сохранить PNG/JPEG/WebP внутри рабочей папки; worker передаст эти файлы модели. Это пути файлов, а не загрузка с компьютера. Вставленная в карточку картинка сама по себе сюда не переносится.</p>
-  <label>Пути скриншотов относительно корня проекта, по одному на строку
-    <textarea rows="2" [ngModel]="settings.artifactPaths.join('\n')" (ngModelChange)="setArtifacts($event)"></textarea></label>
-  </p-accordion-content></p-accordion-panel></p-accordion>
-    </div></p-tabpanel><p-tabpanel [value]="tab.Models"><div class="tab-content">
-  <h3>3. Подключения моделей</h3>
-  <p class="hint">Codex/Claude/OpenCode — установленный CLI. DeepSeek API — совместимый API. DeepSeek Harness — отдельный установленный CLI. Выберите готовое подключение:</p>
-  <div class="chips">@for (preset of connectionPresets; track preset.id) { <button pButton severity="secondary" type="button" class="chip" (click)="addPresetConnection(preset.id)">+ {{ preset.label }}</button> }</div>
-  @for (connection of settings.connections; track $index; let i = $index) {
-    <fieldset><div class="row">
-      <label>Имя <input pInputText [(ngModel)]="connection.label" /></label>
-      <label>Тип <p-select [options]="providerOptions" optionLabel="label" optionValue="value" [(ngModel)]="connection.kind" (onChange)="providerChanged(connection)" appendTo="body" /></label>
-      <label class="checkbox-field"><p-checkbox [binary]="true" [(ngModel)]="connection.supportsImages" [ariaLabel]="'Поддержка изображений: ' + connection.label" /> Поддержка изображений</label>
-      <button pButton severity="secondary" type="button" (click)="settings.connections.splice(i, 1)">Убрать</button>
-    </div>
-    @if (connection.kind !== providerKind.Native) {
-      <div class="row"><label class="grow">Адрес API <input pInputText [(ngModel)]="connection.baseUrl" placeholder="http://localhost:11434" /></label>
-        <label>Reasoning effort <p-select [options]="reasoningEfforts" [(ngModel)]="connection.reasoningEffort" [showClear]="true" placeholder="По умолчанию модели" /></label>
-        <label>Имя переменной с API-ключом на worker <input pInputText [(ngModel)]="connection.credentialEnv" placeholder="DEEPSEEK_API_KEY" /></label></div>
-      <p class="hint">Укажите имя переменной, не сам секрет. Она должна быть задана в окружении запущенного worker. Модель выбирается отдельно у каждой роли.</p>
-    } @else {
-      <label>CLI подключения <p-select [options]="nativeRunnerOptions" optionLabel="label" optionValue="value" [ngModel]="nativeRunner(connection)" (ngModelChange)="setNativeRunner(connection, $event)" [ariaLabel]="'CLI подключения: ' + connection.label" appendTo="body" /></label>
-      <p class="hint">Используется вход и конфигурация выбранного CLI на worker. Наличие установленного CLI проверяется при запуске, а не при добавлении подключения.</p>
-    }
-    </fieldset>
-  }
-  <p-button label="Добавить подключение" severity="secondary" size="small" (onClick)="addConnection()" />
-    </div></p-tabpanel><p-tabpanel [value]="tab.Team"><div class="tab-content" [attr.inert]="settingsScope === 'task' && !taskTeamReady ? '' : null">
-  <h3>4. Команда агентов</h3>
-  @if (settingsScope === 'task') { <p class="hint">Подключения, проект и автопроверки общие. Здесь меняются роли, модели, инструкции и порядок этапов выбранной задачи. Новые подключения добавляются в настройках проекта.</p> }
-  <p class="hint">Добавляйте нужные роли и задавайте их порядок. Запускаются только выбранные этапы; обязательной команды нет. Автопроверки после изменения кода выполняет worker.</p>
-  <p class="hint">В списке «Подключение» можно сразу добавить Ollama, DeepSeek API/Harness, Antigravity, Claude Code, OpenCode и другие варианты. Исполнитель подбирается по типу подключения. Адрес API и переменную с ключом настройте на вкладке «Модели»; CLI должен быть установлен на worker. Модель — точный ID из вашего CLI/API.</p>
-  @if (!settings.agents.length) { <p-button label="Добавить стандартную команду: план → код → тест → ревью" severity="secondary" (onClick)="addStandardTeam()" /> }
-  @for (agent of settings.agents; track agent.id; let i = $index) {
-    <fieldset [attr.aria-label]="'Агент: ' + roleLabel(agent.role)"><legend>{{ roleLabel(agent.role) }}</legend><div class="row">
-      <label>Роль <p-select [options]="roleOptions" optionLabel="label" optionValue="value" [ngModel]="agent.role" (ngModelChange)="changeRole(agent, $event)" /></label>
-      <label>Исполнитель <p-select [options]="runnerOptions(agent)" optionLabel="label" optionValue="value" [(ngModel)]="agent.runner" ariaLabel="Исполнитель агента" appendTo="body" /></label>
-      <label>Подключение <p-select [options]="connectionOptions" optionLabel="label" optionValue="value" [(ngModel)]="agent.connectionId" (onChange)="selectConnection(agent)" [filter]="true" filterPlaceholder="Поиск подключения" ariaLabel="Подключение агента" appendTo="body" /></label>
-      <label class="grow">Модель
-        @if (manualModels.has(agent.id)) {
-          <input pInputText [formControl]="modelControl(agent)" placeholder="ID модели" />
-        } @else {
-          <p-select [options]="modelOptions(agent)" optionLabel="label" optionValue="id" [formControl]="modelControl(agent)"
-            [filter]="true" filterBy="label,id" filterPlaceholder="Поиск модели" placeholder="Выберите модель" ariaLabel="Модель агента" appendTo="body" />
+<div class="panel-layout" [class.sidebar-collapsed]="sidebarCollapsed">
+  <!-- LEFT SIDEBAR: НАВИГАЦИЯ И УПРАВЛЕНИЕ -->
+  <aside class="panel-sidebar" [class.collapsed]="sidebarCollapsed" aria-label="Навигация настроек">
+    <div class="sidebar-top">
+      <!-- Переключатель области настроек -->
+      <div class="scope-box">
+        <label class="sidebar-field-label">Область настроек</label>
+        <div class="scope-toggle-group">
+          <button type="button" class="scope-toggle-btn" [class.active]="settingsScope === 'project'" [disabled]="busy || starting" (click)="changeScope('project')">
+            <i class="pi pi-folder"></i> Проект
+          </button>
+          <button type="button" class="scope-toggle-btn" [class.active]="settingsScope === 'task'" [disabled]="busy || starting" (click)="changeScope('task')">
+            <i class="pi pi-bookmark"></i> Задача
+          </button>
+        </div>
+
+        @if (settingsScope === 'task') {
+          <div class="task-scope-select">
+            <label class="sidebar-field-label">Задача для настройки</label>
+            <p-select [options]="settingsTaskOptions" optionLabel="label" optionValue="value" [formControl]="taskControl" [filter]="true" filterPlaceholder="Поиск задачи..." [disabled]="busy || starting" ariaLabel="Задача для настройки команды" placeholder="Выберите задачу" appendTo="body" />
+            <div class="task-override-info">
+              <span class="status-chip" [class.overridden]="taskOverridden">
+                <i [class]="taskOverridden ? 'pi pi-bolt' : 'pi pi-link'"></i>
+                {{ taskOverridden ? 'Собственная команда' : 'Наследует проект' }}
+              </span>
+              @if (taskOverridden) {
+                <button pButton severity="secondary" [text]="true" size="small" [disabled]="busy || !selectedTask" (click)="inheritTeam()" title="Сбросить на настройки проекта">
+                  Сбросить
+                </button>
+              }
+            </div>
+          </div>
         }
-      </label>
-      <button pButton severity="secondary" type="button" (click)="loadModels(agent)" [disabled]="!host.online || projectBusy || !agent.connectionId">Обновить модели</button>
-      <button pButton severity="secondary" type="button" (click)="toggleManualModel(agent)">{{ manualModels.has(agent.id) ? 'Выбрать из списка' : 'Указать ID вручную' }}</button>
-      <button pButton severity="secondary" type="button" (click)="removeAgent(agent.id)">Убрать</button>
+      </div>
+
+      <!-- Карточка исполнителя / Worker -->
+      <div class="worker-card">
+        <div class="worker-card-header">
+          <span class="host-badge" [class.online]="host.online">
+            <span class="status-dot"></span>
+            <span class="host-badge-text">{{ executorTitle }}</span>
+          </span>
+          @if (host.execution?.hostName) {
+            <span class="host-name" [title]="host.execution?.hostName">{{ host.execution?.hostName }}</span>
+          }
+        </div>
+        @if (host.online && host.execution) {
+          <div class="worker-card-actions">
+            <button pButton severity="secondary" size="small" icon="pi pi-play" [disabled]="projectBusy || host.execution.state !== 'stopped'" (click)="controlWorker(true)">Запустить</button>
+            <button pButton severity="secondary" size="small" icon="pi pi-stop-circle" [disabled]="projectBusy || host.execution.state === 'stopped'" (click)="controlWorker(false)">Остановить</button>
+          </div>
+        } @else {
+          <button pButton severity="secondary" size="small" icon="pi pi-desktop" class="connect-host-btn" (click)="showHostConnection()">Подключить компьютер</button>
+        }
+        @if (host.execution?.error) { <div role="alert" class="worker-error">{{ host.execution?.error }}</div> }
+      </div>
     </div>
-    <p class="hint">{{ modelMessage(agent) }} @if (!host.online) { Подключите worker в шаге 1. } Сохраняется точный ID модели; выбор автоматически не меняется.</p>
-    <p-accordion><p-accordion-panel value="instructions"><p-accordion-header>Инструкции роли</p-accordion-header><p-accordion-content>
-    <label>Инструкции роли <textarea rows="4" [(ngModel)]="agent.instructions"></textarea></label>
-    <div><button pButton severity="secondary" type="button" (click)="resetInstructions(agent)">Вставить базовую инструкцию</button></div>
-    <p class="hint">Базовый текст уже описывает работу роли. Его можно дополнить правилами проекта. Кнопка заменит текст базовой инструкцией выбранной роли.</p>
-    </p-accordion-content></p-accordion-panel></p-accordion>
-    @if (agent.runner === runnerId.DeepSeekHarness) {
-      <label>Профиль DeepSeek Harness на worker <input pInputText [(ngModel)]="agent.nativeProfile" /></label>
-      <p class="hint">Профиль должен запускать headless и содержать указанную модель: Harness выбирает её через свой профиль.</p>
-    }
-    @if (agent.runner === runnerId.Custom) {
-      <label>Исполняемый файл <input pInputText [(ngModel)]="agent.command" /></label>
-      <label>Аргументы JSON: &#123;promptFile&#125;, &#123;model&#125;, &#123;cwd&#125;, &#123;role&#125;
-        <input pInputText [ngModel]="json(agent.args || [])" (ngModelChange)="setArgs(i, $event, true)" /></label>
-    }
-    </fieldset>
-  }
-  <div class="row"><label>Добавить роль <p-select [options]="roleOptions" optionLabel="label" optionValue="value" [(ngModel)]="addRole" ariaLabel="Добавить роль" appendTo="body" scrollHeight="12rem" /></label><p-button label="Добавить агента" severity="secondary" size="small" (onClick)="addAgent(addRole)" /></div>
-  <h3>5. Порядок этапов</h3>
-  @for (id of settings.pipeline; track $index; let i = $index) {
-    <div class="row pipeline-stage"><span class="grow">{{ i + 1 }}. {{ agentLabel(id) }}</span>
-      <button pButton severity="secondary" type="button" [disabled]="i === 0" (click)="move(i, -1)" aria-label="Этап выше">↑</button>
-      <button pButton severity="secondary" type="button" [disabled]="i === settings.pipeline.length - 1" (click)="move(i, 1)" aria-label="Этап ниже">↓</button></div>
-  }
-    </div></p-tabpanel><p-tabpanel [value]="tab.Launch"><div class="tab-content">
-  <h3>6. Запуск задачи</h3>
-  @if (settingsScope === 'project') {
-    <label>Запуск <p-select [options]="launchModes" optionLabel="label" optionValue="value" [(ngModel)]="batchMode" ariaLabel="Режим запуска" appendTo="body" /></label>
-  }
-  @if (launchConfigurationProblems.length) {
-    <div class="launch-feedback" role="status">
-      @for (problem of launchConfigurationProblems; track problem) { <p>{{ problem }}</p> }
-      <p-button label="Настроить проект" severity="secondary" [disabled]="busy || !taskTeamReady" (onClick)="configureLaunchProject()" />
+
+    <!-- Вертикальное меню разделов -->
+    <nav class="sidebar-nav" role="tablist">
+      <div class="nav-section-title">Разделы</div>
+
+      <button type="button" class="nav-item" [class.active]="activeTab === tab.Launch" (click)="selectTab(tab.Launch)">
+        <i class="pi pi-bolt nav-icon"></i>
+        <div class="nav-item-content">
+          <span class="nav-item-label">Запуск</span>
+          <span class="nav-item-sub">{{ settings.pipeline.length }} этапов</span>
+        </div>
+        @if (selectedEligibility) {
+          <span class="nav-item-dot" [class.ready]="selectedEligibility.canStart"></span>
+        }
+      </button>
+
+      <button type="button" class="nav-item" [class.active]="activeTab === tab.Team" [disabled]="isTabDisabled(tab.Team)" (click)="selectTab(tab.Team)">
+        <i class="pi pi-users nav-icon"></i>
+        <div class="nav-item-content">
+          <span class="nav-item-label">Команда и этапы</span>
+          <span class="nav-item-sub">{{ settings.agents.length }} ролей</span>
+        </div>
+      </button>
+
+      <button type="button" class="nav-item" [class.active]="activeTab === tab.Models" [disabled]="isTabDisabled(tab.Models)" (click)="selectTab(tab.Models)">
+        <i class="pi pi-server nav-icon"></i>
+        <div class="nav-item-content">
+          <span class="nav-item-label">Модели</span>
+          <span class="nav-item-sub">{{ settings.connections.length }} подключений</span>
+        </div>
+      </button>
+
+      <button type="button" class="nav-item" [class.active]="activeTab === tab.Project" [disabled]="isTabDisabled(tab.Project)" (click)="selectTab(tab.Project)">
+        <i class="pi pi-cog nav-icon"></i>
+        <div class="nav-item-content">
+          <span class="nav-item-label">Проект и проверки</span>
+          <span class="nav-item-sub">{{ settings.baseBranch || 'ветка не выбрана' }}</span>
+        </div>
+      </button>
+
+      <div class="nav-section-title">Быстрый переход</div>
+      <button type="button" class="nav-item nav-action-item" (click)="openQueue.emit(selectedRun)">
+        <i class="pi pi-list nav-icon"></i>
+        <div class="nav-item-content">
+          <span class="nav-item-label">Очередь агентов</span>
+          <span class="nav-item-sub">Мониторинг и логи</span>
+        </div>
+        <i class="pi pi-arrow-up-right external-icon"></i>
+      </button>
+    </nav>
+
+    <!-- Футер сайдбара с кнопкой сохранения -->
+    <div class="sidebar-footer">
+      <button pButton severity="primary" size="small" icon="pi pi-check" class="save-btn" [disabled]="busy || !taskTeamReady" (click)="save()">
+        {{ settingsScope === 'task' ? 'Сохранить команду задачи' : 'Сохранить настройки проекта' }}
+      </button>
     </div>
-  }
-  <section aria-label="Этапы этого запуска" class="launch-stages">
-    <h4>Кто выполнит этот запуск</h4>
-    <p>Источник: {{ settingsScope === 'task' ? 'команда выбранной задачи' : 'настройки проекта' }}. Отметьте только нужных исполнителей. Этот выбор применяется к новому запуску; отдельное сохранение меняет будущие настройки.</p>
-    <div class="launch-agent-list">
-    @for (agent of launchAgents; track agent.id) {
-      @let stageIndex = settings.pipeline.indexOf(agent.id);
-      <div class="launch-agent-row" [class.stage-enabled]="stageIndex >= 0" [attr.data-agent-id]="agent.id">
-        <p-checkbox [inputId]="'run-stage-' + agent.id" [binary]="true" [ngModel]="stageIndex >= 0" (ngModelChange)="toggleStage(agent.id, $event)" [disabled]="busy || !taskTeamReady" />
-        <span class="stage-number" aria-hidden="true">{{ stageIndex >= 0 ? stageIndex + 1 : '—' }}</span>
-        <label class="stage-identity" [for]="'run-stage-' + agent.id" [title]="agentLabel(agent.id)">
-          <strong>{{ roleLabel(agent.role) }}</strong>
-          <span>{{ agent.runner }} · {{ agent.model || 'модель не выбрана' }}</span>
-        </label>
-        <div class="stage-actions">
-          <button pButton severity="secondary" type="button" [disabled]="busy || !taskTeamReady || stageIndex <= 0" (click)="move(stageIndex, -1)" [attr.aria-label]="'Этап запуска выше: ' + roleLabel(agent.role)">↑</button>
-          <button pButton severity="secondary" type="button" [disabled]="busy || !taskTeamReady || stageIndex < 0 || stageIndex === settings.pipeline.length - 1" (click)="move(stageIndex, 1)" [attr.aria-label]="'Этап запуска ниже: ' + roleLabel(agent.role)">↓</button>
+  </aside>
+
+  <!-- MAIN AREA: ОСНОВНОЙ КОНТЕНТ ВЫБРАННОГО РАЗДЕЛА -->
+  <main class="panel-main" aria-label="Контент настроек">
+    <!-- Шапка страницы -->
+    <header class="main-header">
+      <div class="header-left">
+        @if (sidebarCollapsed) {
+          <button pButton severity="secondary" [text]="true" size="small" class="sidebar-toggle-btn" (click)="toggleSidebar()" title="Показать панель навигации">
+            <i class="pi pi-bars"></i>
+          </button>
+        }
+        <div class="header-titles">
+          <h2 class="section-title">
+            @switch (activeTab) {
+              @case (tab.Launch) { Запуск задачи }
+              @case (tab.Team) { Команда агентов и этапы }
+              @case (tab.Models) { Подключения моделей }
+              @case (tab.Project) { Компьютер, проект и проверки }
+            }
+          </h2>
+          <span class="scope-pill">
+            {{ settingsScope === 'task' ? (selectedTask ? 'Задача: ' + selectedTask : 'Задача не выбрана') : 'Пространство проекта' }}
+          </span>
         </div>
       </div>
-    }
-    </div>
-    <p>Выбрано этапов: {{ settings.pipeline.length }}. Дополнительные роли автоматически не добавляются.</p>
-  </section>
-  <p class="hint">Этот запуск использует показанную команду и не меняет настройки проекта. {{ settingsScope === 'task' ? 'Чтобы применять команду к следующим запускам этой задачи, сохраните её для задачи.' : 'Для отдельной команды задачи переключите область настроек.' }}</p>
-  @if (batchMode && settingsScope === 'project') {
-    <section class="batch-launch" aria-label="Группа задач">
-      @if (taskListLimited) { <p class="hint">Показаны первые {{ taskSelectionLimit }} задач пространства.</p> }
-      <p class="hint">Все выбранные задачи получат показанные выше этапы и настройки проекта. Для анализа оставьте только аналитика. Индивидуальные команды задач в этом запуске заменяются общим выбором. Лимит группы: {{ batchLimit }}.</p>
-      <label>Задачи для группы
-        <p-multiselect [options]="taskOptions" optionLabel="label" optionValue="value" optionDisabled="disabled"
-          [(ngModel)]="batchTaskIds" [filter]="true" filterBy="label" [showToggleAll]="false" [selectionLimit]="batchLimit"
-          [maxSelectedLabels]="3" selectedItemsLabel="{0} задач" placeholder="Выберите задачи" ariaLabel="Задачи для группы" appendTo="body" />
-      </label>
-      <div class="row">
-        <p-button label="Выбрать доступные" severity="secondary" [disabled]="starting" (onClick)="selectAvailableTasks()" />
-        <p-button label="Очистить выбор" severity="secondary" [disabled]="starting || !batchTaskIds.length" (onClick)="batchTaskIds = []" />
-      </div>
-      <p>Выбрано задач: {{ batchTaskIds.length }}. Для каждой будет создан отдельный запуск с {{ settings.pipeline.length }} этапами.</p>
-      <ul class="batch-task-list">
-        @for (row of batchRows; track row.id) {
-          <li><div><strong>{{ row.id }} · {{ row.label }}</strong>
-            @if (row.reasons.length) { <p class="error">{{ row.reasons.join(' ') }}</p> } @else { <span class="hint">Можно поставить в очередь</span> }
-          </div><p-button icon="pi pi-times" severity="secondary" [text]="true" [ariaLabel]="'Убрать из группы ' + row.id" [disabled]="starting" (onClick)="removeBatchTask(row.id)" /></li>
+
+      <div class="header-right">
+        @if (returnToTaskLaunch) {
+          <button pButton severity="secondary" size="small" icon="pi pi-arrow-left" [disabled]="busy" (click)="backToTaskLaunch()">
+            Вернуться к запуску задачи
+          </button>
         }
-      </ul>
-      <p-button [label]="'Поставить группу в очередь (' + batchTaskIds.length + ')'" [loading]="starting"
-        [disabled]="busy || starting || !batchTaskIds.length || batchBlocked || !settings.pipeline.length" (onClick)="startBatch()" />
-      <p class="hint">Группа добавляется целиком. Если состояние задачи изменилось и запуск невозможен, ни одна новая задача из группы не будет добавлена.</p>
-    </section>
-  } @else {
-  <div class="row">@if (settingsScope === 'project') { <label class="grow">Задача для запуска
-    <p-select [options]="taskOptions" optionLabel="label" optionValue="value" optionDisabled="disabled"
-      [formControl]="taskControl" [filter]="true" filterBy="label" filterPlaceholder="Поиск по ID, названию или статусу"
-      [showClear]="true" placeholder="Выберите задачу" ariaLabel="Задача для запуска" appendTo="body">
-      <ng-template pTemplate="item" let-option><div class="task-option"><span>{{ option.label }}</span>
-        @if (option.readiness.reasons.length) { <small>{{ option.readiness.reasons.join(' ') }}</small> }
-      </div></ng-template>
-    </p-select></label> } @else { <p class="grow">Задача для запуска: {{ selectedTask || 'выберите задачу вверху' }}</p> }
-    <p-button [label]="executorReady ? 'Запустить' : 'Поставить в очередь'" [loading]="starting"
-      [disabled]="busy || starting || !selectedTask || !taskTeamReady || !settings.pipeline.length || !selectedEligibility?.canStart" (onClick)="start()" /></div>
-  <p class="hint">Разработчик может начать без готового плана: он сохранит короткий план в карточку и продолжит реализацию. Открытые вопросы блокируют запуск. Флаг «Без лимитов» включается отдельно в карточке задачи.</p>
-  @if (taskListLimited) { <p class="hint">Показаны первые {{ taskSelectionLimit }} задач пространства.</p> }
-  @if (selectedEligibility; as eligibility) {
-    <div class="launch-feedback"><strong>{{ selectedTask }} · {{ eligibility.summary }}</strong>
-      @if (!eligibility.dorReady) { <p>До DoR: {{ eligibility.dorReasons.join(' ') }}</p> }
-      @for (reason of eligibility.reasons; track reason) { <p class="error">{{ reason }}</p> }
+        <button pButton severity="secondary" size="small" icon="pi pi-list" (click)="openQueue.emit(selectedRun)">
+          Очередь выполнения
+        </button>
+      </div>
+    </header>
+
+    <!-- Уведомления и предупреждения -->
+    <div class="alerts-container">
+      @if (error) { <div role="alert" class="alert-banner alert-error"><i class="pi pi-exclamation-triangle"></i> <span>{{ error }}</span></div> }
+      @if (notice) { <div role="status" class="alert-banner alert-info"><i class="pi pi-info-circle"></i> <span>{{ notice }}</span></div> }
+      @if (repairNotice) { <div role="status" class="alert-banner alert-warning"><i class="pi pi-exclamation-circle"></i> <span>{{ repairNotice }}</span></div> }
+      @if (initialMessage) { <div role="alert" class="alert-banner alert-error"><i class="pi pi-exclamation-triangle"></i> <span>{{ initialMessage }}</span></div> }
     </div>
-  }
-  }
-  @if (!host.online) { <p class="hint">Worker отключён. Можно поставить задачу в очередь, но выполнение начнётся только после подключения компьютера в шаге 1.</p> }
-  <p class="hint">В очередь попадёт отдельная копия выбранных этапов и настроек. Уже созданные запуски и настройки проекта не изменяются.</p>
-  @if (startError) { <p role="alert" class="error launch-feedback">{{ startError }}</p> }
-  @if (startNotice) { <p role="status" class="launch-feedback">{{ startNotice }}</p> }
-  @if (submittedRun; as run) {
-    <div class="launch-feedback" role="status"><strong>Последний созданный запуск: {{ run.taskId }} · {{ run.status }}</strong>
-      <p>ID: {{ run.id }} · этап {{ stageNumber(run) }} / {{ run.settings.pipeline.length }}</p>
-      <p>{{ run.summary }}</p>
+
+    <!-- Основная прокручиваемая область -->
+    <div class="main-scroll-pane">
+      <!-- ================================================================= -->
+      <!-- РАЗДЕЛ: ЗАПУСК ЗАДАЧИ -->
+      <!-- ================================================================= -->
+      @if (activeTab === tab.Launch) {
+        <div class="tab-pane-content">
+          @if (settingsScope === 'project') {
+            <div class="panel-card">
+              <div class="panel-card-header">
+                <h4>Режим запуска</h4>
+                <p class="card-hint">Запуск одной задачи или постановка атомарной группы задач в очередь</p>
+              </div>
+              <div class="card-body">
+                <p-select [options]="launchModes" optionLabel="label" optionValue="value" [(ngModel)]="batchMode" ariaLabel="Режим запуска" appendTo="body" />
+              </div>
+            </div>
+          }
+
+          @if (launchConfigurationProblems.length) {
+            <div class="panel-card warning-card" role="status">
+              <div class="panel-card-header">
+                <h4>Требуется настройка</h4>
+              </div>
+              <div class="card-body">
+                @for (problem of launchConfigurationProblems; track problem) { <p class="error-line">{{ problem }}</p> }
+                <p-button label="Настроить проект" severity="secondary" size="small" [disabled]="busy || !taskTeamReady" (onClick)="configureLaunchProject()" />
+              </div>
+            </div>
+          }
+
+          <!-- Этапы этого запуска -->
+          <div class="panel-card">
+            <div class="panel-card-header">
+              <div class="card-title-row">
+                <h4>Кто выполнит этот запуск</h4>
+                <span class="badge-count">Выбрано этапов: {{ settings.pipeline.length }}</span>
+              </div>
+              <p class="card-hint">Источник: {{ settingsScope === 'task' ? 'команда выбранной задачи' : 'настройки проекта' }}. Отметьте только нужных исполнителей для нового запуска.</p>
+            </div>
+            <div class="card-body">
+              <div class="launch-agent-list">
+                @for (agent of launchAgents; track agent.id) {
+                  @let stageIndex = settings.pipeline.indexOf(agent.id);
+                  <div class="launch-agent-row" [class.stage-enabled]="stageIndex >= 0" [attr.data-agent-id]="agent.id">
+                    <p-checkbox [inputId]="'run-stage-' + agent.id" [binary]="true" [ngModel]="stageIndex >= 0" (ngModelChange)="toggleStage(agent.id, $event)" [disabled]="busy || !taskTeamReady" />
+                    <span class="stage-number" aria-hidden="true">{{ stageIndex >= 0 ? stageIndex + 1 : '—' }}</span>
+                    <label class="stage-identity" [for]="'run-stage-' + agent.id" [title]="agentLabel(agent.id)">
+                      <strong class="stage-role-name">{{ roleLabel(agent.role) }}</strong>
+                      <span class="stage-runner-meta">{{ agent.runner }} · {{ agent.model || 'модель не выбрана' }}</span>
+                    </label>
+                    <div class="stage-actions">
+                      <button pButton severity="secondary" type="button" size="small" [disabled]="busy || !taskTeamReady || stageIndex <= 0" (click)="move(stageIndex, -1)" [attr.aria-label]="'Этап запуска выше: ' + roleLabel(agent.role)">↑</button>
+                      <button pButton severity="secondary" type="button" size="small" [disabled]="busy || !taskTeamReady || stageIndex < 0 || stageIndex === settings.pipeline.length - 1" (click)="move(stageIndex, 1)" [attr.aria-label]="'Этап запуска ниже: ' + roleLabel(agent.role)">↓</button>
+                    </div>
+                  </div>
+                }
+              </div>
+            </div>
+          </div>
+
+          <!-- Группа задач (Batch launch) -->
+          @if (batchMode && settingsScope === 'project') {
+            <div class="panel-card">
+              <div class="panel-card-header">
+                <h4>Группа задач</h4>
+                <p class="card-hint">Все выбранные задачи получат показанные выше этапы. Лимит группы: {{ batchLimit }}.</p>
+              </div>
+              <div class="card-body batch-launch">
+                @if (taskListLimited) { <p class="hint">Показаны первые {{ taskSelectionLimit }} задач пространства.</p> }
+                <label>
+                  <span>Задачи для группы</span>
+                  <p-multiselect [options]="taskOptions" optionLabel="label" optionValue="value" optionDisabled="disabled"
+                    [(ngModel)]="batchTaskIds" [filter]="true" filterBy="label" [showToggleAll]="false" [selectionLimit]="batchLimit"
+                    [maxSelectedLabels]="3" selectedItemsLabel="{0} задач" placeholder="Выберите задачи" ariaLabel="Задачи для группы" appendTo="body" />
+                </label>
+                <div class="actions-row">
+                  <p-button label="Выбрать доступные" severity="secondary" size="small" [disabled]="starting" (onClick)="selectAvailableTasks()" />
+                  <p-button label="Очистить выбор" severity="secondary" size="small" [disabled]="starting || !batchTaskIds.length" (onClick)="batchTaskIds = []" />
+                </div>
+                <p class="hint">Выбрано задач: {{ batchTaskIds.length }}. Для каждой будет создан отдельный запуск с {{ settings.pipeline.length }} этапами.</p>
+                <ul class="batch-task-list">
+                  @for (row of batchRows; track row.id) {
+                    <li>
+                      <div>
+                        <strong>{{ row.id }} · {{ row.label }}</strong>
+                        @if (row.reasons.length) { <p class="error">{{ row.reasons.join(' ') }}</p> } @else { <span class="hint">Можно поставить в очередь</span> }
+                      </div>
+                      <p-button icon="pi pi-times" severity="secondary" [text]="true" [ariaLabel]="'Убрать из группы ' + row.id" [disabled]="starting" (onClick)="removeBatchTask(row.id)" />
+                    </li>
+                  }
+                </ul>
+                <div class="launch-action-bar">
+                  <p-button [label]="'Поставить группу в очередь (' + batchTaskIds.length + ')'" [loading]="starting" icon="pi pi-send"
+                    [disabled]="busy || starting || !batchTaskIds.length || batchBlocked || !settings.pipeline.length" (onClick)="startBatch()" />
+                </div>
+              </div>
+            </div>
+          } @else {
+            <!-- Запуск отдельной задачи -->
+            <div class="panel-card">
+              <div class="panel-card-header">
+                <h4>Выбор задачи для запуска</h4>
+              </div>
+              <div class="card-body">
+                @if (settingsScope === 'project') {
+                  <label class="field-label-block">
+                    <span>Задача</span>
+                    <p-select [options]="taskOptions" optionLabel="label" optionValue="value" optionDisabled="disabled"
+                      [formControl]="taskControl" [filter]="true" filterBy="label" filterPlaceholder="Поиск по ID, названию или статусу"
+                      [showClear]="true" placeholder="Выберите задачу" ariaLabel="Задача для запуска" appendTo="body">
+                      <ng-template pTemplate="item" let-option>
+                        <div class="task-option">
+                          <span>{{ option.label }}</span>
+                          @if (option.readiness.reasons.length) { <small class="task-reasons">{{ option.readiness.reasons.join(' ') }}</small> }
+                        </div>
+                      </ng-template>
+                    </p-select>
+                  </label>
+                } @else {
+                  <p><strong>Задача:</strong> {{ selectedTask || 'выберите задачу в левом сайдбаре' }}</p>
+                }
+
+                @if (selectedEligibility; as eligibility) {
+                  <div class="launch-feedback-card" [class.ready]="eligibility.canStart">
+                    <div class="feedback-title">
+                      <i [class]="eligibility.canStart ? 'pi pi-check-circle' : 'pi pi-exclamation-triangle'"></i>
+                      <strong>{{ selectedTask }} · {{ eligibility.summary }}</strong>
+                    </div>
+                    @if (!eligibility.dorReady) { <p class="feedback-dor">До DoR: {{ eligibility.dorReasons.join(' ') }}</p> }
+                    @for (reason of eligibility.reasons; track reason) { <p class="error">{{ reason }}</p> }
+                  </div>
+                }
+
+                <div class="launch-action-bar">
+                  <p-button [label]="executorReady ? 'Запустить задачу' : 'Поставить в очередь'" [loading]="starting" icon="pi pi-play"
+                    [disabled]="busy || starting || !selectedTask || !taskTeamReady || !settings.pipeline.length || !selectedEligibility?.canStart" (onClick)="start()" />
+                </div>
+                <p class="hint">Разработчик может начать без готового плана: он сохранит короткий план в карточку и продолжит реализацию. Открытые вопросы блокируют запуск. Флаг «Без лимитов» включается отдельно в карточке задачи.</p>
+              </div>
+            </div>
+          }
+
+          @if (submittedRun; as run) {
+            <div class="panel-card info-card" role="status">
+              <div class="panel-card-header">
+                <h4>Последний созданный запуск: {{ run.taskId }} · {{ run.status }}</h4>
+              </div>
+              <div class="card-body">
+                <p>ID: <code>{{ run.id }}</code> · этап {{ stageNumber(run) }} / {{ run.settings.pipeline.length }}</p>
+                <p>{{ run.summary }}</p>
+                <p-button label="Открыть в очереди" severity="secondary" size="small" icon="pi pi-external-link" (onClick)="openQueue.emit(run.id)" />
+              </div>
+            </div>
+          }
+
+          @if (startError) { <p role="alert" class="error">{{ startError }}</p> }
+          @if (startNotice) { <p role="status" class="alert-banner alert-info">{{ startNotice }}</p> }
+          @if (pollError) { <p role="alert" class="error">{{ pollError }}</p> }
+        </div>
+      }
+
+      <!-- ================================================================= -->
+      <!-- РАЗДЕЛ: КОМАНДА И ЭТАПЫ -->
+      <!-- ================================================================= -->
+      @else if (activeTab === tab.Team) {
+        <div class="tab-pane-content" [attr.inert]="settingsScope === 'task' && !taskTeamReady ? '' : null">
+          @if (settingsScope === 'task') {
+            <p class="hint">Здесь настраиваются роли, модели, инструкции и порядок этапов для задачи {{ selectedTask }}. Новые подключения моделей добавляются в настройках проекта.</p>
+          }
+
+          <div class="panel-card">
+            <div class="panel-card-header">
+              <div class="card-title-row">
+                <h4>Агенты команды</h4>
+                @if (!settings.agents.length) {
+                  <p-button label="Добавить стандартную команду" severity="secondary" size="small" (onClick)="addStandardTeam()" />
+                }
+              </div>
+              <p class="card-hint">Каждый агент имеет роль, подключение, исполнитель и модель. Настройте инструкции и правила проекта.</p>
+            </div>
+            <div class="card-body">
+              <div class="agents-stack">
+                @for (agent of settings.agents; track agent.id; let i = $index) {
+                  <div class="agent-config-card" [attr.aria-label]="'Агент: ' + roleLabel(agent.role)">
+                    <div class="agent-card-header">
+                      <div class="agent-role-badge">
+                        <i class="pi pi-user"></i>
+                        <strong>{{ roleLabel(agent.role) }}</strong>
+                      </div>
+                      <button pButton severity="secondary" [text]="true" size="small" icon="pi pi-trash" (click)="removeAgent(agent.id)" title="Убрать агента"></button>
+                    </div>
+
+                    <div class="agent-fields-grid">
+                      <label>
+                        <span>Роль</span>
+                        <p-select [options]="roleOptions" optionLabel="label" optionValue="value" [ngModel]="agent.role" (ngModelChange)="changeRole(agent, $event)" appendTo="body" />
+                      </label>
+                      <label>
+                        <span>Исполнитель</span>
+                        <p-select [options]="runnerOptions(agent)" optionLabel="label" optionValue="value" [(ngModel)]="agent.runner" ariaLabel="Исполнитель агента" appendTo="body" />
+                      </label>
+                      <label>
+                        <span>Подключение</span>
+                        <p-select [options]="connectionOptions" optionLabel="label" optionValue="value" [(ngModel)]="agent.connectionId" (onChange)="selectConnection(agent)" [filter]="true" filterPlaceholder="Поиск подключения" ariaLabel="Подключение агента" appendTo="body" />
+                      </label>
+                      <label class="grow-field">
+                        <span>Модель</span>
+                        @if (manualModels.has(agent.id)) {
+                          <input pInputText [formControl]="modelControl(agent)" placeholder="ID модели" />
+                        } @else {
+                          <p-select [options]="modelOptions(agent)" optionLabel="label" optionValue="id" [formControl]="modelControl(agent)"
+                            [filter]="true" filterBy="label,id" filterPlaceholder="Поиск модели" placeholder="Выберите модель" ariaLabel="Модель агента" appendTo="body" />
+                        }
+                      </label>
+                    </div>
+
+                    <div class="agent-model-tools">
+                      <button pButton severity="secondary" size="small" type="button" icon="pi pi-refresh" (click)="loadModels(agent)" [disabled]="!host.online || projectBusy || !agent.connectionId">Обновить модели</button>
+                      <button pButton severity="secondary" [text]="true" size="small" type="button" (click)="toggleManualModel(agent)">{{ manualModels.has(agent.id) ? 'Выбрать из списка' : 'Указать ID вручную' }}</button>
+                      <span class="model-status-text">{{ modelMessage(agent) }}</span>
+                    </div>
+
+                    <p-accordion>
+                      <p-accordion-panel value="instructions">
+                        <p-accordion-header>Инструкции роли</p-accordion-header>
+                        <p-accordion-content>
+                          <textarea rows="4" [(ngModel)]="agent.instructions" class="instructions-textarea" placeholder="Правила и системный промпт роли..."></textarea>
+                          <div class="instructions-actions">
+                            <button pButton severity="secondary" size="small" type="button" (click)="resetInstructions(agent)">Вставить базовую инструкцию</button>
+                          </div>
+                        </p-accordion-content>
+                      </p-accordion-panel>
+                    </p-accordion>
+
+                    @if (agent.runner === runnerId.DeepSeekHarness) {
+                      <label class="extra-field">
+                        <span>Профиль DeepSeek Harness на worker</span>
+                        <input pInputText [(ngModel)]="agent.nativeProfile" />
+                      </label>
+                    }
+                    @if (agent.runner === runnerId.Custom) {
+                      <div class="custom-runner-fields">
+                        <label><span>Исполняемый файл</span><input pInputText [(ngModel)]="agent.command" /></label>
+                        <label><span>Аргументы JSON: &#123;promptFile&#125;, &#123;model&#125;, &#123;cwd&#125;, &#123;role&#125;</span><input pInputText [ngModel]="json(agent.args || [])" (ngModelChange)="setArgs(i, $event, true)" /></label>
+                      </div>
+                    }
+                  </div>
+                }
+              </div>
+
+              <div class="add-role-bar">
+                <p-select [options]="roleOptions" optionLabel="label" optionValue="value" [(ngModel)]="addRole" ariaLabel="Добавить роль" appendTo="body" scrollHeight="12rem" />
+                <p-button label="Добавить агента" severity="secondary" size="small" icon="pi pi-plus" (onClick)="addAgent(addRole)" />
+              </div>
+            </div>
+          </div>
+
+          <!-- Порядок этапов -->
+          <div class="panel-card">
+            <div class="panel-card-header">
+              <h4>Порядок этапов конвейера</h4>
+              <p class="card-hint">Этапы выполняются последовательно сверху вниз</p>
+            </div>
+            <div class="card-body">
+              <div class="pipeline-order-list">
+                @for (id of settings.pipeline; track $index; let i = $index) {
+                  <div class="pipeline-order-row">
+                    <span class="stage-num-badge">{{ i + 1 }}</span>
+                    <span class="stage-label-text">{{ agentLabel(id) }}</span>
+                    <div class="order-buttons">
+                      <button pButton severity="secondary" type="button" size="small" [disabled]="i === 0" (click)="move(i, -1)" aria-label="Этап выше">↑</button>
+                      <button pButton severity="secondary" type="button" size="small" [disabled]="i === settings.pipeline.length - 1" (click)="move(i, 1)" aria-label="Этап ниже">↓</button>
+                    </div>
+                  </div>
+                }
+              </div>
+            </div>
+          </div>
+        </div>
+      }
+
+      <!-- ================================================================= -->
+      <!-- РАЗДЕЛ: ПОДКЛЮЧЕНИЯ МОДЕЛЕЙ -->
+      <!-- ================================================================= -->
+      @else if (activeTab === tab.Models) {
+        <div class="tab-pane-content">
+          <div class="panel-card">
+            <div class="panel-card-header">
+              <h4>Быстрые пресеты подключений</h4>
+              <p class="card-hint">Нажмите пресет, чтобы добавить готовое подключение для CLI или API</p>
+            </div>
+            <div class="card-body">
+              <div class="presets-chips">
+                @for (preset of connectionPresets; track preset.id) {
+                  <button type="button" class="preset-chip" (click)="addPresetConnection(preset.id)">
+                    <i class="pi pi-plus"></i> {{ preset.label }}
+                  </button>
+                }
+              </div>
+            </div>
+          </div>
+
+          <div class="panel-card">
+            <div class="panel-card-header">
+              <div class="card-title-row">
+                <h4>Настроенные подключения</h4>
+                <p-button label="Добавить подключение" severity="secondary" size="small" icon="pi pi-plus" (onClick)="addConnection()" />
+              </div>
+            </div>
+            <div class="card-body">
+              <div class="connections-stack">
+                @for (connection of settings.connections; track $index; let i = $index) {
+                  <div class="connection-card">
+                    <div class="connection-row">
+                      <label><span>Имя</span><input pInputText [(ngModel)]="connection.label" /></label>
+                      <label><span>Тип провайдера</span><p-select [options]="providerOptions" optionLabel="label" optionValue="value" [(ngModel)]="connection.kind" (onChange)="providerChanged(connection)" appendTo="body" /></label>
+                      <label class="checkbox-inline">
+                        <p-checkbox [binary]="true" [(ngModel)]="connection.supportsImages" [ariaLabel]="'Поддержка изображений: ' + connection.label" />
+                        <span>Поддержка изображений</span>
+                      </label>
+                      <button pButton severity="secondary" [text]="true" size="small" icon="pi pi-trash" (click)="settings.connections.splice(i, 1)" title="Удалить подключение"></button>
+                    </div>
+
+                    @if (connection.kind !== providerKind.Native) {
+                      <div class="connection-details-row">
+                        <label class="grow-field"><span>Адрес API</span><input pInputText [(ngModel)]="connection.baseUrl" placeholder="http://localhost:11434" /></label>
+                        <label><span>Reasoning effort</span><p-select [options]="reasoningEfforts" [(ngModel)]="connection.reasoningEffort" [showClear]="true" placeholder="По умолчанию" appendTo="body" /></label>
+                        <label><span>Переменная API-ключа на worker</span><input pInputText [(ngModel)]="connection.credentialEnv" placeholder="DEEPSEEK_API_KEY" /></label>
+                      </div>
+                      <p class="hint">Укажите имя переменной окружения на worker (например DEEPSEEK_API_KEY), а не сам секрет.</p>
+                    } @else {
+                      <div class="connection-details-row">
+                        <label class="grow-field"><span>CLI подключения</span><p-select [options]="nativeRunnerOptions" optionLabel="label" optionValue="value" [ngModel]="nativeRunner(connection)" (ngModelChange)="setNativeRunner(connection, $event)" appendTo="body" /></label>
+                      </div>
+                      <p class="hint">Используется установленный CLI на компьютере worker (Codex, Claude Code, Antigravity, OpenCode).</p>
+                    }
+                  </div>
+                }
+              </div>
+            </div>
+          </div>
+        </div>
+      }
+
+      <!-- ================================================================= -->
+      <!-- РАЗДЕЛ: ПРОЕКТ И ПРОВЕРКИ -->
+      <!-- ================================================================= -->
+      @else if (activeTab === tab.Project) {
+        <div class="tab-pane-content">
+          <!-- Подключение компьютера -->
+          <div class="panel-card">
+            <div class="panel-card-header">
+              <h4>1. Подключение компьютера worker</h4>
+              <p class="card-hint">Подключите worker один раз на время работы для доступа к локальным файлам и CLI</p>
+            </div>
+            <div class="card-body">
+              <div class="worker-connect-bar">
+                <span class="host-badge" [class.online]="host.online">
+                  <span class="status-dot"></span>
+                  <span>{{ host.online ? 'Worker подключён · ' + host.workerId : 'Worker не подключён' }}</span>
+                </span>
+                <p-button [label]="host.online ? 'Worker уже подключён' : 'Скопировать команду запуска'" [severity]="host.online ? 'secondary' : 'success'" size="small" icon="pi pi-copy" [disabled]="busy || host.online || !launchCommand" (onClick)="copyLaunchCommand()" />
+                <button pButton severity="secondary" [text]="true" size="small" (click)="showLaunchCommand = !showLaunchCommand; launchNotice = ''">{{ showLaunchCommand ? 'Скрыть команду' : 'Показать команду' }}</button>
+              </div>
+
+              @if (launchNotice) { <p role="status" class="alert-banner alert-info">{{ launchNotice }}</p> }
+
+              @if (showLaunchCommand) {
+                <div class="command-box">
+                  <label class="field-label-block">
+                    <span>Команда запуска PowerShell</span>
+                    <textarea #commandText readonly rows="6" [value]="launchCommand" class="powershell-textarea" aria-label="Команда запуска PowerShell"></textarea>
+                  </label>
+                  <p class="hint">Требуются Node.js 22+, Docker CLI, Git и CodeGraph. Запускает worker в фоне из любой папки.</p>
+                </div>
+              }
+
+              <p-accordion>
+                <p-accordion-panel value="connection">
+                  <p-accordion-header>Расширенные настройки подключения</p-accordion-header>
+                  <p-accordion-content>
+                    <label><span>Имя Docker-контейнера трекера</span><input pInputText [(ngModel)]="workerContainer" /></label>
+                    <p class="hint">По умолчанию simple-ai-tracker. Меняйте только при переименовании контейнера.</p>
+                  </p-accordion-content>
+                </p-accordion-panel>
+              </p-accordion>
+            </div>
+          </div>
+
+          <!-- Папка проекта и ветка -->
+          <div class="panel-card">
+            <div class="panel-card-header">
+              <h4>2. Папка проекта и Git</h4>
+              <p class="card-hint">Укажите путь к Git-репозиторию на компьютере worker</p>
+            </div>
+            <div class="card-body">
+              <div class="folder-input-row">
+                <label class="grow-field">
+                  <span>Папка Git-проекта на worker</span>
+                  <input pInputText [disabled]="projectBusy" [ngModel]="settings.repositoryPath" (ngModelChange)="setProjectPath($event)" (blur)="readProjectIfNeeded($event)" (keydown.enter)="readProjectIfNeeded()" placeholder="E:\projects\my-app" />
+                </label>
+                <p-button data-project-picker [label]="host.online ? 'Выбрать папку' : 'Подключить и выбрать'" severity="secondary" size="small" icon="pi pi-folder-open" [disabled]="projectBusy || !launchCommand" (onClick)="pickFolder()" />
+                <p-button data-project-picker label="Обзор каталогов" severity="secondary" size="small" icon="pi pi-search" [disabled]="projectBusy || !host.online" (onClick)="browse(settings.repositoryPath)" />
+                <p-button data-project-picker label="Прочитать проект" severity="secondary" size="small" icon="pi pi-refresh" [disabled]="projectBusy || !host.online || !settings.repositoryPath" (onClick)="inspect()" />
+              </div>
+
+              @if (pendingFolderPick) {
+                <div class="alert-banner alert-warning">
+                  <span>Выполните команду в PowerShell. Когда worker подключится, выбор откроется автоматически.</span>
+                  <button pButton severity="secondary" size="small" (click)="cancelFolderConnection()">Отменить</button>
+                </div>
+              }
+
+              @if (browserOpen && directory) {
+                <fieldset class="directory-browser" aria-label="Папки на worker">
+                  <div class="browser-header">
+                    <strong>📁 {{ directory.path }}</strong>
+                    <div class="browser-actions">
+                      <button pButton severity="secondary" size="small" [disabled]="projectBusy || directory.parent === directory.path" (click)="browse(directory.parent)">↑ Выше</button>
+                      <button pButton severity="primary" size="small" [disabled]="projectBusy" (click)="chooseDirectory()">Выбрать эту папку</button>
+                      <button pButton severity="secondary" [text]="true" size="small" (click)="browserOpen = false">Закрыть</button>
+                    </div>
+                  </div>
+                  <div class="directories-grid">
+                    @for (entry of directory.directories; track entry.path) {
+                      <button type="button" class="dir-btn" [disabled]="projectBusy" (click)="browse(entry.path)">📁 {{ entry.name }}</button>
+                    }
+                  </div>
+                </fieldset>
+              }
+
+              <!-- Ветка и создание новой ветки -->
+              <div class="branch-settings-grid">
+                <label>
+                  <span>Базовая ветка</span>
+                  @if (branchOptions.length) { <p-select [options]="branchOptions" [(ngModel)]="settings.baseBranch" [filter]="true" appendTo="body" /> }
+                  @else { <input pInputText [(ngModel)]="settings.baseBranch" placeholder="main или master" /> }
+                </label>
+                <label class="grow-field">
+                  <span>Создать новую ветку от базовой</span>
+                  <div class="create-branch-wrap">
+                    <input pInputText [(ngModel)]="newBranch" placeholder="feature/my-task" />
+                    <p-button label="Создать ветку" severity="secondary" size="small" [disabled]="projectBusy || !host.online || !branchOptions.length || !newBranch" (onClick)="createBranch()" />
+                  </div>
+                </label>
+              </div>
+
+              <!-- Лимиты и слияние -->
+              <div class="limits-grid">
+                <label><span>Лимит попытки (мин)</span><input pInputText type="number" [(ngModel)]="settings.timeoutMinutes" [min]="limits.timeoutMinutes.min" [max]="limits.timeoutMinutes.max" /></label>
+                <label><span>Доработок</span><input pInputText type="number" [(ngModel)]="settings.maxRevisions" [min]="limits.revisions.min" [max]="limits.revisions.max" /></label>
+                <label><span>Всего активных минут</span><input pInputText type="number" [(ngModel)]="settings.maxRunMinutes" min="1" max="240" /></label>
+                <label><span>Вызовов агентов</span><input pInputText type="number" [(ngModel)]="settings.maxAgentCalls" min="1" max="100" /></label>
+                <label><span>Операций инструментами</span><input pInputText type="number" [(ngModel)]="settings.maxStageToolCalls" min="1" max="80" /></label>
+                <label><span>Лимит входных токенов</span><input pInputText type="number" [(ngModel)]="settings.maxInputTokens" min="1" max="100000000" /></label>
+                <label><span>Слияние</span><p-select [options]="mergePolicies" [(ngModel)]="settings.mergePolicy" appendTo="body" /></label>
+                <label><span>Параллельных слотов</span><input pInputText type="number" [(ngModel)]="settings.maxParallelRuns" min="1" max="8" /></label>
+                <label><span>Зависимости</span><p-select [options]="dependencyModes" [(ngModel)]="settings.dependencyMode" appendTo="body" /></label>
+              </div>
+
+              @if (settings.mergePolicy === 'local') {
+                <div class="merge-options-box">
+                  <label class="checkbox-inline">
+                    <p-checkbox [binary]="true" [(ngModel)]="settings.resolveConflicts" ariaLabel="Автоматически разрешать конфликты" />
+                    <span>Автоматически разрешать конфликты</span>
+                  </label>
+                  <div class="resolver-grid">
+                    <label><span>Попыток интеграции</span><input pInputText type="number" [(ngModel)]="settings.maxMergeAttempts" min="1" max="3" /></label>
+                    <label><span>Вызовов resolver</span><input pInputText type="number" [(ngModel)]="settings.maxResolverCalls" min="0" max="3" /></label>
+                    <label><span>Минут на resolver</span><input pInputText type="number" [(ngModel)]="settings.resolverTimeoutMinutes" min="1" max="10" /></label>
+                    <label><span>Инструментов resolver</span><input pInputText type="number" [(ngModel)]="settings.maxResolverToolCalls" min="1" max="40" /></label>
+                  </div>
+                </div>
+              }
+            </div>
+          </div>
+
+          <!-- Подготовка и проверки -->
+          <div class="panel-card">
+            <div class="panel-card-header">
+              <h4>3. Автопроверки и подготовка (CI/CD)</h4>
+              <p class="card-hint">Worker автоматически выполняет эти команды после разработчика. Ошибка возвращает задачу на доработку.</p>
+            </div>
+            <div class="card-body">
+              <div class="commands-section">
+                <h5>Подготовка рабочей папки (npm ci)</h5>
+                <div class="chips-row">
+                  @for (preset of setupPresets; track preset.id) {
+                    <button type="button" class="command-chip" [class.selected]="commandSelected(preset.value, true)" (click)="toggleCommand(preset.value, true)">
+                      {{ preset.label }}
+                    </button>
+                  }
+                </div>
+
+                <h5>Обязательные проверки (тесты, линтер, сборка)</h5>
+                <div class="chips-row">
+                  @for (preset of checkPresets; track preset.id) {
+                    <button type="button" class="command-chip" [class.selected]="commandSelected(preset.value, false)" (click)="toggleCommand(preset.value, false)">
+                      {{ preset.label }}
+                    </button>
+                  }
+                </div>
+
+                <div class="selected-commands-list">
+                  <strong>Выбранные команды:</strong>
+                  <div class="chips-row">
+                    @for (command of settings.setup; track $index; let i = $index) {
+                      <span class="active-command-tag setup-tag" (click)="settings.setup.splice(i, 1)">
+                        Подготовка: {{ commandLabel(command) }} <button type="button">×</button>
+                      </span>
+                    }
+                    @for (command of settings.checks; track $index; let i = $index) {
+                      <span class="active-command-tag check-tag" (click)="settings.checks.splice(i, 1)">
+                        Проверка: {{ commandLabel(command) }} <button type="button">×</button>
+                      </span>
+                    }
+                    @if (!settings.setup.length && !settings.checks.length) {
+                      <span class="hint">Для запуска нужна хотя бы одна проверка (например npm test).</span>
+                    }
+                  </div>
+                </div>
+
+                <label class="checkbox-inline">
+                  <p-checkbox [binary]="true" [(ngModel)]="advancedCommands" ariaLabel="Свои команды" />
+                  <span>Свои команды (расширенная настройка)</span>
+                </label>
+
+                @if (advancedCommands) {
+                  <div class="custom-commands-box">
+                    <h6>Команды подготовки</h6>
+                    @for (check of settings.setup; track $index; let i = $index) {
+                      <div class="custom-cmd-row">
+                        <input pInputText [(ngModel)]="check.command" placeholder="npm" />
+                        <input pInputText class="grow-field" [ngModel]="json(check.args)" (ngModelChange)="setArgs(i, $event, false, true)" placeholder='["ci"]' />
+                        <button pButton severity="secondary" size="small" type="button" icon="pi pi-times" (click)="settings.setup.splice(i, 1)"></button>
+                      </div>
+                    }
+                    <p-button label="Добавить подготовку" severity="secondary" size="small" icon="pi pi-plus" (onClick)="addSetup()" />
+
+                    <h6>Команды проверки</h6>
+                    @for (check of settings.checks; track $index; let i = $index) {
+                      <div class="custom-cmd-row">
+                        <input pInputText [(ngModel)]="check.command" placeholder="npm" />
+                        <input pInputText class="grow-field" [ngModel]="json(check.args)" (ngModelChange)="setArgs(i, $event)" placeholder='["test"]' />
+                        <button pButton severity="secondary" size="small" type="button" icon="pi pi-times" (click)="settings.checks.splice(i, 1)"></button>
+                      </div>
+                    }
+                    <p-button label="Добавить проверку" severity="secondary" size="small" icon="pi pi-plus" (onClick)="addCheck()" />
+                  </div>
+                }
+
+                <p-accordion>
+                  <p-accordion-panel value="artifacts">
+                    <p-accordion-header>Скриншоты для визуального валидатора (необязательно)</p-accordion-header>
+                    <p-accordion-content>
+                      <label class="field-label-block">
+                        <span>Пути скриншотов относительно корня проекта, по одному на строку</span>
+                        <textarea rows="2" [ngModel]="settings.artifactPaths.join('\n')" (ngModelChange)="setArtifacts($event)" placeholder="e2e-screenshots/login.png"></textarea>
+                      </label>
+                    </p-accordion-content>
+                  </p-accordion-panel>
+                </p-accordion>
+              </div>
+            </div>
+          </div>
+        </div>
+      }
     </div>
-  }
-  @if (pollError) { <p role="alert" class="error">{{ pollError }}</p> }
-  <button pButton severity="secondary" type="button" (click)="openQueue.emit(selectedRun)">Открыть очередь выполнения</button>
-  <p class="hint">В очереди видны текущие этапы, связь с worker, журнал, причины остановки и действия для продолжения.</p>
-    </div></p-tabpanel></p-tabpanels>
-  </p-tabs>
-  <div class="settings-footer"><p-button [label]="settingsScope === 'task' ? 'Сохранить команду задачи' : 'Сохранить настройки проекта'" [disabled]="busy || !taskTeamReady" (onClick)="save()" /></div>
+  </main>
 </div>
+
+<!-- Модалка ожидания подключения компьютера для выбора папки -->
 <p-dialog header="Подключить компьютер для выбора папки" [visible]="folderConnectOpen" (visibleChange)="!$event && cancelFolderConnection()"
   [modal]="true" appendTo="body" [style]="{width: '44rem', maxWidth: 'calc(100vw - 2rem)'}">
   <p>Системное окно выбора открывается на компьютере с подключённым host. Браузер сам не может запустить локальный процесс.</p>
   <p class="hint">На компьютере нужны Node.js 22+, Docker CLI, Git и CodeGraph. Docker должен быть запущен.</p>
-  <ol>
+  <ol class="folder-connect-steps">
     <li>Скопируйте команду ниже.</li>
     <li>Выполните её в PowerShell на компьютере с проектом.</li>
     <li>После подключения окно выбора папки откроется автоматически.</li>
   </ol>
-  <label>Команда подключения
-    <textarea #folderCommandText readonly rows="8" [value]="launchCommand" aria-label="Команда подключения для выбора папки"></textarea>
+  <label class="field-label-block">
+    <span>Команда подключения</span>
+    <textarea #folderCommandText readonly rows="6" [value]="launchCommand" class="powershell-textarea" aria-label="Команда подключения для выбора папки"></textarea>
   </label>
-  @if (launchNotice) { <p role="status">{{ launchNotice }}</p> }
-  <p role="status">Ожидаем подключения компьютера…</p>
+  @if (launchNotice) { <p role="status" class="alert-banner alert-info">{{ launchNotice }}</p> }
+  <p role="status" class="waiting-text"><i class="pi pi-spin pi-spinner"></i> Ожидаем подключения компьютера…</p>
   <ng-template pTemplate="footer">
     <p-button label="Отменить ожидание выбора" severity="secondary" (onClick)="cancelFolderConnection()" />
-    <p-button label="Скопировать команду" (onClick)="copyLaunchCommand()" />
+    <p-button label="Скопировать команду" icon="pi pi-copy" (onClick)="copyLaunchCommand()" />
   </ng-template>
 </p-dialog>
