@@ -86,9 +86,15 @@ export class AutomationQueueComponent {
     )),
   ), { initialValue: { items: [], host: { online: false }, serverTime: new Date().toISOString() } as QueueSnapshot });
   public readonly now = computed(() => Date.parse(this.snapshot().serverTime) + Math.max(0, this.clock() - this.receivedAt()));
-  public readonly selected = computed(() => this.snapshot().items.find((run) => run.id === this.selectedId()) ?? (this.selectedCache()?.id === this.selectedId() ? this.selectedCache() : undefined));
+  public readonly selected = computed(() => {
+    const id = this.selectedId();
+    const snapshot = this.snapshot().items.find(run => run.id === id);
+    const detail = this.detail()?.item;
+    if (detail?.id === id && (!snapshot || detail.updatedAt >= snapshot.updatedAt)) return detail;
+    return snapshot ?? (this.selectedCache()?.id === id ? this.selectedCache() : undefined);
+  });
   public readonly detail = toSignal(combineLatest([toObservable(this.selectedId), merge(timer(0, AUTOMATION_TIMING.pollMs), this.refresh)]).pipe(
-    switchMap(([id]) => id ? this.http.get<{ run: AgentRun; events: RunEvent[] }>(`/api/automation/runs/${id}`).pipe(
+    switchMap(([id]) => id ? this.http.get<{ run: AgentRun; item?: QueueItem; events: RunEvent[] }>(`/api/automation/runs/${id}`).pipe(
       catchError((error: unknown) => { this.error.set(this.message(error)); return of(null); }),
     ) : of(null)),
   ), { initialValue: null });
@@ -100,6 +106,10 @@ export class AutomationQueueComponent {
   public timestamp(value: string | undefined): string { return formatQueueDate(value); }
   public total(lane: QueueLane): number { return this.snapshot().items.filter((item) => QueuePresentation.lane(item) === lane).length; }
   public clearSearch(): void { this.search.set(''); }
+  public resumeBudgetBlocked(item: QueueItem): boolean {
+    const run = this.detail()?.run;
+    return !!run && run.id === item.id && !!RunBudget.reason(run, this.now(), run.stage < run.settings.pipeline.length);
+  }
   public health(item: QueueItem): string { return QueuePresentation.health(item, this.now(), this.snapshot().host); }
   public role(role: string): string { return ROLE_OPTIONS.find((entry) => entry.value === role)?.label ?? role; }
   public currentRole(item: QueueItem): string { return item.status === RunStatus.Integrating ? 'Интеграция' : item.phase === 'waiting-slot' ? 'Ожидание слота' : this.role(item.pipeline.at(item.stage)?.role ?? ''); }

@@ -146,7 +146,7 @@
               </button>
             }
             @if (item.canResume) {
-              <button pButton severity="success" size="small" icon="pi pi-play" [disabled]="busy()" (click)="action(item, runAction.Resume)">
+              <button pButton severity="success" size="small" icon="pi pi-play" [disabled]="busy() || resumeBudgetBlocked(item)" (click)="action(item, runAction.Resume)">
                 Продолжить
               </button>
             }
@@ -186,6 +186,24 @@
         @if (item.actionReason) { <p class="action-reason-hint">{{ item.actionReason }}</p> }
         @if (item.canResume || item.canRestart) { <p class="resume-hint">Продолжение использует прежние настройки и рабочую ветку. «Начать заново» создаёт новый запуск и новую ветку от базовой ветки с сохранёнными настройками команды; старый журнал останется.</p> }
       </header>
+      @if (detail()?.run; as run) {
+        @if (run.id === item.id) {
+          @let time = runBudget.time(run, now());
+          <div class="run-budget-summary" role="status">
+            Время: {{ time.usedMs / 60000 | number:'1.1-1' }} из {{ time.limitMs / 60000 | number:'1.0-0' }} мин ·
+            Осталось {{ time.remainingMs / 60000 | number:'1.1-1' }} мин. Учитываются все попытки запуска.
+          </div>
+          @if (item.status === runStatus.Failed || item.status === runStatus.Interrupted || item.status === runStatus.MergeBlocked) {
+            <div class="run-stop-reason" role="alert">
+              <span>{{ runBudget.stopReason(run) || health(item) }}</span>
+              @if (resumeBudgetBlocked(item)) { <span>Продолжение недоступно: бюджет исчерпан.</span> }
+              @if (item.canResume) {
+                <button pButton severity="secondary" size="small" (click)="showDetails.set(true); editBudget(run)">Изменить бюджет запуска</button>
+              }
+            </div>
+          }
+        }
+      }
 
       <!-- ЖУРНАЛ ВЫПОЛНЕНИЯ: занимает всё оставшееся пространство -->
       <section class="run-console-section" aria-label="Консоль и журнал">

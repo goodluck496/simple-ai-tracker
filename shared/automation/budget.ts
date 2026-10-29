@@ -3,6 +3,18 @@ import { TokenMeter } from './token-usage.js';
 
 /** Limits count observed cumulative input, including cached input exactly once. */
 export class RunBudget {
+  public static time(run: AgentRun, now: number) {
+    const limitMs = this.limits(run).minutes * 60000;
+    const usedMs = this.elapsed(run, now);
+    return { usedMs, limitMs, remainingMs: Math.max(0, limitMs - usedMs) };
+  }
+  public static stopReason(run: AgentRun): string {
+    const summary = run.summary ?? '';
+    if (/execution time budget exhausted|active time limit|time budget exhausted/i.test(summary)) return 'Исчерпан общий лимит времени запуска. Уже потраченное время сохраняется при продолжении.';
+    if (/input token limit|input.*budget exhausted/i.test(summary)) return 'Исчерпан лимит суммарных входных токенов запуска.';
+    if (/agent call limit/i.test(summary)) return 'Исчерпан лимит вызовов агентов.';
+    return summary;
+  }
   public static explain(run: AgentRun) {
     const observed = (run.usageAttempts ?? []).filter(attempt => attempt.usage);
     const total = TokenMeter.summary(run.usageAttempts, run.usageIncomplete);

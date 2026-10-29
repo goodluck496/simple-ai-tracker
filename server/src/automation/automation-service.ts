@@ -64,7 +64,7 @@ export class AutomationService {
   public restore(id: string): void { this.runs.db.transaction(() => { this.requireRun(id); this.runs.restore(id); }); }
   public logPage(id: string, after = 0) { this.requireRun(id); return this.runs.eventPage(id, after); }
   public detail(id: string) {
-    return this.runs.db.transaction(() => { this.expireLeases(); return { run: this.publicRun(this.requireRun(id)), events: this.runs.events(id) }; });
+    return this.runs.db.transaction(() => { this.expireLeases(); const run = this.requireRun(id); return { run: this.publicRun(run), item: this.queueItem(run, this.runs.list()), events: this.runs.events(id) }; });
   }
 
   public activeTaskIds(): string[] {
@@ -177,27 +177,28 @@ export class AutomationService {
       this.expireLeases();
       const runs = includeHistory === true ? this.runs.history(taskId) : includeHistory === false ? this.runs.queue().filter(run => [RunStatus.Queued, RunStatus.Running, RunStatus.Integrating].includes(run.status as 'queued' | 'running' | 'integrating')) : this.runs.queue();
       const queued = runs.filter((run) => run.status === RunStatus.Queued).sort((a, b) => a.updatedAt.localeCompare(b.updatedAt) || a.id.localeCompare(b.id));
-      const items: QueueItem[] = runs.map((entry) => {
-        const run = this.refreshCleanup(entry);
-        const task = this.tasks.getTaskCard(run.taskId);
-        const otherActive = runs.some((other) => other.taskId === run.taskId && other.id !== run.id && ACTIVE_RUN_STATUSES.includes(other.status));
-        const scope = Decomposition.child(run);
-        const pendingQuestions = scope ? this.tasks.getTaskCard(scope.taskId).openQuestionsCount : task.openQuestionsCount;
-        const actionReason = run.cleanup ? 'Рабочая копия очищается или уже очищена; продолжение этого запуска недоступно.' : pendingQuestions ? `Ответьте на вопросы в карточке ${scope?.taskId ?? task.id}.` : otherActive ? 'У задачи есть другой активный запуск.'
-          : task.status === TaskStatus.Done || (task.status === TaskStatus.Review && !(run.stage >= run.settings.pipeline.length && run.settings.mergePolicy === MergePolicy.Local)) ? 'Задача уже на проверке или завершена.' : '';
-        const resumable = RESUMABLE_RUN_STATUSES.includes(run.status) && (run.stage < run.settings.pipeline.length || run.settings.mergePolicy === MergePolicy.Local);
-        return { id: run.id, taskId: run.taskId, title: task.title, cleanup: run.cleanup, taskStatus: task.status, status: run.status, stage: run.stage, revision: run.revision,
-          pipeline: run.settings.pipeline.map((id) => { const agent = run.settings.agents.find((a) => a.id === id)!; return { role: agent.role, runner: agent.runner, model: agent.model }; }),
-          phase: run.phase, phaseStartedAt: run.phaseStartedAt, heartbeatAt: run.heartbeatAt ?? (run.leaseUntil ? new Date(Date.parse(run.leaseUntil) - LEASE_MS).toISOString() : undefined),
-          progressAt: run.progressAt, lastMessage: run.lastMessage ?? '', createdAt: run.createdAt, startedAt: run.startedAt,
-          attemptStartedAt: run.attemptStartedAt, finishedAt: run.finishedAt, updatedAt: run.updatedAt, summary: run.summary,
-          workerId: run.workerId, branch: run.branch, checkout: run.checkout, integration: run.integration, integrationSourceSha: run.integrationSourceSha, restartedFromId: run.restartedFromId, openQuestions: task.openQuestionsCount,
-          timeoutMinutes: run.settings.timeoutMinutes, tokenUsage: TokenMeter.summary(run.usageAttempts, run.usageIncomplete),
-          queuePosition: run.status === RunStatus.Queued ? queued.findIndex((r) => r.id === run.id) + 1 : undefined,
-          canResume: resumable && !actionReason, canRestart: RESUMABLE_RUN_STATUSES.includes(run.status) && !actionReason, actionReason };
-      });
+      const items = runs.map(entry => this.queueItem(entry, runs, queued));
       return { items, host: this.projects.status(), serverTime: this.clock.now() };
     });
+  }
+  private queueItem(entry: AgentRun, runs: AgentRun[], queued = runs.filter(run => run.status === RunStatus.Queued).sort((a, b) => a.updatedAt.localeCompare(b.updatedAt) || a.id.localeCompare(b.id))): QueueItem {
+    const run = this.refreshCleanup(entry);
+    const task = this.tasks.getTaskCard(run.taskId);
+    const otherActive = runs.some((other) => other.taskId === run.taskId && other.id !== run.id && ACTIVE_RUN_STATUSES.includes(other.status));
+    const scope = Decomposition.child(run);
+    const pendingQuestions = scope ? this.tasks.getTaskCard(scope.taskId).openQuestionsCount : task.openQuestionsCount;
+    const actionReason = run.cleanup ? 'Рабочая копия очищается или уже очищена; продолжение этого запуска недоступно.' : pendingQuestions ? `Ответьте на вопросы в карточке ${scope?.taskId ?? task.id}.` : otherActive ? 'У задачи есть другой активный запуск.'
+      : task.status === TaskStatus.Done || (task.status === TaskStatus.Review && !(run.stage >= run.settings.pipeline.length && run.settings.mergePolicy === MergePolicy.Local)) ? 'Задача уже на проверке или завершена.' : '';
+    const resumable = RESUMABLE_RUN_STATUSES.includes(run.status) && (run.stage < run.settings.pipeline.length || run.settings.mergePolicy === MergePolicy.Local);
+    return { id: run.id, taskId: run.taskId, title: task.title, cleanup: run.cleanup, taskStatus: task.status, status: run.status, stage: run.stage, revision: run.revision,
+      pipeline: run.settings.pipeline.map((id) => { const agent = run.settings.agents.find((a) => a.id === id)!; return { role: agent.role, runner: agent.runner, model: agent.model }; }),
+      phase: run.phase, phaseStartedAt: run.phaseStartedAt, heartbeatAt: run.heartbeatAt ?? (run.leaseUntil ? new Date(Date.parse(run.leaseUntil) - LEASE_MS).toISOString() : undefined),
+      progressAt: run.progressAt, lastMessage: run.lastMessage ?? '', createdAt: run.createdAt, startedAt: run.startedAt,
+      attemptStartedAt: run.attemptStartedAt, finishedAt: run.finishedAt, updatedAt: run.updatedAt, summary: run.summary,
+      workerId: run.workerId, branch: run.branch, checkout: run.checkout, integration: run.integration, integrationSourceSha: run.integrationSourceSha, restartedFromId: run.restartedFromId, openQuestions: task.openQuestionsCount,
+      timeoutMinutes: run.settings.timeoutMinutes, tokenUsage: TokenMeter.summary(run.usageAttempts, run.usageIncomplete),
+      queuePosition: run.status === RunStatus.Queued ? queued.findIndex((r) => r.id === run.id) + 1 : undefined,
+      canResume: resumable && !actionReason, canRestart: RESUMABLE_RUN_STATUSES.includes(run.status) && !actionReason, actionReason };
   }
   public claim(workerId: string): AgentRun | null {
     if (!workerId.trim()) throw new TrackerError('VALIDATION_FAILED', 'Worker ID is required.');

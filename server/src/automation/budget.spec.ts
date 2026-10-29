@@ -29,7 +29,11 @@ test('run budgets survive resume, include cached input once, and fence new agent
     now = '2026-10-25T00:00:30.000Z';
     service.fail(run.id, run.leaseToken!, 'fixture infrastructure failure');
     assert.equal(service.detail(run.id).run.budgetElapsedMs, 30000);
+    assert.equal(service.detail(run.id).item.status, 'failed', 'selected detail must reflect terminal status after leaving active queue');
+    assert.equal(service.detail(run.id).item.canResume, true);
+    assert.equal(service.queue(false).items.length, 0);
     now = '2026-10-26T00:00:00.000Z';
+    assert.deepEqual(RunBudget.time(service.detail(run.id).run, Date.parse(now)), { usedMs: 30000, limitMs: 60000, remainingMs: 30000 });
     service.resume(queued.id);
     const resumed = service.claim('worker-2')!;
     assert.equal(resumed.budgetElapsedMs, 30000, 'waiting time does not consume active budget');
@@ -37,6 +41,7 @@ test('run budgets survive resume, include cached input once, and fence new agent
     now = '2026-10-26T00:00:30.000Z';
     assert.throws(() => service.heartbeat(run.id, resumed.leaseToken!), /active time limit/);
     service.fail(run.id, resumed.leaseToken!, 'Time budget exhausted');
+    assert.match(RunBudget.stopReason(service.detail(run.id).run), /Исчерпан общий лимит времени/);
     assert.throws(() => service.resume(run.id), /active time limit/);
     assert.equal(service.detail(run.id).run.usageAttempts!.length, 1);
   } finally { app.close(); }
