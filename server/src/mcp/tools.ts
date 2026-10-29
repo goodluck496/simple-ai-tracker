@@ -427,6 +427,7 @@ export class TrackerToolRegistry {
         case AutomationTool.Checkout: service.checkout(id(), token(), args['result']); return json({ ok: true });
         case AutomationTool.Integration: service.integration(id(), token(), args['result']); return json({ ok: true });
         case AutomationTool.Usage: service.usage(id(), token(), requireString(args, 'attemptId'), args['usage'], args['finished'] === true); return json({ ok: true });
+        case AutomationTool.Checkpoint: return json(service.checkpoint(id(), token(), requireString(args, 'attemptId'), args['result']));
         case AutomationTool.CompleteStage: return json(service.completeStage(id(), token(), args['outcome'] as AgentOutcome, requireString(args, 'branch'), requireString(args, 'commitSha')));
         case AutomationTool.Fail: service.fail(id(), token(), requireString(args, 'text')); return json({ ok: true });
         case AutomationTool.Cancel: service.cancel(id()); return json({ ok: true });

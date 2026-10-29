@@ -7,6 +7,7 @@ export const AutomationTool = {
   Enqueue: `${AUTOMATION_TOOL_PREFIX}enqueue`, EnqueueBatch: `${AUTOMATION_TOOL_PREFIX}enqueue_batch`, Claim: `${AUTOMATION_TOOL_PREFIX}claim`,
   Heartbeat: `${AUTOMATION_TOOL_PREFIX}heartbeat`, Progress: `${AUTOMATION_TOOL_PREFIX}progress`,
   Usage: `${AUTOMATION_TOOL_PREFIX}usage`,
+  Checkpoint: `${AUTOMATION_TOOL_PREFIX}checkpoint`,
   BeginStage: `${AUTOMATION_TOOL_PREFIX}begin_stage`, CompleteStage: `${AUTOMATION_TOOL_PREFIX}complete_stage`,
   Fail: `${AUTOMATION_TOOL_PREFIX}fail`, Cancel: `${AUTOMATION_TOOL_PREFIX}cancel`,
   Resume: `${AUTOMATION_TOOL_PREFIX}resume`, Merged: `${AUTOMATION_TOOL_PREFIX}merged`,

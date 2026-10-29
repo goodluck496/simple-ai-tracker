@@ -7,9 +7,10 @@ import { AgentRunnerRegistry } from '../runners/registry.js';
 import { AutomationTool } from '../../../../shared/automation/protocol.js';
 import { DEFAULT_ROLE_INSTRUCTIONS } from '../../../../shared/automation/team-profiles.js';
 import { RunPhase } from '../../../../shared/automation/queue.js';
-import type { TokenUsage } from '../../../../shared/automation/token-usage.js';
+import { TokenMeter, type TokenUsage } from '../../../../shared/automation/token-usage.js';
 import { StageCheckpoint, type StageResult } from './stage-checkpoint.js';
-import { AgentHandoff } from '../../../../shared/automation/handoff.js';
+import { StageJournal } from './stage-journal.js';
+import { AgentHandoff, HANDOFF_LIMITS } from '../../../../shared/automation/handoff.js';
 import { ProgressBuffer } from '../../../../shared/automation/progress-buffer.js';
 import { RunBudget } from '../../../../shared/automation/budget.js';
 import { PipelinePolicy } from '../../../../shared/automation/pipeline-policy.js';
@@ -215,6 +216,8 @@ export class PipelineWorker {
         const legacyKey = StageCheckpoint.key({ ...keyInput, task: { ...keyInput.task, relations: pack.relations }, settings: { ...run.settings, ...run.checkpointBudgets } });
         let saved = await checkpoint.load([key, legacyKey]);
         const priorSha = (await git(['rev-parse', 'HEAD'], cwd)).trim();
+        const sessionKey = StageCheckpoint.key({ key, head: priorSha, cwd: path.resolve(cwd) });
+        const memory = run.stageMemory?.key === sessionKey ? run.stageMemory : undefined;
         if (run.commitSha && priorSha !== run.commitSha && !saved) throw new Error('Worktree HEAD changed after checkpoint; inspect it before resuming.');
         const priorStatus = await git(['status', '--porcelain', '--', '.', ':!.sat'], cwd);
         const baseline = child ? (await git(['merge-base', 'HEAD', branch], cwd)).trim() : run.checkout?.baseSha ?? run.settings.baseBranch;
@@ -227,11 +230,18 @@ export class PipelineWorker {
         const stepIds = WorkOrder.from(pack.plan)?.steps.filter(s => s.kind === 'step').map(s => s.id) ?? [];
         const workProgress = [AgentRole.Developer, AgentRole.Designer].includes(profile.role as 'developer' | 'designer') ? await handoff.progress(requirementsKey, stepIds) : undefined;
         const rolePacket = JSON.parse(AgentHandoff.forRole(profile.role, context, changedFiles, previous, workProgress));
+        if (run.stageMemory?.note && run.stageMemory.taskId === pack.id) {
+          delete rolePacket.task.progressNotes;
+          rolePacket.partialCheckpoint = { taskId: run.stageMemory.taskId,
+            currentContext: !!memory, note: run.stageMemory.note, warning: 'Unverified progress hints only. Recheck current files and checks before relying on them.' };
+        }
         if (run.feature && !child) rolePacket.featureDeliveries = run.feature.children.map(c => ({ taskId: c.taskId, key: c.key, state: c.state, sourceSha: c.sourceSha, mergedSha: c.mergedSha }));
         const packet = JSON.stringify(rolePacket);
+        if (packet.length > HANDOFF_LIMITS.taskChars) throw new Error('Role handoff with checkpoints exceeds the context limit; split the task.');
         const diff = profile.role === AgentRole.Reviewer ? await git(['diff', `${baseline}...HEAD`, '--', '.', ':!.sat'], cwd) : '';
         const feedback = previous && run.summary.startsWith(previous.summary) ? '' : run.summary;
         const prompt = this.prompt(profile.role, profile.instructions, context, feedback, diff, run.settings.artifactPaths, run.settings.checks, run.checkout, packet)
+          + `\nObserved tool budget for this stage: ${run.settings.maxStageToolCalls ?? 24}. Save factual checkpoints at least every 5 tools, then finish with the requested outcome.\n`
           + `\nSelected execution stages: ${PipelinePolicy.roles(run.settings).join(' → ')}. No missing roles may be added. `
           + (profile.role === AgentRole.Analyst && !PipelinePolicy.canDecompose(run.settings) ? 'Return decomposition: []; describe proposed subtasks in plan text if useful, without dispatching other roles.\n' : '');
         let outcome: AgentOutcome;
@@ -248,8 +258,18 @@ export class PipelineWorker {
         const started = await this.channel.call<{ attemptId?: string }>(AutomationTool.BeginStage, { id: run.id, leaseToken: token });
         metering = started.attemptId ? { attemptId: started.attemptId } : undefined;
         let usageComplete = false;
+        const journal = new StageJournal(cwd, sessionKey, async update => {
+          const result = JSON.parse(redact(JSON.stringify(update)));
+          await this.channel.call(AutomationTool.Checkpoint, { id: run.id, leaseToken: token, attemptId: started.attemptId, result });
+        }, progress, () => controller.abort());
+        await journal.start(memory);
         try {
           const result = await this.registry.get(profile.runner).run({ runId: run.id, cwd, prompt, profile, connection, settings: run.settings, signal: controller.signal,
+            sessionId: profile.runner === 'antigravity' ? memory?.conversationId : undefined,
+            sessionUsage: memory?.conversationId ? (run.usageAttempts ?? [])
+              .filter(attempt => attempt.nativeSessionId === memory.conversationId && attempt.usage?.source === 'antigravity-json')
+              .reduce<TokenUsage | undefined>((total, attempt) => attempt.usage ? TokenMeter.add(total, attempt.usage) : total, undefined) : undefined,
+            onSession: id => journal.session(id),
             maxToolCalls: run.settings.maxStageToolCalls ?? 24,
             onUsage: (usage, state) => {
               if (metering) {
@@ -276,9 +296,13 @@ export class PipelineWorker {
         } catch (error) {
           throw new Error(`${profile.role}/${profile.runner}: ${error instanceof Error ? error.message : String(error)}`);
         } finally {
-          if (metering) {
-            const sample = metering; metering = undefined;
-            await reportUsage(sample, usageComplete);
+          // Flush while the lease/attempt is still current, including timeout and invalid outcome.
+          try { await journal.close(); }
+          finally {
+            if (metering) {
+              const sample = metering; metering = undefined;
+              await reportUsage(sample, usageComplete);
+            }
           }
         }
         saved = { key, head: priorSha, fingerprint: '', priorHead: priorSha, priorStatus, outcome };
@@ -375,7 +399,7 @@ export class PipelineWorker {
       + `Tracker workspace: ${this.channel.workspace ?? process.env.SAT_WORKSPACE ?? 'default'}. The worker supplies the current task context via MCP. If you consult tracker tools, always pass this explicit workspace. Do not change tracker data yourself.\n`
       + `${AgentHandoff.instructions}\nTask context (approved work order and bounded previous-stage evidence):\n${packet ?? AgentHandoff.task(context)}\nPrevious feedback:\n${AgentHandoff.feedback(feedback)}\nChanges (full preview only for review; use changedFiles for focused reads):\n${AgentHandoff.diff(diff)}\n`
       + `The worker owns the configured full checks after the tester stage and on the squash candidate. Run focused checks for your step or independent scenario only; avoid repeating the full build/test matrix inside every role. Never treat current=false previous-stage evidence as current verification.\n`
-      + `Developer/designer: after each completed focused step update .sat/work-progress.json with {"workOrderKey":"copy key from .sat/work-order.json","completedSteps":["S1"],"nextStep":"S2","summary":"brief changes and check results"}. Use the actual step IDs and omit nextStep when finished. Resume uses these as unverified hints, not proof: confirm the relevant changed files before continuing, without repeating general analysis. Never change the approved work order yourself.\n`
+      + `Developer/designer: use actual work-order step IDs in the stage-note completedSteps. The stage-note is the only required intermediate journal; do not duplicate it into work-progress.json or other progress files. Resume treats saved notes as unverified hints: confirm the relevant changed files without repeating general analysis. Never change the approved work order yourself.\n`
       + `Configured checks: ${JSON.stringify(checks)}\nVisual artifacts: ${JSON.stringify(artifacts)}\n`
       + `Only developer/designer may edit files. Do not change branches, commit, merge, publish or alter tracker data directly; the worker handles commits. `
       + `When developer/designer changes files, include commitMessage in the JSON result. Exact format: "[#${(context as { id: string }).id}] - описание на русском, что сделано и для чего". Use an explicit purpose clause (для/чтобы/ради), one line, up to ${CommitMessage.maxLength} characters. Technical names may stay in English. A generic role/stage label is forbidden. Worker rejects invalid messages without recalling the model. `

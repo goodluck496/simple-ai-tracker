@@ -16,6 +16,7 @@ import { Decomposition } from '../../../shared/automation/decomposition.js';
 import { FeaturePlanning } from './feature-planning.js';
 import { PipelinePolicy } from '../../../shared/automation/pipeline-policy.js';
 import { BATCH_TASK_LIMIT } from '../../../shared/automation/batch.js';
+import { StageNotes, type StageMemory } from '../../../shared/automation/stage-note.js';
 import { ProjectAction, type ProjectResult } from '../../../shared/automation/project.js';
 
 const SETTINGS_KEY = 'automation_settings_v1';
@@ -277,6 +278,33 @@ export class AutomationService {
     return attempt.id;
     });
   }
+  public checkpoint(id: string, token: string, attemptId: string, value: unknown): StageMemory {
+    return this.runs.db.transaction(() => {
+      const run = this.owned(id, token);
+      const attempt = run.usageAttempts?.at(-1);
+      if (!attempt || attempt.id !== attemptId || attempt.finished || attempt.kind !== 'pipeline' || attempt.stage !== run.stage || attempt.revision !== run.revision)
+        throw new TrackerError('CONFLICT', 'Checkpoint belongs to an inactive agent attempt.');
+      const input = value as { key?: unknown; note?: unknown; conversationId?: unknown };
+      if (!input || typeof input.key !== 'string' || !/^[a-f0-9]{64}$/.test(input.key) || Object.keys(input).some(key => !['key', 'note', 'conversationId'].includes(key)))
+        throw new TrackerError('VALIDATION_FAILED', 'Invalid checkpoint envelope.');
+      const taskId = Decomposition.child(run)?.taskId ?? run.taskId;
+      const previous = run.stageMemory?.key === input.key && run.stageMemory.stage === run.stage && run.stageMemory.revision === run.revision && run.stageMemory.taskId === taskId ? run.stageMemory : undefined;
+      let note; let conversationId;
+      try { note = input.note === undefined ? previous?.note : StageNotes.parse(input.note); conversationId = input.conversationId === undefined ? previous?.conversationId : StageNotes.session(input.conversationId); }
+      catch (error) { throw new TrackerError('VALIDATION_FAILED', error instanceof Error ? error.message : 'Invalid checkpoint.'); }
+      if (previous?.conversationId && conversationId !== previous.conversationId) throw new TrackerError('CONFLICT', 'Native conversation changed within the same stage context.');
+      const changed = note && JSON.stringify(note) !== JSON.stringify(previous?.note);
+      const now = this.clock.now();
+      const memory: StageMemory = { key: input.key, taskId, stage: run.stage, revision: run.revision, updatedAt: now, note, conversationId };
+      this.runs.save({ ...run, stageMemory: memory, updatedAt: now,
+        usageAttempts: run.usageAttempts?.map(value => value.id === attemptId ? { ...value, nativeSessionId: conversationId } : value) });
+      if (changed && note) {
+        this.tasks.addComment({ id: taskId, text: `[CHECKPOINT ${attempt.role} · ${id.slice(0, 8)} · этап ${run.stage + 1}]\n${StageNotes.format(note)}`, kind: 'note', actor: 'agent' });
+        this.runs.event(id, 'checkpoint', `Промежуточный результат ${attempt.role} сохранён в карточке ${taskId}.`, now);
+      }
+      return memory;
+    });
+  }
   public usage(id: string, token: string, attemptId: string, usage: unknown, finished: boolean): void {
     this.runs.db.transaction(() => {
       const run = this.owned(id, token);
@@ -290,8 +318,11 @@ export class AutomationService {
       if (attempt.usage && sample) {
         if (sample.source !== attempt.usage.source) throw new TrackerError('VALIDATION_FAILED', 'Usage source changed.');
         // Ignore delayed heartbeat snapshots; snapshots are cumulative, never additive.
-        if (sample.inputTokens < attempt.usage.inputTokens || sample.outputTokens < attempt.usage.outputTokens
-          || sample.reportedRequests < attempt.usage.reportedRequests || sample.missingRequests < attempt.usage.missingRequests) return;
+        // Antigravity terminal usage is an authoritative aggregate (one record),
+        // replacing several per-step records rather than another monotonic sample.
+        const terminalAggregate = finished && sample.source === 'antigravity-json';
+        if (!terminalAggregate && (sample.inputTokens < attempt.usage.inputTokens || sample.outputTokens < attempt.usage.outputTokens
+          || sample.reportedRequests < attempt.usage.reportedRequests || sample.missingRequests < attempt.usage.missingRequests)) return;
       }
       const now = this.clock.now();
       this.runs.save({ ...run, usageAttempts: attempts.map((a) => a.id !== attemptId ? a : { ...a, updatedAt: now,

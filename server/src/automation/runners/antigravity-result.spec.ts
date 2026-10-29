@@ -6,7 +6,7 @@ import os from 'node:os';
 import { AntigravityResult } from './antigravity-result.js';
 import { NativeAgentRunner } from './native-runner.js';
 import { ProcessExecutor, type ProcessRequest } from './process-executor.js';
-import type { AgentJob } from '../../../../shared/automation/contracts.js';
+import { DEFAULT_AUTOMATION_SETTINGS, type AgentJob } from '../../../../shared/automation/contracts.js';
 import { AGENT_OUTCOME_SCHEMA } from '../../../../shared/automation/outcome-schema.js';
 
 test('Antigravity structured output is unwrapped; empty/denied/refused results cannot become pass', () => {
@@ -42,7 +42,7 @@ test('native Antigravity passes schema and worktree; captures stderr even on exi
     }
   }
   const executor = new Fixture(); const lines: string[] = [];
-  const job = { cwd, prompt: 'Fixture instructions', profile: { role: 'analyst', runner: 'antigravity', model: 'fixture' }, signal: AbortSignal.timeout(10000) } as AgentJob;
+  const job = { cwd, prompt: 'Fixture instructions', settings: structuredClone(DEFAULT_AUTOMATION_SETTINGS), profile: { role: 'analyst', runner: 'antigravity', model: 'fixture' }, signal: AbortSignal.timeout(10000) } as AgentJob;
   try {
     const result = await new NativeAgentRunner('antigravity', executor, { async verify() {} }).run(job, line => lines.push(line));
     assert.equal(JSON.parse(result.text).verdict, 'pass');

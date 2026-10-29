@@ -97,6 +97,7 @@ export const DEFAULT_AUTOMATION_SETTINGS: AutomationSettings = {
 export const DEFAULT_CHECK_COMMAND: CheckCommand = { command: 'npm', args: ['test'] };
 export const DEFAULT_SETUP_COMMAND: CheckCommand = { command: 'npm', args: ['ci'] };
 export interface AgentRun {
+  stageMemory?: import('./stage-note.js').StageMemory;
   cleanup?: import('./cleanup.js').CleanupState;
   budgetApproval?: { requiredCalls: number; currentCalls: number };
   checkpointBudgets?: Pick<AutomationSettings, 'maxAgentCalls' | 'maxInputTokens' | 'maxRunMinutes' | 'maxStageToolCalls' | 'timeoutMinutes'>;
@@ -151,6 +152,9 @@ export interface AgentOutcome {
 }
 
 export interface AgentJob {
+  sessionId?: string;
+  sessionUsage?: import('./token-usage.js').TokenUsage;
+  onSession?: (sessionId: string) => void;
   projectMcp?: { name: string; command: string; args: string[]; envVars: string[]; tools: string[] }[];
   maxToolCalls?: number;
   onUsage?: (usage: import('./token-usage.js').TokenUsage, state?: { terminal: boolean }) => void;

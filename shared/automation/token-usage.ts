@@ -9,6 +9,7 @@ export interface TokenUsage {
   reportedRequests: number; missingRequests: number; source: UsageSource;
 }
 export interface UsageAttempt {
+  nativeSessionId?: string;
   kind?: 'pipeline' | 'resolver';
   id: string; stage: number; revision: number; role: AgentRole; runner: RunnerId; model: string;
   startedAt: string; updatedAt: string; finished: boolean; usage?: TokenUsage;

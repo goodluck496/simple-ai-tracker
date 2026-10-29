@@ -11,6 +11,7 @@ import { NativeExecutable } from './native-executable.js';
 import { AntigravityResult } from './antigravity-result.js';
 import { WorktreePermissions } from './worktree-permissions.js';
 import { AntigravityStream } from './antigravity-stream.js';
+import { StageNotes } from '../../../../shared/automation/stage-note.js';
 
 interface Envelope { type?: string; is_error?: boolean; result?: string; response?: string; status?: string; session_id?: string; conversation_id?: string; item?: { type?: string; text?: string }; part?: { type?: string; text?: string }; }
 const NATIVE_SUCCESS_STATUSES = new Set(['SUCCESS', 'success']);
@@ -40,7 +41,14 @@ export class NativeAgentRunner implements AgentRunner {
       case RunnerId.ClaudeCode: command = 'claude'; args = ['-p', '--output-format', 'json', '--model', model]; stdin = job.prompt; break;
       case RunnerId.OpenCode: command = RunnerId.OpenCode; args = ['run', '--format', 'json', '--model', model, brief]; break;
       case RunnerId.DeepSeekHarness: command = 'dsh'; args = ['--profile', job.profile.nativeProfile!, brief]; break;
-      case RunnerId.Antigravity: command = NativeExecutable.antigravity(); args = ['--add-dir', job.cwd, '--dangerously-skip-permissions', '--output-format', 'stream-json', '--json-schema', schemaPath, '--model', model, '-p', brief]; break;
+      case RunnerId.Antigravity: {
+        command = NativeExecutable.antigravity();
+        args = ['--add-dir', job.cwd, '--dangerously-skip-permissions', '--output-format', 'stream-json', '--json-schema', schemaPath, '--model', model,
+          '--print-timeout', `${job.settings.timeoutMinutes}m`];
+        if (job.sessionId) args.push('--conversation', StageNotes.session(job.sessionId));
+        args.push('-p', job.sessionId ? brief + ' Continue the saved stage only. Re-read current instructions, partialCheckpoint and .sat/stage-context.json currentNote: recovered progress and repository files may have changed. Do not repeat completed research.' : brief);
+        break;
+      }
       case RunnerId.Custom: {
         command = job.profile.command!;
         const values: Record<string, string> = { promptFile, model, cwd: job.cwd, role: job.profile.role, provider: job.connection.id };
@@ -109,7 +117,17 @@ export class NativeAgentRunner implements AgentRunner {
     if (this.id !== RunnerId.Custom) args.push(...(job.profile.args ?? []));
     const toolIds = new Set<string>();
     let toolThresholdReported = false;
-    const antigravity = this.id === RunnerId.Antigravity ? new AntigravityStream(onProgress, job.onUsage) : undefined;
+    const nativeStop = new AbortController();
+    let nativeError: string | undefined;
+    const antigravity = this.id === RunnerId.Antigravity ? new AntigravityStream(onProgress, job.onUsage, id => {
+      if (job.sessionId && id !== job.sessionId) { nativeError = 'Antigravity resumed a different conversation; refusing a silent restart.'; nativeStop.abort(); return; }
+      job.onSession?.(id);
+    }, count => {
+      if (job.maxToolCalls && count > job.maxToolCalls && !nativeError) {
+        nativeError = `Antigravity остановлен: превышен предел ${job.maxToolCalls} наблюдаемых вызовов инструментов. Последний checkpoint и worktree сохранены; автоматического повтора нет.`;
+        onProgress(nativeError + '\n'); nativeStop.abort();
+      }
+    }, job.sessionId ? job.sessionUsage : undefined) : undefined;
     const meter = new NativeUsageStream(this.id, sample => job.onUsage?.(sample, { terminal: true }), (value) => {
       if (antigravity) { antigravity.record(value); return; }
       for (const line of CompactProgress.record(value)) onProgress(line + '\n');
@@ -123,9 +141,11 @@ export class NativeAgentRunner implements AgentRunner {
       }
     });
     let raw: string; let diagnosticTail = '';
-    try { raw = await this.executor.run({ command, args, cwd: job.cwd, stdin, env: TaskEnvironment.create(), signal: job.signal, compactProgress: true, onProgress, onStdout: (text) => meter.push(text),
+    try { raw = await this.executor.run({ command, args, cwd: job.cwd, stdin, env: TaskEnvironment.create(), signal: antigravity ? AbortSignal.any([job.signal, nativeStop.signal]) : job.signal, compactProgress: true, onProgress, onStdout: (text) => meter.push(text),
       onStderr: this.id === RunnerId.Antigravity ? text => { diagnosticTail = (diagnosticTail + text).slice(-8000); } : undefined }); }
+    catch (error) { if (nativeError) throw new Error(nativeError); throw error; }
     finally { meter.finish(); }
+    if (nativeError) throw new Error(nativeError);
     // Some executors and formatted JSON outputs provide only the final complete document.
     if (!meter.usage) {
       try { const usage = UsageParser.native(this.id, JSON.parse(raw)); if (usage) { meter.usage = usage; job.onUsage?.(usage); } }
