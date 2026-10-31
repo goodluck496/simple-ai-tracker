@@ -1,15 +1,20 @@
 # SAT-7: bounded pipeline execution
 
-Each run snapshots configurable limits: 20 active minutes, 6 agent invocations,
+Each run snapshots configurable limits: 20 agent execution minutes, 6 agent invocations,
 500,000 observed input tokens (cached input is already included), and one
 revision cycle by default. Existing configured revision limits are preserved.
-The separate attempt timeout continues to apply. Settings affect new runs;
+The separate timeout applies to each agent invocation, starting when the agent
+is dispatched. Settings affect new runs;
 workers and server must load the updated build to enforce the new contract.
 
 The server fences every new invocation. The worker aborts its process tree on
 the active-time deadline or a usage callback reaching the input threshold.
 Server heartbeat and stage completion also check measured usage/time.
-Active elapsed time is persisted on heartbeat, stage completion, cancellation,
+Only the `agent` phase (including conflict resolver calls) consumes the time
+budget. Slot waiting, worktree creation, dependency setup, worker checks and
+integration do not consume it. Worker cancellation and lease monitoring remain
+active throughout preparation. Previously accumulated time is preserved.
+Agent elapsed time is persisted on heartbeat, stage completion, cancellation,
 failure and expired lease. User waiting time is excluded. Expired leases count
 up to their expiry to conservatively account for a lost worker.
 Resume retains invocation history, usage and active elapsed time. Exhausted

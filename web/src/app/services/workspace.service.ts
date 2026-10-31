@@ -54,14 +54,18 @@ export class WorkspaceService {
   }
 
   /** Создать новое пространство. */
-  public async create(name: string, label?: string): Promise<void> {
-    await firstValueFrom(this.http.post(`${API_BASE}/workspaces`, { name, label }));
+  public async create(name: string, label?: string, idPrefix?: string): Promise<void> {
+    await firstValueFrom(this.http.post(`${API_BASE}/workspaces`, { name, label, idPrefix }));
     await this.load();
   }
 
-  public async rename(name: string, label: string): Promise<void> {
-    await firstValueFrom(this.http.post(`${API_BASE}/workspaces/${encodeURIComponent(name)}/rename`, { label }));
+  public async rename(name: string, label: string, idPrefix?: string): Promise<void> {
+    await firstValueFrom(this.http.post(`${API_BASE}/workspaces/${encodeURIComponent(name)}/rename`, { label, idPrefix }));
     await this.load();
+  }
+
+  public prefix(name: string): Promise<{ idPrefix: string }> {
+    return firstValueFrom(this.http.get<{ idPrefix: string }>(`${API_BASE}/workspaces/${encodeURIComponent(name)}/prefix`));
   }
 
   /** Переключить активное пространство. */

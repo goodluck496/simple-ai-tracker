@@ -110,8 +110,9 @@ export class WorkspaceManager {
   }
 
   /** Создать новое пространство (БД создаётся при первом обращении). */
-  create(name: string, label?: string): WorkspaceInfo {
+  create(name: string, label?: string, idPrefix = this.baseConfig.idPrefix): WorkspaceInfo {
     this.refreshRegistry();
+    const prefix = this.validatePrefix(idPrefix);
     if (typeof name !== 'string' || (label !== undefined && typeof label !== 'string')) {
       throw new TrackerError('VALIDATION_FAILED', 'Workspace name and label must be strings.');
     }
@@ -133,7 +134,7 @@ export class WorkspaceManager {
     }
 
     // Create the DB file immediately (runs migrations)
-    this.openWorkspaceDb(ws);
+    this.openWorkspaceDb(ws, prefix);
     this.registry.workspaces.push(ws);
     this.saveRegistry();
 
@@ -142,15 +143,26 @@ export class WorkspaceManager {
   }
 
   /** Rename the display label without changing task/worker/storage identity. */
-  public renameLabel(name: string, label: string): WorkspaceInfo {
+  public renameLabel(name: string, label: string, idPrefix?: string): WorkspaceInfo {
     const current = this.get(name);
+    const prefix = idPrefix === undefined ? undefined : this.validatePrefix(idPrefix);
     if (typeof label !== 'string' || !label.trim() || label.trim().length > 100 || /[\u0000-\u001f\u007f]/.test(label)) {
       throw new TrackerError('VALIDATION_FAILED', 'Название пространства: от 1 до 100 символов без управляющих символов.');
     }
     const renamed = { ...current, label: label.trim() };
     this.registry.workspaces = this.registry.workspaces.map(ws => ws.name === name ? renamed : ws);
     this.saveRegistry();
+    if (prefix !== undefined) this.within(name, () => this.active.repos.meta.set('id_prefix', prefix));
     return renamed;
+  }
+
+  public prefix(name: string): string { return this.within(name, () => this.active.config.idPrefix); }
+
+  private validatePrefix(value: string): string {
+    if (typeof value !== 'string' || !/^[A-Za-z][A-Za-z0-9_]{0,19}$/.test(value.trim())) {
+      throw new TrackerError('VALIDATION_FAILED', 'Префикс: 1–20 латинских букв, цифр или _, начиная с буквы.');
+    }
+    return value.trim().toUpperCase();
   }
 
   /** Переключить активное пространство. */
@@ -226,10 +238,12 @@ export class WorkspaceManager {
   }
 
   /** Open the workspace DB (creates file + runs migrations if needed). */
-  private openWorkspaceDb(ws: WorkspaceInfo): void {
+  private openWorkspaceDb(ws: WorkspaceInfo, prefix: string): void {
     const db = new NodeSqliteDatabase({ file: ws.dbPath });
-    new MigrationRunner(db, this.logger).run();
-    db.close();
+    try {
+      new MigrationRunner(db, this.logger).run();
+      createRepositories(db).meta.set('id_prefix', prefix);
+    } finally { db.close(); }
   }
 
   /** Build all services against a specific workspace's DB. */
@@ -251,11 +265,16 @@ export class WorkspaceManager {
     const repos = createRepositories(db);
 
     // Preserve ID prefix per workspace
-    const storedPrefix = repos.meta.get('id_prefix');
-    const finalConfig = storedPrefix ? { ...config, idPrefix: storedPrefix } : config;
-    if (!storedPrefix) {
-      repos.meta.set('id_prefix', this.baseConfig.idPrefix);
-    }
+    db.transaction(() => {
+      if (!repos.meta.get('id_prefix')) {
+        // Legacy databases may already contain project IDs but no prefix metadata.
+        const first = repos.taskQueries.listSummaries({ limit: 1 })[0];
+        const existing = first?.id.match(/^(.+)-\d+$/)?.[1];
+        repos.meta.set('id_prefix', existing ?? this.baseConfig.idPrefix);
+      }
+    });
+    // Other API/MCP/worker processes may change this setting while we stay open.
+    const finalConfig: TrackerConfig = { ...config, get idPrefix() { return repos.meta.get('id_prefix') ?? config.idPrefix; } };
     if (!repos.meta.get('created_at')) {
       repos.meta.set('created_at', systemClock.now());
     }

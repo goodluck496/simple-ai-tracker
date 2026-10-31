@@ -192,10 +192,10 @@
           @let time = runBudget.time(run, now());
           <div class="run-budget-summary" role="status">
             @if (time.disabled) {
-              Доверенный запуск без лимитов. Потрачено {{ time.usedMs / 60000 | number:'1.1-1' }} мин. Можно остановить вручную.
+              Доверенный запуск без лимитов. Работа агентов: {{ time.usedMs / 60000 | number:'1.1-1' }} мин. Можно остановить вручную.
             } @else {
             Время: {{ time.usedMs / 60000 | number:'1.1-1' }} из {{ time.limitMs / 60000 | number:'1.0-0' }} мин ·
-            Осталось {{ time.remainingMs / 60000 | number:'1.1-1' }} мин. Учитываются все попытки запуска.
+            Осталось {{ time.remainingMs / 60000 | number:'1.1-1' }} мин работы агентов. Учитываются все вызовы; подготовка и проверки worker исключены.
             }
           </div>
           @if (item.status === runStatus.Failed || item.status === runStatus.Interrupted || item.status === runStatus.MergeBlocked) {
@@ -288,7 +288,7 @@
           <div class="facts">
             <span>Фаза: {{ item.phase ? phaseTitles[item.phase] : 'Ожидание worker' }}</span>
             <span>Фаза длится: {{ duration(item.phaseStartedAt) }}</span>
-            <span>Попытка: {{ duration(item.attemptStartedAt) }} · лимит {{ item.timeoutMinutes }} мин</span>
+            <span>С начала попытки: {{ duration(item.attemptStartedAt) }} · лимит одного вызова агента {{ item.timeoutMinutes }} мин</span>
             <span>Heartbeat: {{ (item.heartbeatAt | date:'mediumTime') || 'ещё не было' }}</span>
             <span>Событие: {{ (item.progressAt | date:'mediumTime') || 'ещё не было' }}</span>
             <span>Возвратов: {{ item.revision }}</span>

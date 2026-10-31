@@ -94,6 +94,7 @@ export class AutomationService {
       if ((value.state === 'ready' || value.state === 'publishing') && !value.candidateSha) throw new TrackerError('VALIDATION_FAILED', 'Verified candidate SHA is required.');
       const now = this.clock.now();
       this.runs.save({ ...run, phase: RunPhase.Merge, phaseStartedAt: run.phase === RunPhase.Merge ? run.phaseStartedAt : now,
+        budgetElapsedMs: RunBudget.elapsed(run, Date.parse(now)), budgetUpdatedAt: now,
         integration: { state: value.state, sourceSha: value.sourceSha, baseSha: value.baseSha, candidateSha: value.candidateSha,
           targetBranch: value.targetBranch, worktreePath: value.worktreePath, attempt: value.attempt, noChanges: !!value.noChanges,
           error: typeof value.error === 'string' ? value.error.slice(0, 3000) : undefined } });
@@ -274,6 +275,7 @@ export class AutomationService {
       startedAt: now, updatedAt: now, finished: false };
     const legacyUsageMissing = run.usageAttempts === undefined && (run.stage > 0 || run.revision > 0 || this.runs.events(id).some((event) => event.kind === 'stage'));
     this.runs.save({ ...run, phase: RunPhase.Agent, phaseStartedAt: now, updatedAt: now, lastMessage: '',
+      budgetElapsedMs: RunBudget.elapsed(run, Date.parse(now)), budgetUpdatedAt: now,
       usageIncomplete: run.usageIncomplete || legacyUsageMissing, usageAttempts: [...(run.usageAttempts ?? []), attempt] });
     this.runs.event(id, 'stage', `${agent.role}: ${agent.runner} / ${agent.model}`, this.clock.now());
     return attempt.id;

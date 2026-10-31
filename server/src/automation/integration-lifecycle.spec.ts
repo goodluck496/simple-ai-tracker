@@ -33,10 +33,13 @@ test('integration keeps its lease, fences publication cancellation and acknowled
     assert.equal(f.service.detail(f.run.id).run.finishedAt, undefined);
     f.finish(); assert.equal(f.service.detail(f.run.id).run.status, 'integrating');
     assert.equal(f.service.detail(f.run.id).run.finishedAt, undefined);
+    f.service.beginStage(f.run.id, f.token, true);
+    f.advance(60000);
+    f.service.heartbeat(f.run.id, f.token, true);
     const info = { state: 'publishing' as const, sourceSha: 'a'.repeat(40), baseSha: 'b'.repeat(40), candidateSha: 'c'.repeat(40), targetBranch: 'master', worktreePath: '/fixture-integration', attempt: 1 };
     f.service.integration(f.run.id, f.token, info);
     assert.throws(() => f.service.cancel(f.run.id), /publication/);
-    f.advance(65000);
+    f.advance(5000);
     assert.throws(() => f.service.heartbeat(f.run.id, f.token), /budget/);
     f.service.heartbeat(f.run.id, f.token, false, true);
     assert.throws(() => f.service.beginStage(f.run.id, f.token, true), /budget/);

@@ -39,11 +39,46 @@ test('run budgets survive resume, include cached input once, and fence new agent
     assert.equal(resumed.budgetElapsedMs, 30000, 'waiting time does not consume active budget');
     assert.throws(() => service.beginStage(run.id, resumed.leaseToken!), /agent call limit/);
     now = '2026-10-26T00:00:30.000Z';
-    assert.throws(() => service.heartbeat(run.id, resumed.leaseToken!), /active time limit/);
-    service.fail(run.id, resumed.leaseToken!, 'Time budget exhausted');
-    assert.match(RunBudget.stopReason(service.detail(run.id).run), /Исчерпан общий лимит времени/);
-    assert.throws(() => service.resume(run.id), /active time limit/);
+    service.heartbeat(run.id, resumed.leaseToken!);
+    assert.equal(service.detail(run.id).run.budgetElapsedMs, 30000, 'resumed preparation is not agent time');
     assert.equal(service.detail(run.id).run.usageAttempts!.length, 1);
+  } finally { app.close(); }
+});
+
+test('only agent execution consumes time across preparation, checks and resume', () => {
+  let milliseconds = Date.parse('2026-10-30T00:00:00Z');
+  const app = createContainer({ config: { dbPath: ':memory:' }, clock: { now: () => new Date(milliseconds).toISOString() }, logger: new SilentLogger() });
+  try {
+    const service = app.automationService;
+    service.configure({ ...exampleSettings(), maxRunMinutes: 1 });
+    const task = app.taskService.createTask({ title: 'Agent execution clock' });
+    service.enqueue(task.id);
+    let run = service.claim('worker')!;
+    const advance = (seconds: number) => { milliseconds += seconds * 1000; };
+    for (const phase of ['preparing', 'waiting-slot', 'setup'] as const) {
+      service.progress(run.id, run.leaseToken!, 'Administrative work', phase);
+      advance(30);
+      service.heartbeat(run.id, run.leaseToken!);
+      assert.equal(service.detail(run.id).run.budgetElapsedMs, 0);
+    }
+    service.beginStage(run.id, run.leaseToken!);
+    advance(20);
+    service.progress(run.id, run.leaseToken!, 'Agent returned', 'checks');
+    advance(30);
+    service.heartbeat(run.id, run.leaseToken!);
+    assert.equal(service.detail(run.id).run.budgetElapsedMs, 20000);
+    service.fail(run.id, run.leaseToken!, 'Infrastructure stopped');
+    advance(60);
+    service.resume(run.id);
+    run = service.claim('worker')!;
+    advance(30);
+    service.heartbeat(run.id, run.leaseToken!);
+    service.beginStage(run.id, run.leaseToken!);
+    advance(40);
+    assert.throws(() => service.heartbeat(run.id, run.leaseToken!), /active time limit/);
+    service.fail(run.id, run.leaseToken!, 'Time budget exhausted');
+    assert.equal(service.detail(run.id).run.budgetElapsedMs, 60000);
+    assert.throws(() => service.resume(run.id), /active time limit/);
   } finally { app.close(); }
 });
 

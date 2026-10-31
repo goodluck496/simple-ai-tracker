@@ -22,13 +22,15 @@ export function registerWorkspaceRoutes(router: Router, app: AppContainer, manag
   router.post('/api/workspaces', ({ body, res }) => {
     const name = requireBodyField<string>(body, 'name');
     const label = bodyField<string>(body, 'label');
-    const ws = manager.create(name, label);
+    const ws = manager.create(name, label, bodyField<string>(body, 'idPrefix'));
     sendJson(res, 201, { workspace: ws });
   });
 
   router.post('/api/workspaces/:name/rename', ({ params, body, res }) => {
-    sendJson(res, 200, { workspace: manager.renameLabel(params.name, requireBodyField<string>(body, 'label')) });
+    sendJson(res, 200, { workspace: manager.renameLabel(params.name, requireBodyField<string>(body, 'label'), bodyField<string>(body, 'idPrefix')) });
   });
+
+  router.get('/api/workspaces/:name/prefix', ({ params, res }) => sendJson(res, 200, { idPrefix: manager.prefix(params.name) }));
 
   // POST /api/workspaces/:name/activate — переключить
   router.post('/api/workspaces/:name/activate', ({ params, res }) => {

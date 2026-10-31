@@ -65,10 +65,14 @@ import { WorkspaceService } from '../../services/workspace.service';
         <label class="ws-create-label">Название пространства
           <input pInputText name="workspaceLabel" [ngModel]="renameLabel()" (ngModelChange)="renameLabel.set($event)" maxlength="100" autofocus [disabled]="renaming()" />
         </label>
+        <label class="ws-create-label">Префикс новых задач
+          <input pInputText name="workspacePrefix" [ngModel]="renamePrefix()" (ngModelChange)="renamePrefix.set($event)" maxlength="20" [disabled]="renaming()" placeholder="MS" />
+        </label>
+        <p class="ws-create-hint">Например MS или SAT. Номера существующих задач сохранятся.</p>
         @if (renameError()) { <p role="alert">{{ renameError() }}</p> }
         <div class="ws-create-actions">
           <p-button label="Отмена" severity="secondary" [disabled]="renaming()" (onClick)="showRename.set(false)" />
-          <p-button type="submit" label="Сохранить название" [loading]="renaming()" [disabled]="!renameLabel().trim() || renaming()" />
+          <p-button type="submit" label="Сохранить название" [loading]="renaming()" [disabled]="!renameLabel().trim() || !renamePrefix().trim() || renaming()" />
         </div>
       </form>
     </p-dialog>
@@ -86,6 +90,11 @@ import { WorkspaceService } from '../../services/workspace.service';
             <span>Отображаемое имя (опционально)</span>
             <input pInputText [ngModel]="newLabel()" (ngModelChange)="newLabel.set($event)" placeholder="My Project" />
           </label>
+          <label class="ws-create-label">
+            <span>Префикс новых задач</span>
+            <input pInputText [ngModel]="newPrefix()" (ngModelChange)="newPrefix.set($event)" maxlength="20" placeholder="SAT" />
+          </label>
+          @if (createError()) { <p role="alert">{{ createError() }}</p> }
           <div class="ws-create-actions">
             <button type="button" pButton label="Отмена" severity="secondary" [text]="true" (click)="showCreate.set(false)"></button>
             <button type="button" pButton label="Создать" icon="pi pi-check" [loading]="creating()" (click)="onCreate()"></button>
@@ -164,22 +173,30 @@ export class WorkspaceSelectorComponent implements OnInit {
   public readonly creating = signal(false);
   public readonly newName = signal('');
   public readonly newLabel = signal('');
+  public readonly newPrefix = signal('SAT');
+  public readonly createError = signal('');
   public readonly showRename = signal(false);
   public readonly renaming = signal(false);
   public readonly renameLabel = signal('');
+  public readonly renamePrefix = signal('');
   public readonly renameError = signal('');
   private renameTarget = '';
 
-  public onShowRename(): void {
+  public async onShowRename(): Promise<void> {
     this.renameTarget = this.ws.current();
     this.renameLabel.set(this.ws.workspaces().find(ws => ws.name === this.renameTarget)?.label ?? this.renameTarget);
     this.renameError.set('');
+    this.renamePrefix.set('');
     this.showRename.set(true);
+    this.renaming.set(true);
+    try { this.renamePrefix.set((await this.ws.prefix(this.renameTarget)).idPrefix); }
+    catch { this.renameError.set('Не удалось загрузить префикс пространства. Закройте окно и повторите.'); }
+    finally { this.renaming.set(false); }
   }
   public async onRename(): Promise<void> {
-    if (this.renaming() || !this.renameLabel().trim()) return;
+    if (this.renaming() || !this.renameLabel().trim() || !this.renamePrefix().trim()) return;
     this.renaming.set(true); this.renameError.set('');
-    try { await this.ws.rename(this.renameTarget, this.renameLabel().trim()); this.showRename.set(false); }
+    try { await this.ws.rename(this.renameTarget, this.renameLabel().trim(), this.renamePrefix().trim()); this.showRename.set(false); }
     catch (error) {
       const response = error as { error?: { error?: { message?: string } } };
       this.renameError.set(response.error?.error?.message ?? 'Не удалось переименовать пространство. Попробуйте ещё раз.');
@@ -201,16 +218,22 @@ export class WorkspaceSelectorComponent implements OnInit {
   public onShowCreate(): void {
     this.newName.set('');
     this.newLabel.set('');
+    this.newPrefix.set('SAT');
+    this.createError.set('');
     this.showCreate.set(true);
   }
 
   public async onCreate(): Promise<void> {
     const name = this.newName().trim();
-    if (!name) return;
+    if (!name || this.creating()) return;
     this.creating.set(true);
+    this.createError.set('');
     try {
-      await this.ws.create(name, this.newLabel().trim() || undefined);
+      await this.ws.create(name, this.newLabel().trim() || undefined, this.newPrefix().trim());
       this.showCreate.set(false);
+    } catch (error) {
+      const response = error as { error?: { error?: { message?: string } } };
+      this.createError.set(response.error?.error?.message ?? 'Не удалось создать пространство. Проверьте имя и префикс.');
     } finally {
       this.creating.set(false);
     }

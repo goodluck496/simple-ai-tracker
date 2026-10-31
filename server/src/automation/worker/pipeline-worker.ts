@@ -58,9 +58,8 @@ export class PipelineWorker {
       if (run.trustedExecution) return;
       const remainingMs = RunBudget.limits(run).minutes * 60000 - RunBudget.elapsed(run, Date.now());
       timeout = setTimeout(() => { budgetError = 'Run stopped: execution time budget exhausted.'; controller.abort(); },
-        recoveryOnly ? 30000 : Math.max(0, Math.min(run.settings.timeoutMinutes * 60_000, remainingMs)));
+        Math.max(0, Math.min(run.settings.timeoutMinutes * 60_000, remainingMs)));
     };
-    if (recoveryOnly) armBudget();
     const pending = new ProgressBuffer(); let channelError: unknown;
     let heartbeatBusy = false;
     let metering: { attemptId: string; usage?: TokenUsage; terminal?: boolean } | undefined;
@@ -104,7 +103,7 @@ export class PipelineWorker {
       await phase(RunPhase.WaitingSlot, 'Ожидание свободного слота проекта.');
       if (!recoveryOnly) leases.push(await coordinator.acquire(`slot:${run.id}`, controller.signal, run.settings.maxParallelRuns ?? 2));
       await phase(RunPhase.Preparing, 'Слот получен; подготовка рабочей ветки.');
-      if (!recoveryOnly) { run = await this.channel.call<AgentRun>(AutomationTool.Heartbeat, { id: run.id, leaseToken: token }); armBudget(); }
+      if (!recoveryOnly) run = await this.channel.call<AgentRun>(AutomationTool.Heartbeat, { id: run.id, leaseToken: token });
       const execution = { env: undefined as NodeJS.ProcessEnv | undefined,
         child: (pid: number, active: boolean) => { for (const lease of leases) lease.child(pid, active); runtime?.child(pid, active); preparation?.child(pid, active); } };
       await ExecutionScope.run(execution, async () => {
@@ -117,6 +116,8 @@ export class PipelineWorker {
           metering = { attemptId: started.attemptId };
           let complete = false;
           try {
+            run = await this.channel.call<AgentRun>(AutomationTool.Heartbeat, { id: run!.id, leaseToken: token });
+            armBudget();
             const connection = run!.settings.connections.find(c => c.id === profile.connectionId)!;
             const result = await this.registry.get(profile.runner).run({ runId: run!.id, cwd: directory, profile, connection,
               prompt, settings: run!.settings, trustedExecution: run!.trustedExecution, signal, maxToolCalls: maxTools,
@@ -125,7 +126,11 @@ export class PipelineWorker {
             const outcome = this.parseOutcome(result.text); outcome.summary = redact(outcome.summary);
             if (outcome.verdict === AgentVerdict.Questions && outcome.questions?.length) await this.channel.call('tracker_ask_questions', { id: run!.taskId, questions: outcome.questions, phase: 'testing' });
             complete = true; return outcome;
-          } finally { if (metering) { const sample = metering; metering = undefined; await reportUsage(sample, complete); } }
+          } finally {
+            clearTimeout(timeout);
+            await phase(RunPhase.Merge, 'Вызов агента разрешения конфликтов завершён.');
+            if (metering) { const sample = metering; metering = undefined; await reportUsage(sample, complete); }
+          }
         });
         await new SquashIntegration(this.executor).run({ runId: run!.id, taskId: run!.taskId, repository, common,
           sourceSha: run!.commitSha!, targetBranch: run!.settings.baseBranch, directory: cwd,
@@ -274,6 +279,8 @@ export class PipelineWorker {
         }, progress, () => controller.abort());
         await journal.start(memory);
         try {
+          run = await this.channel.call<AgentRun>(AutomationTool.Heartbeat, { id: run.id, leaseToken: token });
+          armBudget();
           const result = await this.registry.get(profile.runner).run({ runId: run.id, cwd, prompt, profile, connection, settings: run.settings, trustedExecution: run.trustedExecution, signal: controller.signal,
             baseSha: baseline, onCheckpoint: note => journal.checkpoint(note),
             sessionId: profile.runner === 'antigravity' ? memory?.conversationId : undefined,
@@ -307,9 +314,11 @@ export class PipelineWorker {
         } catch (error) {
           throw new Error(`${profile.role}/${profile.runner}: ${error instanceof Error ? error.message : String(error)}`);
         } finally {
+          clearTimeout(timeout);
           // Flush while the lease/attempt is still current, including timeout and invalid outcome.
           try { await journal.close(); }
           finally {
+            await phase(RunPhase.Preparing, 'Вызов агента завершён; сохранение результата worker.');
             if (metering) {
               const sample = metering; metering = undefined;
               await reportUsage(sample, usageComplete);
