@@ -31,7 +31,7 @@ export function registerImageRoutes(router: Router, app: AppContainer): void {
     res.writeHead(200, {
       'Content-Type': MIME_BY_EXTENSION[extension] ?? 'application/octet-stream',
       'Content-Length': stat.size,
-      'Cache-Control': 'public, max-age=31536000, immutable',
+      'Cache-Control': 'private, no-store',
     });
     fs.createReadStream(filePath).pipe(res);
   });

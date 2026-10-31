@@ -1,3 +1,4 @@
+import type { GoogleAuth } from './google-auth.js';
 import http from 'node:http';
 import type { AppContainer } from '../bootstrap/container.js';
 import { Router, sendJson } from './router.js';
@@ -12,6 +13,7 @@ import { registerAutomationRoutes } from './routes/automation.routes.js';
 
 export interface ApiServerOptions {
   readonly cors?: boolean;
+  readonly auth?: GoogleAuth;
 }
 
 /**
@@ -29,9 +31,9 @@ export function createApiServer(app: AppContainer, options: ApiServerOptions = {
   registerAutomationRoutes(router, app);
 
   const staticServer = new StaticFileServer(app.config.webDistDir);
-  const cors = options.cors ?? true;
+  const cors = options.auth ? false : options.cors ?? true;
 
-  return http.createServer((req, res) => {
+  const dispatch = (req: http.IncomingMessage, res: http.ServerResponse): void => {
     const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
 
     if (cors) {
@@ -65,10 +67,18 @@ export function createApiServer(app: AppContainer, options: ApiServerOptions = {
     }
 
     if (req.method === 'GET' || req.method === 'HEAD') {
-      staticServer.serve(req, res, url.pathname);
+      staticServer.serve(req, res, url.pathname, options.auth?.basePath);
       return;
     }
 
     sendJson(res, 405, { error: { code: 'METHOD_NOT_ALLOWED', message: `${req.method} не поддерживается.` } });
+  };
+  return http.createServer((req, res) => {
+    if (!options.auth) { dispatch(req, res); return; }
+    const url = new URL(req.url ?? '/', 'http://localhost');
+    void options.auth.handle(req, res, url).then(handled => { if (!handled) dispatch(req, res); }).catch(() => {
+      if (!res.headersSent) sendJson(res, 500, { error: { code: 'INTERNAL', message: 'Request failed.' } });
+      else res.end();
+    });
   });
 }

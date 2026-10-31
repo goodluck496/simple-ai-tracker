@@ -21,3 +21,6 @@ Dockerfile
 
 # Git
 .git/
+
+# Google OAuth secrets
+.env.auth

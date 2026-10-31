@@ -43,7 +43,7 @@ export class StaticFileServer {
     return fs.existsSync(path.join(this.rootDir, 'index.html'));
   }
 
-  public serve(req: IncomingMessage, res: ServerResponse, pathname: string): void {
+  public serve(req: IncomingMessage, res: ServerResponse, pathname: string, basePath?: string): void {
     if (!this.available) {
       res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
       res.end(MISSING_BUILD_PAGE);
@@ -55,13 +55,13 @@ export class StaticFileServer {
     const isInsideRoot = resolved.startsWith(path.resolve(this.rootDir));
 
     if (isInsideRoot && fs.existsSync(resolved) && fs.statSync(resolved).isFile()) {
-      this.streamFile(res, resolved);
+      this.streamFile(res, resolved, basePath);
       return;
     }
 
     // SPA-роут или отсутствующий ассет: отдаём index.html только для навигации.
     if (!path.extname(relative)) {
-      this.streamFile(res, path.join(this.rootDir, 'index.html'));
+      this.streamFile(res, path.join(this.rootDir, 'index.html'), basePath);
       return;
     }
 
@@ -69,20 +69,21 @@ export class StaticFileServer {
     res.end('Not found');
   }
 
-  private streamFile(res: ServerResponse, filePath: string): void {
+  private streamFile(res: ServerResponse, filePath: string, basePath?: string): void {
     const extension = path.extname(filePath).toLowerCase();
     const contentType = MIME_TYPES[extension] ?? 'application/octet-stream';
     const isHtml = extension === '.html';
     const stat = fs.statSync(filePath);
+    const html = isHtml ? fs.readFileSync(filePath, 'utf8').replace('<base href="/"', `<base href="${basePath ?? '/'}"`) : undefined;
 
     res.writeHead(200, {
       'Content-Type': contentType,
-      'Content-Length': stat.size,
+      'Content-Length': html === undefined ? stat.size : Buffer.byteLength(html),
       'Cache-Control': isHtml ? 'no-cache' : 'public, max-age=3600',
     });
 
     if (isHtml) {
-      res.end(fs.readFileSync(filePath));
+      res.end(html);
       return;
     }
     fs.createReadStream(filePath).pipe(res);

@@ -1,3 +1,4 @@
+import { publicUrl } from '../../services/public-url';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import {
@@ -106,6 +107,7 @@ interface TabDefinition {
   styleUrl: './task-dialog.component.scss',
 })
 export class TaskDialogComponent {
+  public readonly imageUrl = publicUrl;
   public readonly store = inject(TrackerStore);
   private readonly confirmation = inject(ConfirmationService);
 

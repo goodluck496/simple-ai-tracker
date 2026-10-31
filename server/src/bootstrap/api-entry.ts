@@ -1,10 +1,11 @@
+import { GoogleAuth } from '../api/google-auth.js';
 import { createContainer } from './container.js';
 import { createApiServer } from '../api/http-server.js';
 import { BackupScheduler } from '../services/backup-scheduler.js';
 
 /** Точка входа HTTP API + UI. */
 const app = createContainer();
-const server = createApiServer(app);
+const server = createApiServer(app, { auth: new GoogleAuth() });
 
 const scheduler = new BackupScheduler(
   app.backupService,

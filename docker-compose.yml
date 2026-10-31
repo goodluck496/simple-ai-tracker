@@ -8,6 +8,8 @@ services:
       # Bind mount: SQLite DB, backups и картинки лежат прямо в ./data
       # Можно подменять tracker.db, делать экспорт/импорт, не заходя в контейнер
       - ./data:/app/data
+    env_file:
+      - .env.auth
     restart: unless-stopped
 #    environment:
       # Override if needed:

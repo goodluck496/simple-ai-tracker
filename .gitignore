@@ -29,3 +29,6 @@ Thumbs.db
 .sat/
 
 .idea/
+
+# Google OAuth secrets
+.env.auth

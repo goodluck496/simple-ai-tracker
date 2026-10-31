@@ -1,3 +1,4 @@
+import { publicUrl } from './public-url';
 import { HttpClient, HttpParams } from '@angular/common/http';
 import { Injectable, inject } from '@angular/core';
 import { Observable, catchError, of, throwError } from 'rxjs';
@@ -208,7 +209,7 @@ export class TrackerApiService {
   }
 
   public backupDownloadUrl(name: string): string {
-    return `${API_BASE}/admin/backups/${encodeURIComponent(name)}/download`;
+    return publicUrl(`${API_BASE}/admin/backups/${encodeURIComponent(name)}/download`);
   }
 
   /** Извлекает сообщение об ошибке API для показа пользователю. */
