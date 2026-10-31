@@ -131,6 +131,12 @@
   white-space: nowrap;
 }
 
+.logout-form {
+  display: flex;
+  align-items: center;
+  margin: 0;
+}
+
 .header-actions {
   position: relative;
   z-index: 101;

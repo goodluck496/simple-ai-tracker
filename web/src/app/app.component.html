@@ -1,4 +1,3 @@
-<form action="api/auth/logout" method="post" style="text-align:right;padding:4px 16px"><button type="submit">Выйти из Google</button></form>
 <div class="tracker-layout">
   <!-- Шапка: бренд, поиск с фильтрами, действия -->
   <header class="tracker-header">
@@ -25,6 +24,19 @@
     <sat-toolbar />
 
     <div class="header-actions">
+      <form action="api/auth/logout" method="post" class="logout-form">
+        <p-button
+          type="submit"
+          icon="pi pi-sign-out"
+          severity="secondary"
+          [text]="true"
+          [rounded]="true"
+          size="small"
+          ariaLabel="Выйти из Google"
+          pTooltip="Выйти из Google"
+          tooltipPosition="bottom"
+        />
+      </form>
       <p-button label="Очередь" ariaLabel="Очередь" icon="pi pi-list" severity="secondary" [text]="true" size="small" (onClick)="openQueue(null)" />
       <p-button label="Группа задач" ariaLabel="Группа задач" icon="pi pi-send" severity="secondary" [text]="true" size="small" (onClick)="openBatchAutomation()" />
       <p-button icon="pi pi-bolt" severity="secondary" [text]="true" [rounded]="true" size="small" ariaLabel="Команда агентов" pTooltip="Агенты" (onClick)="openAutomation()" />
