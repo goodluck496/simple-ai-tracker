@@ -51,22 +51,8 @@
     </p-popover>
   </div>
 
-  <!-- Фильтры. Статус не фильтруем: он и есть колонки доски -->
+  <!-- Фильтры: тег и кнопка сброса (тип и фича перенесены в сайдбар) -->
   <div class="filters">
-    <p-select
-      class="filter-select"
-      [options]="typeOptions"
-      optionLabel="label"
-      optionValue="value"
-      placeholder="Тип"
-      [ngModel]="typeFilter()"
-      (ngModelChange)="onTypeChange($event)"
-      [showClear]="true"
-      [pTooltip]="typeFilterLabel()"
-      tooltipPosition="bottom"
-      [tooltipDisabled]="!typeFilterLabel()"
-    ></p-select>
-
     <p-select
       class="filter-select"
       [options]="tagOptions()"
@@ -81,22 +67,6 @@
       [pTooltip]="tagFilterLabel()"
       tooltipPosition="bottom"
       [tooltipDisabled]="!tagFilterLabel()"
-    ></p-select>
-
-    <p-select
-      class="filter-select filter-select--wide"
-      [options]="featureOptions()"
-      optionLabel="label"
-      optionValue="value"
-      placeholder="Фича"
-      [ngModel]="featureFilter()"
-      (ngModelChange)="onFeatureChange($event)"
-      [showClear]="true"
-      [filter]="true"
-      filterBy="label"
-      [pTooltip]="featureFilterLabel()"
-      tooltipPosition="bottom"
-      [tooltipDisabled]="!featureFilterLabel()"
     ></p-select>
 
     @if (store.filtersActive()) {
