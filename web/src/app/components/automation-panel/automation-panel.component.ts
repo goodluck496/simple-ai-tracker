@@ -203,7 +203,17 @@ export class AutomationPanelComponent implements OnInit {
     }
     return cached.options;
   }
-  public modelMessage(agent: AgentProfile): string { return this.modelMessages.get(this.modelKey(agent)) ?? 'Нажмите «Обновить модели»: список придёт с компьютера worker.'; }
+  public modelMessage(agent: AgentProfile): string {
+    if (!this.host.online) return 'Worker не подключён. Запустите воркер: npm run worker';
+    if (!agent.connectionId) return 'Сначала выберите подключение в списке выше.';
+    return this.modelMessages.get(this.modelKey(agent)) ?? 'Нажмите «Обновить модели»: список придёт с компьютера worker.';
+  }
+  public modelButtonTitle(agent: AgentProfile): string {
+    if (!this.host.online) return 'Worker не подключён. Запустите: npm run worker';
+    if (!agent.connectionId) return 'Сначала выберите подключение агента';
+    if (this.projectBusy) return 'Выполняется другой запрос к worker...';
+    return 'Запросить список моделей с компьютера worker';
+  }
   public async loadModels(agent: AgentProfile): Promise<void> {
     const connection = this.settings.connections.find((entry) => entry.id === agent.connectionId);
     if (!connection || this.projectBusy) return;

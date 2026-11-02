@@ -14,9 +14,18 @@ app.logger.info('MCP-сервер Simple AI Tracker запущен на stdio', 
 
 const shutdown = (signal: string): void => {
   app.logger.info('Завершение MCP-сервера', { signal });
-  app.close();
+  try {
+    app.close();
+  } catch {}
   process.exit(0);
 };
 
 process.on('SIGINT', () => shutdown('SIGINT'));
 process.on('SIGTERM', () => shutdown('SIGTERM'));
+process.on('SIGHUP', () => shutdown('SIGHUP'));
+
+process.stdin.on('close', () => shutdown('stdin_close'));
+process.stdin.on('end', () => shutdown('stdin_end'));
+process.stdout.on('error', (err: NodeJS.ErrnoException) => {
+  if (err.code === 'EPIPE') shutdown('EPIPE');
+});

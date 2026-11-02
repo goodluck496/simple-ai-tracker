@@ -44,6 +44,13 @@ export class TrackerMcpServer {
 
   public async serve(): Promise<void> {
     const server = this.createServer();
+    server.onclose = () => {
+      this.app.logger.info('MCP-транспорт закрыт клиентом');
+      try {
+        this.app.close();
+      } catch {}
+      process.exit(0);
+    };
     await server.connect(new StdioServerTransport());
   }
 }

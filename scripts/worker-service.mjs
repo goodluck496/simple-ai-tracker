@@ -109,6 +109,31 @@ function formatUptime(ms) {
   return `${seconds} сек.`;
 }
 
+function isDockerContainerRunning(container = 'simple-ai-tracker') {
+  try {
+    const res = spawnSync('docker', ['ps', '-q', '-f', `name=^/${container}$`, '-f', `name=^${container}$`], { windowsHide: true, encoding: 'utf8' });
+    return res.status === 0 && res.stdout.trim().length > 0;
+  } catch {
+    return false;
+  }
+}
+
+function detectWorkspace(specified) {
+  if (specified) return specified;
+  if (process.env.SAT_WORKSPACE) return process.env.SAT_WORKSPACE;
+  const wsFile = path.join(ROOT, 'data', 'workspaces.json');
+  if (fs.existsSync(wsFile)) {
+    try {
+      const data = JSON.parse(fs.readFileSync(wsFile, 'utf8'));
+      const repoName = path.basename(ROOT);
+      const matching = data.workspaces?.find(w => w.name === repoName);
+      if (matching) return matching.name;
+      if (data.current && data.current !== 'default') return data.current;
+    } catch {}
+  }
+  return 'default';
+}
+
 function parseCliArgs() {
   const rawArgs = process.argv.slice(2);
   const command = rawArgs.find(a => ['start', 'stop', 'restart', 'status', 'logs', 'service'].includes(a)) ?? 'status';
@@ -119,10 +144,10 @@ function parseCliArgs() {
     return idx >= 0 && flags[idx + 1] ? flags[idx + 1] : undefined;
   };
 
-  const workspace = getArgValue('--workspace') ?? process.env.SAT_WORKSPACE ?? 'default';
-  const isDocker = flags.includes('--docker');
-  const isLocal = !isDocker;
   const container = getArgValue('--container') ?? process.env.SAT_CONTAINER ?? 'simple-ai-tracker';
+  const workspace = detectWorkspace(getArgValue('--workspace'));
+  const isDocker = flags.includes('--docker') ? true : flags.includes('--local') ? false : isDockerContainerRunning(container);
+  const isLocal = !isDocker;
   const lines = parseInt(getArgValue('--lines') ?? '40', 10);
   const follow = flags.includes('-f') || flags.includes('--follow');
   const all = flags.includes('--all');

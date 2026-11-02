@@ -378,7 +378,7 @@
                     </div>
 
                     <div class="agent-model-tools">
-                      <button pButton severity="secondary" size="small" type="button" icon="pi pi-refresh" (click)="loadModels(agent)" [disabled]="!host.online || projectBusy || !agent.connectionId">Обновить модели</button>
+                      <button pButton severity="secondary" size="small" type="button" icon="pi pi-refresh" (click)="loadModels(agent)" [disabled]="!host.online || projectBusy || !agent.connectionId" [title]="modelButtonTitle(agent)">Обновить модели</button>
                       <button pButton severity="secondary" [text]="true" size="small" type="button" (click)="toggleManualModel(agent)">{{ manualModels.has(agent.id) ? 'Выбрать из списка' : 'Указать ID вручную' }}</button>
                       <span class="model-status-text">{{ modelMessage(agent) }}</span>
                     </div>
