@@ -238,7 +238,7 @@ async function startService(opts) {
 
   const pid = child.pid;
   child.unref();
-  fs.closeSync(logFd);
+  // Do not closeSync logFd here: on Windows, closing logFd invalidates child process stdout/stderr handles.
 
   const metaPath = path.join(hostDir, 'worker-service.json');
   fs.writeFileSync(metaPath, JSON.stringify({

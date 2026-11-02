@@ -1,5 +1,6 @@
 import path from 'node:path';
 import os from 'node:os';
+import { fileURLToPath } from 'node:url';
 import { createHash, randomUUID } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
 import { McpTrackerChannel } from './mcp-client.js';
@@ -24,7 +25,8 @@ export class HostSupervisorApplication {
     if (!lease) { coordinator.close(); throw new Error('Локальный хост этого пространства уже запущен и не может быть остановлен.'); }
     const controller = new AbortController(); const stop = () => controller.abort();
     process.on('SIGINT', stop); process.on('SIGTERM', stop);
-    const execution = new ExecutionSupervisor(path.resolve(process.argv[1]), [...process.argv.slice(2), '--execution-child'],
+    const entryPoint = process.argv[1] ? path.resolve(process.argv[1]) : (typeof __filename !== 'undefined' ? __filename : '');
+    const execution = new ExecutionSupervisor(entryPoint, [...(process.argv.slice(2) || []), '--execution-child'],
       { ...process.env, SAT_WORKER_ID: `${id}:executor` }, (pid, active) => lease.child(pid, active));
     let initial = true; let resumeExecution = false; let wantExecution = false;
     const control = { status: () => execution.status(), async start() { wantExecution = true; return execution.start(); }, async stop() { wantExecution = false; return execution.stop(); } };
