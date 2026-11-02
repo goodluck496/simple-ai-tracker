@@ -1,82 +1,42 @@
 <div class="tracker-layout">
-  <!-- Шапка: бренд, поиск с фильтрами, действия -->
+  <!-- Шапка: бургер, бренд, поиск с фильтром тегов, создание задачи -->
   <header class="tracker-header">
-    <div class="brand">
-      <!-- Статус связи с сервером — зелёная точка прямо на логотипе -->
-      <span
-        class="brand-logo"
-        [pTooltip]="store.online() ? 'Сервер на связи' : 'Нет связи с сервером'"
+    <div class="header-left">
+      <p-button
+        icon="pi pi-bars"
+        severity="secondary"
+        [text]="true"
+        [rounded]="true"
+        size="small"
+        ariaLabel="Меню"
+        pTooltip="Меню"
         tooltipPosition="bottom"
-        [attr.aria-label]="store.online() ? 'Сервер на связи' : 'Нет связи с сервером'"
-      >
-        <i class="pi pi-compass brand-icon" aria-hidden="true"></i>
-        <span class="brand-dot" [class.brand-dot--offline]="!store.online()"></span>
-      </span>
-      <div class="brand-text">
-        <h1 class="brand-title">Simple AI Tracker</h1>
-        <span class="brand-subtitle">Kanban &amp; MCP hub</span>
+        (onClick)="sidebarOpen.set(true)"
+      />
+
+      <div class="brand">
+        <!-- Статус связи с сервером — зелёная точка прямо на логотипе -->
+        <span
+          class="brand-logo"
+          [pTooltip]="store.online() ? 'Сервер на связи' : 'Нет связи с сервером'"
+          tooltipPosition="bottom"
+          [attr.aria-label]="store.online() ? 'Сервер на связи' : 'Нет связи с сервером'"
+        >
+          <i class="pi pi-compass brand-icon" aria-hidden="true"></i>
+          <span class="brand-dot" [class.brand-dot--offline]="!store.online()"></span>
+        </span>
+        <div class="brand-text">
+          <h1 class="brand-title">Simple AI Tracker</h1>
+          <span class="brand-subtitle">Kanban &amp; MCP hub</span>
+        </div>
       </div>
     </div>
 
-    <!-- Переключатель пространств -->
-    <sat-workspace-selector />
-
+    <!-- Тулбар: поиск и теги -->
     <sat-toolbar />
 
+    <!-- Действия в шапке: только создание задачи -->
     <div class="header-actions">
-      <form action="api/auth/logout" method="post" class="logout-form">
-        <p-button
-          type="submit"
-          icon="pi pi-sign-out"
-          severity="secondary"
-          [text]="true"
-          [rounded]="true"
-          size="small"
-          ariaLabel="Выйти из Google"
-          pTooltip="Выйти из Google"
-          tooltipPosition="bottom"
-        />
-      </form>
-      <p-button label="Очередь" ariaLabel="Очередь" icon="pi pi-list" severity="secondary" [text]="true" size="small" (onClick)="openQueue(null)" />
-      <p-button label="Группа задач" ariaLabel="Группа задач" icon="pi pi-send" severity="secondary" [text]="true" size="small" (onClick)="openBatchAutomation()" />
-      <p-button icon="pi pi-bolt" severity="secondary" [text]="true" [rounded]="true" size="small" ariaLabel="Команда агентов" pTooltip="Агенты" (onClick)="openAutomation()" />
-      <p-button
-        icon="pi pi-tags"
-        severity="secondary"
-        [text]="true"
-        [rounded]="true"
-        size="small"
-        ariaLabel="Реестр тегов"
-        pTooltip="Теги"
-        tooltipPosition="bottom"
-        (onClick)="showTags.set(true)"
-      ></p-button>
-
-      <p-button
-        icon="pi pi-cloud-download"
-        severity="secondary"
-        [text]="true"
-        [rounded]="true"
-        size="small"
-        styleClass="mini-action"
-        ariaLabel="Бэкапы базы"
-        pTooltip="Бэкапы"
-        tooltipPosition="bottom"
-        (onClick)="showBackups.set(true)"
-      ></p-button>
-
-      <p-button
-        icon="pi pi-question-circle"
-        severity="secondary"
-        [text]="true"
-        [rounded]="true"
-        size="small"
-        ariaLabel="Инструкция для ИИ-агента"
-        pTooltip="Инструкция для агента"
-        tooltipPosition="bottom"
-        (onClick)="showInstructions.set(true)"
-      ></p-button>
-
       <!-- Combobutton быстрого создания: фича / задача / баг -->
       <p-button
         label="Создать"
@@ -118,6 +78,17 @@
       </p-popover>
     </div>
   </header>
+
+  <!-- Сайдбар приложения -->
+  <sat-sidebar
+    [(visible)]="sidebarOpen"
+    (openQueue)="openQueue($event)"
+    (openAutomation)="openAutomation()"
+    (openBatchAutomation)="openBatchAutomation()"
+    (showTags)="showTags.set($event)"
+    (showBackups)="showBackups.set($event)"
+    (showInstructions)="showInstructions.set($event)"
+  />
 
   <!-- Полоса загрузки: тонкая, ровно под шапкой, не сдвигает доску -->
   <div class="load-bar" [class.load-bar--active]="showProgress()" aria-hidden="true">

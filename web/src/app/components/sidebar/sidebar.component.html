@@ -1,0 +1,182 @@
+<p-drawer
+  [(visible)]="visible"
+  position="left"
+  [modal]="true"
+  [dismissible]="true"
+  styleClass="sat-sidebar-drawer"
+>
+  <ng-template #header>
+    <div class="sidebar-header">
+      <div class="sidebar-brand">
+        <span
+          class="sidebar-logo"
+          [pTooltip]="store.online() ? 'Сервер на связи' : 'Нет связи с сервером'"
+          tooltipPosition="bottom"
+          [attr.aria-label]="store.online() ? 'Сервер на связи' : 'Нет связи с сервером'"
+        >
+          <i class="pi pi-compass sidebar-brand-icon" aria-hidden="true"></i>
+          <span class="sidebar-brand-dot" [class.sidebar-brand-dot--offline]="!store.online()"></span>
+        </span>
+        <div class="sidebar-brand-text">
+          <span class="sidebar-title">Simple AI Tracker</span>
+          <span class="sidebar-subtitle">Kanban &amp; MCP hub</span>
+        </div>
+      </div>
+    </div>
+  </ng-template>
+
+  <div class="sidebar-content">
+    <!-- Рабочее пространство -->
+    <div class="sidebar-section">
+      <span class="sidebar-section-title">Рабочее пространство</span>
+      <div class="sidebar-workspace-container">
+        <sat-workspace-selector />
+      </div>
+    </div>
+
+    <!-- Разделы и модули -->
+    <div class="sidebar-section">
+      <span class="sidebar-section-title">Страницы и модули</span>
+      <div class="sidebar-nav-list">
+        <button
+          pButton
+          severity="secondary"
+          [text]="true"
+          class="sidebar-nav-btn"
+          (click)="onOpenQueue()"
+        >
+          <i class="pi pi-list"></i>
+          <span>Очередь задач</span>
+        </button>
+
+        <button
+          pButton
+          severity="secondary"
+          [text]="true"
+          class="sidebar-nav-btn"
+          (click)="onOpenAutomation()"
+        >
+          <i class="pi pi-bolt"></i>
+          <span>Команда агентов</span>
+        </button>
+
+        <button
+          pButton
+          severity="secondary"
+          [text]="true"
+          class="sidebar-nav-btn"
+          (click)="onOpenBatchAutomation()"
+        >
+          <i class="pi pi-send"></i>
+          <span>Группа задач</span>
+        </button>
+      </div>
+    </div>
+
+    <!-- Управление и справочники -->
+    <div class="sidebar-section">
+      <span class="sidebar-section-title">Управление и справка</span>
+      <div class="sidebar-nav-list">
+        <button
+          pButton
+          severity="secondary"
+          [text]="true"
+          class="sidebar-nav-btn"
+          (click)="onShowTags()"
+        >
+          <i class="pi pi-tags"></i>
+          <span>Реестр тегов</span>
+        </button>
+
+        <button
+          pButton
+          severity="secondary"
+          [text]="true"
+          class="sidebar-nav-btn"
+          (click)="onShowBackups()"
+        >
+          <i class="pi pi-cloud-download"></i>
+          <span>Бэкапы базы</span>
+        </button>
+
+        <button
+          pButton
+          severity="secondary"
+          [text]="true"
+          class="sidebar-nav-btn"
+          (click)="onShowInstructions()"
+        >
+          <i class="pi pi-question-circle"></i>
+          <span>Инструкция для ИИ-агента</span>
+        </button>
+      </div>
+    </div>
+
+    <!-- Фильтры доски -->
+    <div class="sidebar-section">
+      <div class="sidebar-section-header-row">
+        <span class="sidebar-section-title">Фильтры доски</span>
+        @if (typeFilter() || featureFilter()) {
+          <button
+            pButton
+            severity="secondary"
+            [text]="true"
+            size="small"
+            class="sidebar-reset-btn"
+            pTooltip="Сбросить фильтры типа и фичи"
+            (click)="resetBoardFilters()"
+          >
+            <i class="pi pi-filter-slash"></i>
+            <span>Сбросить</span>
+          </button>
+        }
+      </div>
+
+      <div class="sidebar-filters">
+        <label class="sidebar-field-label">Тип задачи</label>
+        <p-select
+          class="sidebar-select"
+          [options]="typeOptions"
+          optionLabel="label"
+          optionValue="value"
+          placeholder="Все типы"
+          [ngModel]="typeFilter()"
+          (ngModelChange)="onTypeChange($event)"
+          [showClear]="true"
+        ></p-select>
+
+        <label class="sidebar-field-label">Родительская фича</label>
+        <p-select
+          class="sidebar-select"
+          [options]="featureOptions()"
+          optionLabel="label"
+          optionValue="value"
+          placeholder="Все фичи"
+          [ngModel]="featureFilter()"
+          (ngModelChange)="onFeatureChange($event)"
+          [showClear]="true"
+          [filter]="true"
+          filterBy="label"
+        ></p-select>
+      </div>
+    </div>
+  </div>
+
+  <ng-template #footer>
+    <div class="sidebar-footer">
+      <form action="api/auth/logout" method="post" class="sidebar-logout-form">
+        <button
+          pButton
+          type="submit"
+          severity="danger"
+          [text]="true"
+          class="sidebar-logout-btn"
+          ariaLabel="Выйти из системы"
+        >
+          <i class="pi pi-sign-out"></i>
+          <span>Выйти</span>
+        </button>
+      </form>
+    </div>
+  </ng-template>
+</p-drawer>

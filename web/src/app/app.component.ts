@@ -15,11 +15,11 @@ import { TaskDialogComponent } from './components/task-dialog/task-dialog.compon
 import { TagsPanelComponent } from './components/tags-panel/tags-panel.component';
 import { BackupPanelComponent } from './components/backup-panel/backup-panel.component';
 import { InstructionsDialogComponent } from './components/instructions-dialog/instructions-dialog.component';
-import { WorkspaceSelectorComponent } from './components/workspace-selector/workspace-selector.component';
 import { AutomationPanelComponent } from './components/automation-panel/automation-panel.component';
 import { AutomationQueueComponent } from './components/automation-queue/automation-queue.component';
 import { AutomationLaunchService } from './services/automation-launch.service';
 import { DialogModule } from 'primeng/dialog';
+import { SidebarComponent } from './components/sidebar/sidebar.component';
 
 /** Задержка перед показом полосы загрузки: быстрые ответы не мигают. */
 const PROGRESS_DELAY_MS = 140;
@@ -36,12 +36,12 @@ const PROGRESS_DELAY_MS = 140;
     TagModule,
     TooltipModule,
     ToolbarComponent,
+    SidebarComponent,
     BoardComponent,
     TaskDialogComponent,
     TagsPanelComponent,
     BackupPanelComponent,
     InstructionsDialogComponent,
-    WorkspaceSelectorComponent,
     AutomationPanelComponent,
     AutomationQueueComponent,
     DialogModule,
@@ -55,6 +55,8 @@ export class AppComponent implements OnInit {
   private readonly destroyRef = inject(DestroyRef);
   public readonly store = inject(TrackerStore);
 
+  public readonly sidebarOpen = signal(false);
+
   public readonly showTags = signal(false);
   public readonly showBackups = signal(false);
   public readonly showInstructions = signal(false);
@@ -62,6 +64,11 @@ export class AppComponent implements OnInit {
   public automationTaskId: string | null = null;
   public automationMessage = '';
   public automationBatch = false;
+
+  public toggleSidebar(): void {
+    this.sidebarOpen.update((v) => !v);
+  }
+
   public openAutomation(taskId: string | null = null, message = ''): void {
     this.automationBatch = false;
     this.automationTaskId = taskId; this.automationMessage = message; this.showAutomation = true;
