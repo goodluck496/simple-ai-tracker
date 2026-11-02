@@ -7,6 +7,8 @@ import { ProcessExecutor, type ProcessRequest } from '../runners/process-executo
 type SetupCommand = Pick<ProcessRequest, 'command' | 'args'>;
 interface Manifest { dependencies?: Record<string, string>; devDependencies?: Record<string, string>; optionalDependencies?: Record<string, string>; }
 
+const ONE_WEEK_MS = 7 * 24 * 60 * 60 * 1000;
+
 /** Prepare dependencies before mutations/checks; API source analysis may run concurrently. */
 export class WorktreePreparation {
   public constructor(private readonly executor: ProcessExecutor) {}
@@ -30,8 +32,33 @@ export class WorktreePreparation {
     const marker = path.join(cwd, '.sat', 'setup-complete');
     const manifest = manifestText ? JSON.parse(manifestText) as Manifest : {};
     let missing = await this.missingDependencies(cwd, manifest);
-    const prepared = (await this.read(marker)) === signature;
-    progress('Подготовка: проверены манифест и установленные зависимости.\n');
+    const markerContent = (await this.read(marker)).trim();
+    let prepared = false;
+    let expired = false;
+    if (markerContent) {
+      try {
+        const parsed = JSON.parse(markerContent) as { signature?: string; timestamp?: number };
+        if (parsed.signature === signature) {
+          const age = Date.now() - (parsed.timestamp ?? 0);
+          if (age < ONE_WEEK_MS) {
+            prepared = true;
+          } else {
+            expired = true;
+          }
+        }
+      } catch {
+        if (markerContent === signature) prepared = true;
+      }
+    }
+
+    if (prepared && !missing.length) {
+      progress('Подготовка: зависимости актуальны (срок < 7 дней), повторная установка npm пропущена.\n');
+    } else if (expired) {
+      progress('Подготовка: срок действия зависимостей истёк (> 7 дней; протухли), запуск обновления.\n');
+    } else {
+      progress('Подготовка: проверены манифест и установленные зависимости.\n');
+    }
+
     if (!prepared || missing.length) {
       for (const [index, command] of setup.entries()) {
         progress(`Команды подготовки: ${index}/${setup.length} (${Math.floor(index * 100 / setup.length)}%). Сейчас: ${command.command}.\n`);
@@ -53,7 +80,7 @@ export class WorktreePreparation {
       }
       if (missing.length) throw new Error(`Worktree dependencies are incomplete: ${missing.slice(0, 8).join(', ')}. Configure setup or repair the installation; source writes and checks are blocked.`);
       await fs.mkdir(path.dirname(marker), { recursive: true });
-      await fs.writeFile(marker, signature, 'utf8');
+      await fs.writeFile(marker, JSON.stringify({ signature, timestamp: Date.now() }), 'utf8');
     }
     progress('Подготовка зависимостей завершена; проверка пакетов пройдена.\n');
   }
@@ -64,7 +91,6 @@ export class WorktreePreparation {
     for (const name of Object.keys({ ...manifest.dependencies, ...manifest.devDependencies })) {
       if (manifest.optionalDependencies?.[name]) continue;
       try {
-        // The manifest can survive an interrupted install while its entry files do not.
         const packagePath = path.join(cwd, 'node_modules', name, 'package.json');
         const installed = JSON.parse(await fs.readFile(packagePath, 'utf8')) as { exports?: unknown };
         if (!name.startsWith('@types/')) {
@@ -72,7 +98,6 @@ export class WorktreePreparation {
             const entry = require.resolve(name);
             if (path.isAbsolute(entry)) await fs.access(entry);
           } else {
-            // SDK/theme packages may advertise an absent or type-only root but valid subpath imports.
             const targets = this.exportTargets(installed.exports).filter((target) => !target.endsWith('/package.json'));
             const present = await Promise.all(targets.map(async (target) => {
               const prefix = target.includes('*') ? target.slice(0, target.indexOf('*')) || '.' : target;

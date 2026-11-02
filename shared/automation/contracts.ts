@@ -44,6 +44,7 @@ export interface ModelConnection {
   credentialEnv?: string;
   supportsImages: boolean;
   reasoningEffort?: ReasoningEffort;
+  isLocal?: boolean;
 }
 
 export interface AgentProfile {
@@ -96,7 +97,18 @@ export const DEFAULT_AUTOMATION_SETTINGS: AutomationSettings = {
 };
 export const DEFAULT_CHECK_COMMAND: CheckCommand = { command: 'npm', args: ['test'] };
 export const DEFAULT_SETUP_COMMAND: CheckCommand = { command: 'npm', args: ['ci'] };
+
+export interface ProposedFix {
+  id: string;
+  title: string;
+  explanation: string;
+  diff: string;
+  files: string[];
+  createdAt: string;
+}
+
 export interface AgentRun {
+  proposedFix?: ProposedFix | null;
   trustedExecution?: boolean;
   workPlan?: { taskId: string; version: number; contentHash: string; stage: number; revision: number };
   stageMemory?: import('./stage-note.js').StageMemory;

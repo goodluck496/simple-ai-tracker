@@ -1006,3 +1006,117 @@
     gap: 0.5rem;
   }
 }
+
+
+/* Pipeline Doctor styles */
+.doctor-fix-btn {
+  font-weight: 700 !important;
+  background: #f59e0b !important;
+  border-color: #d97706 !important;
+  color: #1e1e24 !important;
+  box-shadow: 0 0 12px rgba(245, 158, 11, 0.45);
+  animation: pulse-glow 2s infinite ease-in-out;
+
+  &:hover {
+    background: #d97706 !important;
+    color: #fff !important;
+  }
+}
+
+@keyframes pulse-glow {
+  0%, 100% { box-shadow: 0 0 8px rgba(245, 158, 11, 0.4); }
+  50% { box-shadow: 0 0 16px rgba(245, 158, 11, 0.8); }
+}
+
+.card-fix-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.15rem 0.5rem;
+  font-size: 0.72rem;
+  font-weight: 700;
+  border-radius: 4px;
+  background: #f59e0b;
+  color: #1e1e24;
+  border: none;
+  cursor: pointer;
+  margin-left: auto;
+  transition: transform 0.15s ease;
+
+  &:hover {
+    transform: scale(1.05);
+  }
+}
+
+.fix-dialog-content {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  max-height: 70vh;
+  overflow-y: auto;
+}
+
+.fix-header-banner {
+  padding: 0.75rem 1rem;
+  background: rgba(245, 158, 11, 0.1);
+  border-left: 4px solid #f59e0b;
+  border-radius: 4px;
+
+  h4 {
+    margin: 0 0 0.5rem;
+    color: #f59e0b;
+  }
+
+  .fix-explanation {
+    margin: 0;
+    white-space: pre-wrap;
+    font-size: 0.9rem;
+    line-height: 1.4;
+  }
+}
+
+.fix-files-section {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+
+  .fix-files-tags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+
+    .file-tag {
+      background: var(--p-surface-800, #1e293b);
+      padding: 0.2rem 0.5rem;
+      border-radius: 4px;
+      font-size: 0.8rem;
+    }
+  }
+}
+
+.fix-diff-section {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+
+  .fix-diff-view {
+    background: #090d16;
+    color: #e2e8f0;
+    padding: 0.75rem 1rem;
+    border-radius: 6px;
+    font-family: 'JetBrains Mono', 'Fira Code', monospace;
+    font-size: 0.85rem;
+    max-height: 350px;
+    overflow: auto;
+    border: 1px solid var(--p-surface-700, #334155);
+    white-space: pre;
+  }
+}
+
+.fix-dialog-footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.75rem;
+  width: 100%;
+}

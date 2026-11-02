@@ -36,4 +36,7 @@ export function registerAutomationRoutes(router: Router, app: AppContainer): voi
   router.post('/api/automation/runs/:id/budget', ({ params, body, res }) => sendJson(res, 200, { run: app.automationService.extendBudget(params.id, body) }));
   router.post('/api/automation/runs/:id/dequeue', ({ params, res }) => { app.automationService.dequeue(params.id); sendJson(res, 200, { ok: true }); });
   router.post('/api/automation/runs/:id/resume', ({ params, res }) => sendJson(res, 200, { run: app.automationService.resume(params.id) }));
+  router.post('/api/automation/runs/:id/fix/diagnose', async ({ params, res }) => sendJson(res, 200, { fix: await app.automationService.diagnoseFix(params.id) }));
+  router.post('/api/automation/runs/:id/fix/apply', async ({ params, res }) => sendJson(res, 200, { run: await app.automationService.applyFix(params.id) }));
+  router.post('/api/automation/runs/:id/fix/discard', async ({ params, res }) => sendJson(res, 200, { run: await app.automationService.discardFix(params.id) }));
 }

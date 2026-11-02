@@ -15,7 +15,7 @@ export const CONNECTION_PRESETS: readonly { id: ConnectionPreset; label: string;
   { id: ConnectionPreset.Antigravity, label: 'Antigravity', runner: RunnerId.Antigravity, connection: { label: 'Antigravity', kind: ProviderKind.Native, nativeRunner: RunnerId.Antigravity, supportsImages: false } },
   { id: ConnectionPreset.DeepSeek, label: 'DeepSeek API', runner: RunnerId.ModelApi, connection: { label: 'DeepSeek API', kind: ProviderKind.OpenAICompatible, baseUrl: 'https://api.deepseek.com', credentialEnv: 'DEEPSEEK_API_KEY', supportsImages: false } },
   { id: ConnectionPreset.DeepSeekHarness, label: 'DeepSeek Harness', runner: RunnerId.DeepSeekHarness, connection: { label: 'DeepSeek Harness', kind: ProviderKind.Native, nativeRunner: RunnerId.DeepSeekHarness, supportsImages: false } },
-  { id: ConnectionPreset.Ollama, label: 'Ollama', runner: RunnerId.ModelApi, connection: { label: 'Ollama', kind: ProviderKind.Ollama, baseUrl: 'http://localhost:11434', supportsImages: false } },
+  { id: ConnectionPreset.Ollama, label: 'Ollama', runner: RunnerId.ModelApi, connection: { label: 'Ollama', kind: ProviderKind.Ollama, baseUrl: 'http://localhost:11434', supportsImages: false, isLocal: true } },
   { id: ConnectionPreset.OpenAI, label: 'OpenAI-compatible API', runner: RunnerId.ModelApi, connection: { label: 'OpenAI-compatible API', kind: ProviderKind.OpenAICompatible, baseUrl: 'https://api.openai.com/v1', credentialEnv: 'OPENAI_API_KEY', supportsImages: false } },
   { id: ConnectionPreset.Custom, label: 'Свой CLI / bridge', runner: RunnerId.Custom, connection: { label: 'Свой CLI / bridge', kind: ProviderKind.Native, nativeRunner: RunnerId.Custom, supportsImages: false } },
 ];

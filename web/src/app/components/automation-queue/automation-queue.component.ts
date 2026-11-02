@@ -1,3 +1,5 @@
+import { DialogModule } from 'primeng/dialog';
+import type { ProposedFix } from '../../../../../shared/automation/contracts';
 import { ChangeDetectionStrategy, Component, DestroyRef, EventEmitter, Input, Output, computed, effect, inject, signal } from '@angular/core';
 import { DatePipe, DecimalPipe } from '@angular/common';
 import { TableModule } from 'primeng/table';
@@ -21,7 +23,7 @@ import { WorkspaceService } from '../../services/workspace.service';
 import { filterQueueItems } from './queue-search';
 import { formatQueueDate, sortRunHistory } from './queue-dates';
 
-@Component({ selector: 'sat-automation-queue', standalone: true, imports: [DatePipe, DecimalPipe, RunConsoleComponent, RunActivityComponent, TableModule, ButtonModule, FormsModule, CheckboxModule],
+@Component({ selector: 'sat-automation-queue', standalone: true, imports: [DatePipe, DecimalPipe, RunConsoleComponent, RunActivityComponent, TableModule, ButtonModule, FormsModule, CheckboxModule, DialogModule],
   changeDetection: ChangeDetectionStrategy.OnPush, templateUrl: './automation-queue.component.html', styleUrl: './automation-queue.component.scss' })
 export class AutomationQueueComponent {
   private readonly http = inject(HttpClient);
@@ -49,6 +51,9 @@ export class AutomationQueueComponent {
   public readonly dataFresh = computed(() => this.queueConnected() && this.clock() - this.receivedAt() < ACTIVITY_TIMING.snapshotMs);
   public readonly notice = signal('');
   public readonly busy = signal(false);
+  public readonly showFixDialog = signal(false);
+  public readonly currentFix = signal<ProposedFix | null>(null);
+  public readonly fixingRunId = signal<string | null>(null);
   public readonly budgetEditing = signal(false);
   public budgetCalls = 6;
   public budgetInput = 500000;
@@ -197,4 +202,62 @@ export class AutomationQueueComponent {
       error: (error: unknown) => { this.error.set(this.message(error)); this.refresh.next(); },
     });
   }
+
+  public openProposedFix(item: QueueItem): void {
+    if (item.proposedFix) {
+      this.currentFix.set(item.proposedFix);
+      this.fixingRunId.set(item.id);
+      this.showFixDialog.set(true);
+    } else {
+      this.diagnose(item);
+    }
+  }
+
+  public diagnose(item: QueueItem): void {
+    this.busy.set(true);
+    this.http.post<{ fix: ProposedFix }>(`/api/automation/runs/${item.id}/fix/diagnose`, {})
+      .pipe(finalize(() => this.busy.set(false)), takeUntilDestroyed(this.destroyRef))
+      .subscribe({
+        next: ({ fix }) => {
+          this.currentFix.set(fix);
+          this.fixingRunId.set(item.id);
+          this.showFixDialog.set(true);
+          this.refresh.next();
+        },
+        error: (err) => this.error.set(err instanceof Error ? err.message : String(err)),
+      });
+  }
+
+  public applyFix(): void {
+    const id = this.fixingRunId();
+    if (!id) return;
+    this.busy.set(true);
+    this.http.post<{ run: AgentRun }>(`/api/automation/runs/${id}/fix/apply`, {})
+      .pipe(finalize(() => this.busy.set(false)), takeUntilDestroyed(this.destroyRef))
+      .subscribe({
+        next: () => {
+          this.showFixDialog.set(false);
+          this.notice.set('Авто-исправление применено, создан коммит. Запуск возобновляется.');
+          this.http.post<{ run: AgentRun }>(`/api/automation/runs/${id}/resume`, {}).subscribe(() => this.refresh.next());
+        },
+        error: (err) => this.error.set(err instanceof Error ? err.message : String(err)),
+      });
+  }
+
+  public discardFix(): void {
+    const id = this.fixingRunId();
+    if (!id) return;
+    this.busy.set(true);
+    this.http.post<{ run: AgentRun }>(`/api/automation/runs/${id}/fix/discard`, {})
+      .pipe(finalize(() => this.busy.set(false)), takeUntilDestroyed(this.destroyRef))
+      .subscribe({
+        next: () => {
+          this.showFixDialog.set(false);
+          this.notice.set('Предложенное исправление отменено, изменения откатаны.');
+          this.refresh.next();
+        },
+        error: (err) => this.error.set(err instanceof Error ? err.message : String(err)),
+      });
+  }
+
 }

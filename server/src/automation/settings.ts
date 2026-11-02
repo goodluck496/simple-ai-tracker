@@ -20,6 +20,7 @@ export class AutomationSettingsValidator {
         || typeof connection.supportsImages !== 'boolean') return fail('Invalid connection.');
       if (connection.credentialEnv && !/^[A-Z_][A-Z0-9_]*$/.test(connection.credentialEnv)) return fail('Credential must be an environment variable name.');
       if (connection.reasoningEffort && !REASONING_EFFORTS.includes(connection.reasoningEffort)) return fail('Invalid reasoning effort.');
+      if (connection.isLocal !== undefined && typeof connection.isLocal !== 'boolean') return fail('isLocal must be boolean.');
       if (Object.keys(connection).some((key) => /apiKey|password|secret|token/i.test(key))) return fail('Store credentials on the worker, not in tracker settings.');
       if (connection.kind !== ProviderKind.Native) {
         try {
@@ -71,7 +72,7 @@ export class AutomationSettingsValidator {
     // Reconstruct persisted objects so unknown fields cannot carry credentials.
     return {
       repositoryPath: settings.repositoryPath, baseBranch: settings.baseBranch,
-      connections: settings.connections.map(({ id, label, kind, baseUrl, credentialEnv, supportsImages, reasoningEffort, nativeRunner }) => ({ id, label, kind, baseUrl, credentialEnv, supportsImages, reasoningEffort, ...(kind === ProviderKind.Native && nativeRunner ? { nativeRunner } : {}) })),
+      connections: settings.connections.map(({ id, label, kind, baseUrl, credentialEnv, supportsImages, reasoningEffort, nativeRunner, isLocal }) => ({ id, label, kind, baseUrl, credentialEnv, supportsImages, reasoningEffort, ...(isLocal !== undefined ? { isLocal } : (kind === ProviderKind.Ollama ? { isLocal: true } : {})), ...(kind === ProviderKind.Native && nativeRunner ? { nativeRunner } : {}) })),
       agents: settings.agents.map(({ id, role, runner, connectionId, model, instructions, nativeProfile, command, args }) => ({ id, role, runner, connectionId, model, instructions, nativeProfile, command, args })),
       pipeline: settings.pipeline, checks: settings.checks.map(({ command, args }) => ({ command, args })), setup: settings.setup.map(({ command, args }) => ({ command, args })), artifactPaths: settings.artifactPaths,
       timeoutMinutes: settings.timeoutMinutes, maxRevisions: settings.maxRevisions, mergePolicy: settings.mergePolicy,

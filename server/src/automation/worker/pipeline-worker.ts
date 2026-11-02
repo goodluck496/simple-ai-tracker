@@ -202,8 +202,11 @@ export class PipelineWorker {
         };
         const profileId = run.settings.pipeline[run.stage];
         const profile = run.settings.agents.find((agent) => agent.id === profileId)!;
-        const overlapPreparation = profile.runner === 'model-api' && profile.role !== AgentRole.VisualValidator;
-        if (!overlapPreparation) {
+        const needsPreparation = profile.role === AgentRole.Developer || profile.role === AgentRole.Designer;
+        const overlapPreparation = needsPreparation && profile.runner === 'model-api';
+        if (!needsPreparation) {
+          progress(`Роль ${profile.role}: чтение и анализ исходников без блокировки конвейера установкой зависимостей.\n`);
+        } else if (!overlapPreparation) {
           await phase(RunPhase.Setup, 'Проверка и подготовка зависимостей worktree.');
           await prepareStage();
         }
@@ -274,7 +277,7 @@ export class PipelineWorker {
         const checksEvidence: StageEvidence['checks'] = saved?.checks ? [...saved.checks]
           : previous?.current && [AgentRole.Reviewer, AgentRole.VisualValidator].includes(profile.role as 'reviewer' | 'visual-validator') ? [...previous.checks] : [];
         if (saved) {
-          if (overlapPreparation) {
+          if (needsPreparation && overlapPreparation) {
             await phase(RunPhase.Setup, 'Подготовка зависимостей перед восстановлением checkpoint.');
             await prepareStage();
           }
@@ -342,9 +345,11 @@ export class PipelineWorker {
               }
             } }, progress);
           // Registry implementations must not bypass the setup barrier on early return.
-          await waitForPreparation();
-          await pendingPreparation;
-          pendingPreparation = undefined;
+          if (needsPreparation && pendingPreparation) {
+            await waitForPreparation();
+            await pendingPreparation;
+            pendingPreparation = undefined;
+          }
           if (result.usage && metering) metering = { ...metering, usage: result.usage };
           usageComplete = true;
           outcome = this.parseOutcome(result.text);
@@ -465,11 +470,11 @@ export class PipelineWorker {
   }
   private prompt(role: AgentRole, instructions: string, context: unknown, feedback: string, diff: string, artifacts: string[], checks: unknown, checkout?: AgentRun['checkout'], packet?: string): string {
     const roleInstructions: Record<AgentRole, string> = {
-      [AgentRole.Analyst]: 'Investigate only the affected path. Produce an executable numbered work order: each step names exact files/symbols, the change, dependencies and a focused check. Keep all acceptance criteria and constraints. For a feature with separable deliverables, return decomposition of 2–12 small tasks: each has key, title, description, complete numbered plan with focused checks, dependsOn keys. Define shared contracts in the parent plan; do not omit acceptance criteria. Never recursively split children. A small atomic task uses decomposition: []. If boundaries, contracts, or dependencies need a user decision, return questions before any development; include the proposed split in plan. Otherwise pass dispatches developers automatically. No vague repeat-the-research steps. Missing implementation and failing pre-change checks are expected. Never return changes_requested.',
-      [AgentRole.Developer]: 'Own the task end-to-end: analyze the affected path, implement and write focused unit tests. When no workOrder exists, localize the problem and publish a concise implementationPlan array in .sat/stage-note.json BEFORE editing project sources; the worker attaches it to the card. Continue implementation in this same conversation without waiting for an analyst. If requirements are ambiguous, return concrete questions. If a workOrder exists, follow it without repeating broad analysis. Read applicable project skills and use its configured MCP. Pass only after the planned change and focused regressions. The worker owns full configured checks, Git and lifecycle.',
+      [AgentRole.Analyst]: 'Investigate the task, affected code, documentation and project rules. Gather all necessary details. When user choices, contracts or boundaries need clarification, ask questions via tracker_ask_questions or return questions. IN THE END produce an executable numbered plan in plan: exact files, symbols/functions affected, what to add, modify and delete, acceptance criteria and checks. Reflect all user answers in the plan. Return pass with plan when requirements are clear; return questions when clarification is required before coding. A small atomic task uses decomposition: []. Never return changes_requested.',
+      [AgentRole.Developer]: 'Implement the task following the approved plan created by Analyst. If no plan exists, execute the analyst investigation from an engineer\'s perspective and save implementationPlan before editing code. Strictly follow engineering principles and design patterns: SOLID, DRY, KISS, YAGNI. You may perform refactoring in the task scope, replacing duplicated code with shared functions. Write tests for the task, choosing your strategy: TDD (test first, then code) or implementation first followed by tests. Await passing tests and builds, fixing all errors. Prepare commitMessage in format [#TASK_ID] - what was done and why.',
       [AgentRole.Designer]: 'Implement the requested visual design in project files, following the accepted plan and supplied references.',
-      [AgentRole.Tester]: 'Independently review the focused current diff and test actual behavior using existing Playwright/browser scenarios or other configured project tools. Check requirements, regressions and test coverage. Reuse current worker check evidence; do not rerun the full matrix just to repeat it. Use focused scenarios and return reproducible steps, expected/actual behavior and material errors for confirmed defects. Return changes_requested for defects or missing coverage. Do not change project sources. Missing browser/environment capability is a concrete blocked/questions result, never a fabricated pass.',
-      [AgentRole.Reviewer]: 'Independently inspect the current diff against requirements, workOrder and current previousStage checks. Do not repeat unchanged successful checks without a concrete concern. Stale previousStage evidence is not proof for current requirements. Report concrete defects with changes_requested, otherwise pass. Do not edit files.',
+      [AgentRole.Tester]: 'Upon receiving the task, first build the project (build/compile) and verify existing functionality is intact. Write an e2e test (Playwright/browser scenarios) if not already present, or follow its steps and test actual behavior. Verify that implementation matches task description and approved plan. Return changes_requested with reproducible steps for defects; pass only on verified evidence. Do not edit logic sources.',
+      [AgentRole.Reviewer]: 'Inspect the approved plan, verify presence of unit and e2e tests, and examine git diff. Verify adherence to SOLID, DRY, KISS, YAGNI, project architecture and absence of regressions. Reviewer may add or configure static script checks (linter, prettier) if missing. After applying checks, rebuild the project and run tests. If all passes, approve merging the branch (pass); otherwise return changes_requested.',
       [AgentRole.VisualValidator]: 'Inspect the actual supplied images against the visual requirements. State the affected area and severity for each issue. Do not infer working behavior from appearance alone. Do not edit files.',
     };
     return `You are the ${role}. ${instructions.trim() || DEFAULT_ROLE_INSTRUCTIONS[role]}\nUse the project policy injected below; do not reread AGENTS.md when its current content is already supplied. Read only applicable additional skills/instructions as needed.\n`

@@ -1,3 +1,5 @@
+import { PipelineDoctor } from './pipeline-doctor.js';
+import { ProviderKind, type ProposedFix } from '../../../shared/automation/contracts.js';
 import { randomUUID, createHash } from 'node:crypto';
 import { DEFAULT_AUTOMATION_SETTINGS, AgentRole, RunStatus, AgentVerdict, AUTOMATION_START_TASK_STATUSES, ACTIVE_RUN_STATUSES,
   RESUMABLE_RUN_STATUSES, OWNED_RUN_STATUSES, WRITABLE_AGENT_ROLES, EVIDENCE_AGENT_ROLES, AGENT_VERDICTS, AUTOMATION_TIMING, MergePolicy,
@@ -23,6 +25,7 @@ const SETTINGS_KEY = 'automation_settings_v1';
 const LEASE_MS = AUTOMATION_TIMING.leaseMs;
 
 export class AutomationService {
+  private readonly doctor = new PipelineDoctor();
   public get projects(): ProjectRequests { return new ProjectRequests(this.repos.meta, this.runs.db); }
   public constructor(private readonly runs: AgentRunRepository, private readonly repos: Repositories,
     private readonly tasks: TaskService, private readonly clock: Clock, private readonly workspace = 'default') {}
@@ -146,9 +149,15 @@ export class AutomationService {
       if (PipelinePolicy.needsPlan(settings, !!task.plan)) throw new TrackerError('VALIDATION_FAILED', 'Task needs an existing plan or an analyst before development.');
       if (this.activeTaskIds().includes(taskId)) throw new TrackerError('CONFLICT', 'Task already has an active run or belongs to an executing feature.');
       const now = this.clock.now();
+      const pipelineConnections = settings.pipeline.map((agentId) => {
+        const agent = settings.agents.find((a) => a.id === agentId);
+        return agent ? settings.connections.find((c) => c.id === agent.connectionId) : undefined;
+      });
+      const hasLocal = pipelineConnections.some((c) => c?.isLocal || c?.kind === ProviderKind.Ollama);
+      const trustedExecution = task.trustedExecution === true || hasLocal;
       const run: AgentRun = { id: randomUUID(), taskId, status: RunStatus.Queued, stage: 0, revision: 0,
         workerId: null, leaseToken: null, leaseUntil: null, settings, createdAt: now, updatedAt: now,
-        trustedExecution: task.trustedExecution === true,
+        trustedExecution,
         branch: null, commitSha: null, summary: '', restartedFromId: previous?.id, usageAttempts: [] };
       if (integrationRestart) {
         run.stage = settings.pipeline.length; run.integrationSourceSha = previous.commitSha!;
@@ -193,7 +202,7 @@ export class AutomationService {
     const actionReason = run.cleanup ? 'Рабочая копия очищается или уже очищена; продолжение этого запуска недоступно.' : pendingQuestions ? `Ответьте на вопросы в карточке ${scope?.taskId ?? task.id}.` : otherActive ? 'У задачи есть другой активный запуск.'
       : task.status === TaskStatus.Done || (task.status === TaskStatus.Review && !(run.stage >= run.settings.pipeline.length && run.settings.mergePolicy === MergePolicy.Local)) ? 'Задача уже на проверке или завершена.' : '';
     const resumable = RESUMABLE_RUN_STATUSES.includes(run.status) && (run.stage < run.settings.pipeline.length || run.settings.mergePolicy === MergePolicy.Local);
-    return { id: run.id, trustedExecution: run.trustedExecution === true, taskId: run.taskId, title: task.title, cleanup: run.cleanup, taskStatus: task.status, status: run.status, stage: run.stage, revision: run.revision,
+    return { id: run.id, proposedFix: run.proposedFix, trustedExecution: run.trustedExecution === true, taskId: run.taskId, title: task.title, cleanup: run.cleanup, taskStatus: task.status, status: run.status, stage: run.stage, revision: run.revision,
       pipeline: run.settings.pipeline.map((id) => { const agent = run.settings.agents.find((a) => a.id === id)!; return { role: agent.role, runner: agent.runner, model: agent.model }; }),
       phase: run.phase, phaseStartedAt: run.phaseStartedAt, heartbeatAt: run.heartbeatAt ?? (run.leaseUntil ? new Date(Date.parse(run.leaseUntil) - LEASE_MS).toISOString() : undefined),
       progressAt: run.progressAt, lastMessage: run.lastMessage ?? '', createdAt: run.createdAt, startedAt: run.startedAt,
@@ -599,4 +608,36 @@ export class AutomationService {
     if (!run) throw new TrackerError('TASK_NOT_FOUND', 'Agent run not found.');
     return this.refreshCleanup(run);
   }
+
+  public async diagnoseFix(id: string): Promise<ProposedFix> {
+    const run = this.requireRun(id);
+    const events = this.runs.events(id).map(e => e.text);
+    const fix = await this.doctor.diagnose(run, events);
+    this.runs.save({ ...run, proposedFix: fix });
+    return fix;
+  }
+
+  public async applyFix(id: string): Promise<AgentRun> {
+    const run = this.requireRun(id);
+    if (!run.proposedFix) throw new TrackerError('CONFLICT', 'Нет предложенного исправления.');
+    await this.doctor.apply(run, run.proposedFix);
+    const now = this.clock.now();
+    const updated: AgentRun = { ...run, proposedFix: null, updatedAt: now, summary: `Применено авто-исправление: ${run.proposedFix.title}` };
+    this.runs.save(updated);
+    this.runs.event(id, 'resumed', `Применено авто-исправление: ${run.proposedFix.title}. Запуск готов к продолжению.`, now);
+    return this.publicRun(updated);
+  }
+
+  public async discardFix(id: string): Promise<AgentRun> {
+    const run = this.requireRun(id);
+    if (run.proposedFix) {
+      await this.doctor.discard(run);
+    }
+    const now = this.clock.now();
+    const updated: AgentRun = { ...run, proposedFix: null, updatedAt: now };
+    this.runs.save(updated);
+    this.runs.event(id, 'cancelled', 'Предложенное авто-исправление отклонено, изменения откатаны.', now);
+    return this.publicRun(updated);
+  }
+
 }

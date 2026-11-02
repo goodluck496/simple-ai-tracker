@@ -481,6 +481,10 @@
                         <p-checkbox [binary]="true" [(ngModel)]="connection.supportsImages" [ariaLabel]="'Поддержка изображений: ' + connection.label" />
                         <span>Поддержка изображений</span>
                       </label>
+                      <label class="checkbox-inline">
+                        <p-checkbox [binary]="true" [(ngModel)]="connection.isLocal" [ariaLabel]="'Локальная модель (без лимитов): ' + connection.label" />
+                        <span>Локальная модель (без лимитов)</span>
+                      </label>
                       <button pButton severity="secondary" [text]="true" size="small" icon="pi pi-trash" (click)="settings.connections.splice(i, 1)" title="Удалить подключение"></button>
                     </div>
 
