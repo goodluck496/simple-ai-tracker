@@ -253,7 +253,8 @@ export class AutomationPanelComponent implements OnInit {
   public readonly runnerId = RunnerId;
   public readonly limits = AUTOMATION_LIMITS;
   public readonly providerOptions = PROVIDER_OPTIONS;
-  public readonly roleOptions = ROLE_OPTIONS;
+  public readonly roleOptions = ROLE_OPTIONS.filter((option) => option.value !== AgentRole.Doctor);
+  public readonly doctorRoleOptions = [{ label: 'Системный доктор — диагностика сбоев', value: AgentRole.Doctor }];
   public readonly connectionPresets = CONNECTION_PRESETS;
   public readonly nativeRunnerOptions = RUNNER_OPTIONS.filter(option => option.value !== RunnerId.ModelApi);
   public readonly apiRunnerOptions = RUNNER_OPTIONS.filter(option => option.value === RunnerId.ModelApi);
@@ -421,11 +422,29 @@ export class AutomationPanelComponent implements OnInit {
     }
     return this.connectionOptionsCache;
   }
-  public get doctorConnectionOptions() {
-    return [
-      { label: 'Авто (локальная модель Ollama / модель агента)', value: '' },
-      ...this.settings.connections.map((entry) => ({ label: entry.label || entry.id, value: entry.id })),
-    ];
+  public get doctorAgent(): AgentProfile {
+    if (!this.settings.doctorAgent) {
+      const fallbackConn = this.settings.connections.find(c => c.isLocal || c.kind === ProviderKind.Ollama)?.id || this.settings.connections[0]?.id || '';
+      this.settings.doctorAgent = {
+        id: 'pipeline-doctor',
+        role: AgentRole.Doctor,
+        runner: RunnerId.ModelApi,
+        connectionId: this.settings.doctorConnectionId || fallbackConn,
+        model: this.settings.doctorModel || '',
+        instructions: DEFAULT_ROLE_INSTRUCTIONS[AgentRole.Doctor] ?? '',
+      };
+    }
+    return this.settings.doctorAgent;
+  }
+  public setDoctorArgs(value: string): void {
+    try {
+      const parsed = JSON.parse(value);
+      if (Array.isArray(parsed) && parsed.every(item => typeof item === 'string')) {
+        this.doctorAgent.args = parsed;
+      }
+    } catch {
+      // ignore
+    }
   }
   public stageNumber(run: AgentRun): number { return Math.min(run.stage + 1, run.settings.pipeline.length); }
   public addConnection(): void { this.settings.connections.push({ id: `connection-${crypto.randomUUID()}`, label: 'Подключение', kind: ProviderKind.Native, supportsImages: false }); }

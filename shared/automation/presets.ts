@@ -3,6 +3,7 @@ export const ROLE_OPTIONS = [
   { label: 'Аналитик — план', value: AgentRole.Analyst }, { label: 'Разработчик — анализ, код, юнит-тесты', value: AgentRole.Developer },
   { label: 'Тестировщик — ревью и проверки', value: AgentRole.Tester }, { label: 'Ревьюер — оценка кода', value: AgentRole.Reviewer },
   { label: 'Дизайнер — интерфейс', value: AgentRole.Designer }, { label: 'Визуальный валидатор — скриншоты', value: AgentRole.VisualValidator },
+  { label: 'Системный доктор — диагностика сбоев', value: AgentRole.Doctor },
 ];
 export const STANDARD_TEAM_ROLES = [AgentRole.Developer, AgentRole.Tester] as const;
 export const FULL_TEAM_ROLES = [AgentRole.Analyst, AgentRole.Developer, AgentRole.Tester, AgentRole.Reviewer] as const;

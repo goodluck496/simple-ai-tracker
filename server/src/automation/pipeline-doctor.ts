@@ -229,19 +229,27 @@ export class PipelineDoctor {
 
   private resolveConnection(run: AgentRun): ModelConnection | undefined {
     const connections = run.settings?.connections || [];
-    // 1. Explicit doctorConnectionId if set
+    // 1. Doctor agent profile connection
+    if (run.settings?.doctorAgent?.connectionId) {
+      const matched = connections.find(c => c.id === run.settings.doctorAgent!.connectionId);
+      if (matched) return matched;
+    }
+    // 2. Explicit doctorConnectionId if set
     if (run.settings?.doctorConnectionId) {
       const matched = connections.find(c => c.id === run.settings.doctorConnectionId);
       if (matched) return matched;
     }
-    // 2. Local model or Ollama
+    // 3. Local model or Ollama
     const local = connections.find(c => c.isLocal || c.kind === ProviderKind.Ollama);
     if (local) return local;
-    // 3. Any API connection with baseUrl
+    // 4. Any API connection with baseUrl
     return connections.find(c => Boolean(c.baseUrl));
   }
 
   private resolveModel(run: AgentRun, connection: ModelConnection): string {
+    if (run.settings?.doctorAgent?.model?.trim()) {
+      return run.settings.doctorAgent.model.trim();
+    }
     if (run.settings?.doctorModel?.trim()) {
       return run.settings.doctorModel.trim();
     }
@@ -250,6 +258,13 @@ export class PipelineDoctor {
       return agentUsingConn.model.trim();
     }
     return 'qwen2.5-coder:latest';
+  }
+
+  private resolveInstructions(run: AgentRun): string {
+    if (run.settings?.doctorAgent?.instructions?.trim()) {
+      return run.settings.doctorAgent.instructions.trim();
+    }
+    return 'Ты — системный агент Pipeline Doctor, эксперт по диагностике и автоматическому устранению сбоев в CI/CD конвейере и работе агентов.';
   }
 
   private async consultModel(
@@ -269,7 +284,7 @@ export class PipelineDoctor {
     if (connection.credentialEnv && !secret) return null;
 
     const prompt = [
-      'Ты — Pipeline Doctor, эксперт по диагностике и автоматическому устранению сбоев в CI/CD конвейере и работе агентов.',
+      this.resolveInstructions(run),
       `Задача: ${run.taskId}`,
       `Ошибка: ${run.summary || 'Неизвестная ошибка'}`,
       `Журнал последних ошибок:\n${errorContext || '(нет дополнительных записей журнала)'}`,
@@ -299,7 +314,7 @@ export class PipelineDoctor {
       body: JSON.stringify({
         model,
         messages: [
-          { role: 'system', content: 'Отвечай только JSON-объектом с полями title, explanation, scope, action.' },
+          { role: 'system', content: this.resolveInstructions(run) + ' Отвечай только JSON-объектом с полями title, explanation, scope, action.' },
           { role: 'user', content: prompt },
         ],
         temperature: 0.1,

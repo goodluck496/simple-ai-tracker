@@ -1,7 +1,7 @@
 import { TaskStatus } from '../tasks/status.js';
 import type { RunPhase } from './queue.js';
 
-export const AgentRole = { Analyst: 'analyst', Developer: 'developer', Tester: 'tester', Reviewer: 'reviewer', Designer: 'designer', VisualValidator: 'visual-validator' } as const;
+export const AgentRole = { Analyst: 'analyst', Developer: 'developer', Tester: 'tester', Reviewer: 'reviewer', Designer: 'designer', VisualValidator: 'visual-validator', Doctor: 'doctor' } as const;
 export type AgentRole = typeof AgentRole[keyof typeof AgentRole];
 export const AGENT_ROLES = Object.values(AgentRole);
 export const RunnerId = { Codex: 'codex', ClaudeCode: 'claude-code', OpenCode: 'opencode', DeepSeekHarness: 'deepseek-harness', Antigravity: 'antigravity', ModelApi: 'model-api', Custom: 'custom' } as const;
@@ -28,7 +28,7 @@ export const OWNED_RUN_STATUSES: readonly RunStatus[] = [RunStatus.Running, RunS
 export const RunAction = { Cancel: 'cancel', Resume: 'resume', Restart: 'restart' } as const;
 export type RunAction = typeof RunAction[keyof typeof RunAction];
 export const WRITABLE_AGENT_ROLES: readonly AgentRole[] = [AgentRole.Developer, AgentRole.Designer];
-export const READ_ONLY_AGENT_ROLES: readonly AgentRole[] = [AgentRole.Analyst, AgentRole.Tester, AgentRole.Reviewer, AgentRole.VisualValidator];
+export const READ_ONLY_AGENT_ROLES: readonly AgentRole[] = [AgentRole.Analyst, AgentRole.Tester, AgentRole.Reviewer, AgentRole.VisualValidator, AgentRole.Doctor];
 export const EVIDENCE_AGENT_ROLES: readonly AgentRole[] = [AgentRole.Tester, AgentRole.Reviewer, AgentRole.VisualValidator];
 export const REQUIRED_PIPELINE_ROLES: readonly AgentRole[] = [AgentRole.Developer, AgentRole.Tester, AgentRole.Reviewer];
 export const AUTOMATION_LIMITS = { timeoutMinutes: { min: 1, max: 240, default: 30 }, revisions: { min: 0, max: 10, default: 1 }, modelToolTurns: 40, imageBytes: 4 * 1024 * 1024, eventTextLength: 12000 } as const;
@@ -89,6 +89,7 @@ export interface AutomationSettings {
   mergePolicy: MergePolicy;
   doctorConnectionId?: string;
   doctorModel?: string;
+  doctorAgent?: AgentProfile;
 }
 
 export const DEFAULT_AUTOMATION_SETTINGS: AutomationSettings = {

@@ -418,6 +418,79 @@
             </div>
           </div>
 
+
+          <!-- Системный агент: Pipeline Doctor -->
+          <div class="panel-card doctor-system-card">
+            <div class="panel-card-header">
+              <div class="card-title-row">
+                <h4>Системный агент — Pipeline Doctor</h4>
+                <span class="doctor-system-tag"><i class="pi pi-shield"></i> Системная роль</span>
+              </div>
+              <p class="card-hint">
+                Автономный системный агент для диагностики сбоев этапов, ошибок компиляции, интеграции Git и формирования авто-исправлений. Не входит в линейный конвейер.
+              </p>
+            </div>
+            <div class="card-body">
+              <div class="agent-config-card doctor-agent-card" [attr.aria-label]="'Системный агент: ' + roleLabel(doctorAgent.role)">
+                <div class="agent-card-header">
+                  <div class="agent-role-badge">
+                    <i class="pi pi-wrench"></i>
+                    <strong>{{ roleLabel(doctorAgent.role) }}</strong>
+                  </div>
+                </div>
+
+                <div class="agent-fields-grid">
+                  <label>
+                    <span>Роль</span>
+                    <p-select [options]="doctorRoleOptions" optionLabel="label" optionValue="value" [ngModel]="doctorAgent.role" [disabled]="true" appendTo="body" />
+                  </label>
+                  <label>
+                    <span>Исполнитель</span>
+                    <p-select [options]="runnerOptions(doctorAgent)" optionLabel="label" optionValue="value" [(ngModel)]="doctorAgent.runner" ariaLabel="Исполнитель агента Doctor" appendTo="body" />
+                  </label>
+                  <label>
+                    <span>Подключение</span>
+                    <p-select [options]="connectionOptions" optionLabel="label" optionValue="value" [(ngModel)]="doctorAgent.connectionId" (onChange)="selectConnection(doctorAgent)" [filter]="true" filterPlaceholder="Поиск подключения" ariaLabel="Подключение агента Doctor" appendTo="body" />
+                  </label>
+                  <label class="grow-field">
+                    <span>Модель</span>
+                    @if (manualModels.has(doctorAgent.id)) {
+                      <input pInputText [formControl]="modelControl(doctorAgent)" placeholder="ID модели" />
+                    } @else {
+                      <p-select [options]="modelOptions(doctorAgent)" optionLabel="label" optionValue="id" [formControl]="modelControl(doctorAgent)"
+                        [filter]="true" filterBy="label,id" filterPlaceholder="Поиск модели" placeholder="Выберите модель" ariaLabel="Модель агента Doctor" appendTo="body" />
+                    }
+                  </label>
+                </div>
+
+                <div class="agent-model-tools">
+                  <button pButton severity="secondary" size="small" type="button" icon="pi pi-refresh" (click)="loadModels(doctorAgent)" [disabled]="!host.online || projectBusy || !doctorAgent.connectionId" [title]="modelButtonTitle(doctorAgent)">Обновить модели</button>
+                  <button pButton severity="secondary" [text]="true" size="small" type="button" (click)="toggleManualModel(doctorAgent)">{{ manualModels.has(doctorAgent.id) ? 'Выбрать из списка' : 'Указать ID вручную' }}</button>
+                  <span class="model-status-text">{{ modelMessage(doctorAgent) }}</span>
+                </div>
+
+                <p-accordion>
+                  <p-accordion-panel value="instructions">
+                    <p-accordion-header>Инструкции роли</p-accordion-header>
+                    <p-accordion-content>
+                      <textarea rows="4" [(ngModel)]="doctorAgent.instructions" class="instructions-textarea" placeholder="Правила и системный промпт роли..."></textarea>
+                      <div class="instructions-actions">
+                        <button pButton severity="secondary" size="small" type="button" (click)="resetInstructions(doctorAgent)">Вставить базовую инструкцию</button>
+                      </div>
+                    </p-accordion-content>
+                  </p-accordion-panel>
+                </p-accordion>
+
+                @if (doctorAgent.runner === runnerId.Custom) {
+                  <div class="custom-runner-fields">
+                    <label><span>Исполняемый файл</span><input pInputText [(ngModel)]="doctorAgent.command" /></label>
+                    <label><span>Аргументы JSON: &#123;promptFile&#125;, &#123;model&#125;, &#123;cwd&#125;, &#123;role&#125;</span><input pInputText [ngModel]="json(doctorAgent.args || [])" (ngModelChange)="setDoctorArgs($event)" /></label>
+                  </div>
+                }
+              </div>
+            </div>
+          </div>
+
           <!-- Порядок этапов -->
           <div class="panel-card">
             <div class="panel-card-header">
@@ -504,27 +577,6 @@
                   </div>
                 }
               </div>
-            </div>
-          </div>
-          <div class="panel-card">
-            <div class="panel-card-header">
-              <div class="card-title-row">
-                <h4>Диагностика сбоев (Pipeline Doctor)</h4>
-              </div>
-              <p class="card-hint">Сабагент анализирует логи сбоев конвейера, ошибки компиляции, интеграции Git и формирует авто-исправления с проверкой изменений</p>
-            </div>
-            <div class="card-body">
-              <div class="connection-details-row">
-                <label class="grow-field">
-                  <span>Провайдер / Подключение для Doctor</span>
-                  <p-select [options]="doctorConnectionOptions" optionLabel="label" optionValue="value" [(ngModel)]="settings.doctorConnectionId" appendTo="body" />
-                </label>
-                <label class="grow-field">
-                  <span>ID модели (по умолчанию локальная Ollama / модель агента)</span>
-                  <input pInputText [(ngModel)]="settings.doctorModel" placeholder="Например: qwen2.5-coder:latest или llama3" />
-                </label>
-              </div>
-              <p class="hint">Если выбрано «Авто», Doctor использует подключение, помеченное как «Локальная модель (без лимитов)» или Ollama. При недоступности сети используется встроенная эвристическая диагностика.</p>
             </div>
           </div>
         </div>

@@ -133,3 +133,56 @@ test('doctor detects clean target checkout failure and diagnoses repository scop
   assert.match(fix.title, /Сохранение локальных файлов/);
   assert.ok(fix.explanation.includes('Автоматическая интеграция требует чистого состояния'));
 });
+
+
+test('doctor respects doctorAgent profile configuration and custom instructions', async () => {
+  let capturedBody: any;
+  const mockFetch = async (_url: string, init: any) => {
+    capturedBody = JSON.parse(init.body);
+    return {
+      ok: true,
+      json: async () => ({
+        choices: [{
+          message: {
+            content: JSON.stringify({
+              title: 'Специальный анализ доктор-агента',
+              explanation: 'Диагностика по кастомной инструкции',
+              scope: 'worktree',
+              action: 'patch_code'
+            })
+          }
+        }]
+      })
+    };
+  };
+
+  const { PipelineDoctor } = await import('./pipeline-doctor.js');
+  const doctor = new PipelineDoctor(undefined, mockFetch as unknown as typeof fetch);
+
+  const run: any = {
+    id: 'run-doctor-agent',
+    taskId: 'TASK-DOC',
+    stage: 0,
+    summary: 'Custom failure',
+    settings: {
+      ...DEFAULT_AUTOMATION_SETTINGS,
+      connections: [
+        { id: 'doc-conn', label: 'Доктор Коннект', kind: ProviderKind.Ollama, baseUrl: 'http://localhost:11434', supportsImages: false, isLocal: true }
+      ],
+      agents: [],
+      doctorAgent: {
+        id: 'pipeline-doctor',
+        role: 'doctor',
+        runner: 'model-api',
+        connectionId: 'doc-conn',
+        model: 'deepseek-coder:14b',
+        instructions: 'КАСТОМНАЯ ИНСТРУКЦИЯ ДОКТОРА'
+      }
+    }
+  };
+
+  const fix = await doctor.diagnose(run, ['some error']);
+  assert.equal(fix.title, 'Специальный анализ доктор-агента');
+  assert.equal(fix.model, 'Доктор Коннект (deepseek-coder:14b)');
+  assert.ok(capturedBody.messages[0].content.includes('КАСТОМНАЯ ИНСТРУКЦИЯ ДОКТОРА'));
+});

@@ -45,6 +45,25 @@ export class AutomationSettingsValidator {
       if (agent.runner === RunnerId.Custom && (!text(agent.command) || !agent.command || !Array.isArray(agent.args))) return fail('Custom runner requires an executable and argv.');
       if (agent.args && !agent.args.every(text)) return fail('Runner args must be strings.');
     }
+
+    let doctorAgent: typeof settings.agents[number] | undefined;
+    if (settings.doctorAgent) {
+      const da = settings.doctorAgent;
+      if (text(da.id) && AGENT_ROLES.includes(da.role) && RUNNER_IDS.includes(da.runner)
+        && (!da.connectionId || ids.has(da.connectionId))) {
+        doctorAgent = {
+          id: da.id,
+          role: da.role,
+          runner: da.runner,
+          connectionId: da.connectionId || '',
+          model: typeof da.model === 'string' ? da.model : '',
+          instructions: typeof da.instructions === 'string' ? da.instructions : '',
+          ...(da.command ? { command: da.command } : {}),
+          ...(Array.isArray(da.args) && da.args.every(text) ? { args: da.args } : {}),
+          ...(da.nativeProfile ? { nativeProfile: da.nativeProfile } : {}),
+        };
+      }
+    }
     if (!settings.pipeline.every((id) => text(id) && profiles.has(id))) return fail('Pipeline references an unknown agent.');
     if (!settings.checks.every((check) => check && text(check.command) && check.command && Array.isArray(check.args) && check.args.every(text))) return fail('Invalid check command.');
     if (!settings.setup.every((check) => check && text(check.command) && check.command && Array.isArray(check.args) && check.args.every(text))) return fail('Invalid setup command.');
@@ -77,6 +96,7 @@ export class AutomationSettingsValidator {
       pipeline: settings.pipeline, checks: settings.checks.map(({ command, args }) => ({ command, args })), setup: settings.setup.map(({ command, args }) => ({ command, args })), artifactPaths: settings.artifactPaths,
       timeoutMinutes: settings.timeoutMinutes, maxRevisions: settings.maxRevisions, mergePolicy: settings.mergePolicy,
       maxAgentCalls, maxStageToolCalls, maxInputTokens, maxRunMinutes,
+      ...(doctorAgent ? { doctorAgent } : {}),
       ...(typeof settings.doctorConnectionId === 'string' ? { doctorConnectionId: settings.doctorConnectionId } : {}),
       ...(typeof settings.doctorModel === 'string' ? { doctorModel: settings.doctorModel } : {}),
       ...execution,
