@@ -7,6 +7,7 @@ import { TokenMeter, type TokenUsage } from '../../../../shared/automation/token
 import { CompactProgress } from '../../../../shared/automation/compact-progress.js';
 import { ProjectMcpTools } from './project-mcp-tools.js';
 import { AGENT_OUTCOME_SCHEMA } from '../../../../shared/automation/outcome-schema.js';
+import { PipelineHelper } from '../pipeline-helper.js';
 
 interface ToolCall { id: string; function: { name: string; arguments: string }; }
 interface Message { role: string; content: unknown; tool_calls?: ToolCall[]; tool_call_id?: string; }
@@ -234,9 +235,11 @@ export class ModelApiRunner implements AgentRunner {
       catch (error) {
         job.signal.throwIfAborted();
         if (!(error instanceof ProcessExecutionError)) throw error;
-        const limit = 16000;
+        const rawOutput = `${error.stdout}\n${error.stderr}`;
+        const summary = await PipelineHelper.compressErrorLog(rawOutput, job.settings, this.request);
+        const limit = 4000;
         return { exitCode: error.exitCode, error: error.message, checkIndex: args.index,
-          stdout: error.stdout.slice(-limit), stderr: error.stderr.slice(-limit),
+          summary, stdout: error.stdout.slice(-limit), stderr: error.stderr.slice(-limit),
           outputLimited: error.stdout.length > limit || error.stderr.length > limit };
       }
       return { exitCode: 0 };

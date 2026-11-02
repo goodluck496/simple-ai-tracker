@@ -5,15 +5,24 @@ export class CommitMessage {
   public static forTask(value: unknown, taskId: string, title: string): string {
     try { return this.validate(value, taskId); }
     catch {
-      if (typeof value !== 'string') return this.validate(value, taskId);
+      if (typeof value !== 'string') return this.fallback(taskId, title);
       const prefix = `[#${taskId}] - `;
       if (!value.startsWith(prefix) || value !== value.trim() || /[\x00-\x1f\x7f]/.test(value)
         || (value.slice(prefix.length).match(/[А-Яа-яЁё]{2,}/g) ?? []).length < 3)
-        return this.validate(value, taskId);
+        return this.fallback(taskId, title);
       const purpose = title.replace(/\s+/g, ' ').trim();
-      if (!purpose) return this.validate(value, taskId);
-      return this.validate(`${value}, чтобы выполнить требование задачи «${purpose}»`, taskId);
+      if (!purpose) return this.fallback(taskId, title);
+      try {
+        return this.validate(`${value}, чтобы выполнить требование задачи «${purpose}»`, taskId);
+      } catch {
+        return this.fallback(taskId, title);
+      }
     }
+  }
+  public static fallback(taskId: string, title: string): string {
+    const cleanTitle = (title || 'выполнить требования').replace(/[\r\n\x00-\x1f{}]|```|~~~/g, ' ').replace(/\s+/g, ' ').trim();
+    const purpose = cleanTitle.length > 80 ? cleanTitle.slice(0, 77) + '...' : cleanTitle;
+    return `[#${taskId}] - Реализованы изменения по плану, чтобы выполнить задачу «${purpose}»`;
   }
   public static validate(value: unknown, taskId: string): string {
     const prefix = `[#${taskId}] - `;

@@ -16,6 +16,7 @@ import { RunBudget } from '../../../../shared/automation/budget.js';
 import { PipelinePolicy } from '../../../../shared/automation/pipeline-policy.js';
 import { TaskEnvironment } from '../runners/task-environment.js';
 import { CommitMessage } from '../../../../shared/automation/commit-message.js';
+import { PipelineHelper } from '../pipeline-helper.js';
 import { RuntimeCoordinator, type RuntimeLease } from './runtime-coordinator.js';
 import { RunWorkspace } from './run-workspace.js';
 import { ExecutionScope } from '../runners/execution-scope.js';
@@ -406,7 +407,8 @@ export class PipelineWorker {
           const staged = (await git(['diff', '--cached', '--name-only', '-z'], cwd)).split('\0').filter(Boolean);
           if (staged.some(file => /(^|\/)(?:node_modules|\.sat)(?:\/|$)/.test(file))) throw new Error('Generated dependencies/runtime must not be committed. Fix ignore rules before resuming.');
           if ((await git(['diff', '--cached', '--name-only'], cwd)).trim()) {
-            const message = CommitMessage.forTask(outcome.commitMessage, stageTaskId, String(pack.title ?? stageTaskId));
+            const diffStat = (await git(['diff', '--cached', '--stat'], cwd)).slice(0, 1000);
+            const message = await PipelineHelper.repairCommitMessage(outcome.commitMessage, stageTaskId, String(pack.title ?? stageTaskId), diffStat, run.settings);
             outcome.commitMessage = message; saved.outcome = outcome;
             await checkpoint.save(saved);
             await git(['commit', '-m', message], cwd);
@@ -422,7 +424,12 @@ export class PipelineWorker {
               await this.executor.run({ ...check, cwd, env: TaskEnvironment.create(), signal: controller.signal, compactProgress: true, onProgress: progress });
               checksEvidence.push({ command: check.command, args: check.args, exitCode: 0 });
             }
-            catch (error) { outcome = { verdict: AgentVerdict.ChangesRequested, summary: redact(`Configured check failed: ${error instanceof Error ? error.message : String(error)}`) }; break; }
+            catch (error) {
+              const rawMsg = error instanceof Error ? error.message : String(error);
+              const compressed = await PipelineHelper.compressErrorLog(rawMsg, run.settings);
+              outcome = { verdict: AgentVerdict.ChangesRequested, summary: redact(`Configured check failed: ${compressed}`) };
+              break;
+            }
           }
           if ((await git(['rev-parse', 'HEAD'], cwd)).trim() !== sha || (await git(['status', '--porcelain', '--', '.', ':!.sat'], cwd)).trim()) throw new Error('Checks changed the tested commit or left uncommitted files.');
           saved.outcome = outcome;
