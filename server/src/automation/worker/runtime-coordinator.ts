@@ -2,10 +2,10 @@ import { DatabaseSync } from 'node:sqlite';
 import { mkdirSync, readFileSync, realpathSync, lstatSync, existsSync } from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
-import { randomUUID } from 'node:crypto';
+import { randomUUID, createHash } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
 
-interface Owner { key: string; nonce: string; pid: number; host: string; capacity: number; children: string; }
+export interface Owner { key: string; nonce: string; pid: number; host: string; capacity: number; children: string; }
 export interface RuntimeLease { release(): void; child(pid: number, running: boolean): void; }
 
 /** Host-local coordination, separate from tracker data. Transactions fence stale-owner recovery. */
@@ -20,6 +20,15 @@ export class RuntimeCoordinator {
   public close(): void { this.db.close(); }
   public held(prefix: string): boolean {
     return (this.db.prepare('SELECT key FROM owners').all() as unknown as { key: string }[]).some(row => row.key.startsWith(prefix));
+  }
+  public getOwner(key: string): Owner | undefined {
+    return this.db.prepare('SELECT * FROM owners WHERE key=?').get(key) as unknown as Owner | undefined;
+  }
+  public listOwners(): Owner[] {
+    return this.db.prepare('SELECT * FROM owners').all() as unknown as Owner[];
+  }
+  public static isAlive(pid: number): boolean {
+    return RuntimeCoordinator.alive(pid);
   }
   public async acquire(key: string, signal: AbortSignal, capacity = 0): Promise<RuntimeLease> {
     for (;;) {
@@ -83,6 +92,28 @@ export class RuntimeCoordinator {
     }
     return false;
   }
+  public async gracefulStop(key: string, timeoutMs = 2500): Promise<boolean> {
+    const row = this.getOwner(key);
+    if (!row) return false;
+    if (row.host === os.hostname() && row.pid !== process.pid) {
+      if (RuntimeCoordinator.alive(row.pid)) {
+        try {
+          process.kill(row.pid, 'SIGTERM');
+        } catch {}
+        const deadline = Date.now() + timeoutMs;
+        while (Date.now() < deadline) {
+          if (!RuntimeCoordinator.alive(row.pid)) break;
+          await delay(150);
+        }
+      }
+      if (RuntimeCoordinator.alive(row.pid)) {
+        return this.forceRelease(key);
+      }
+      this.db.prepare('DELETE FROM owners WHERE key=?').run(key);
+      return true;
+    }
+    return false;
+  }
   private static alive(pid: number): boolean {
     try {
       process.kill(pid, 0);
@@ -93,4 +124,14 @@ export class RuntimeCoordinator {
       return true;
     } catch (error) { return !['ESRCH', 'ENOENT'].includes((error as NodeJS.ErrnoException).code ?? ''); }
   }
+}
+
+export function getRuntimeHostsRoot(): string {
+  const home = process.env.LOCALAPPDATA ? path.join(process.env.LOCALAPPDATA, 'SimpleAiTracker') : path.join(os.homedir(), '.cache', 'simple-ai-tracker');
+  return path.join(home, 'hosts');
+}
+
+export function getRuntimeHostDirectory(workspace = process.env.SAT_WORKSPACE ?? 'default', mcpCommand = process.env.SAT_MCP_COMMAND, mcpArgs = process.env.SAT_MCP_ARGS): string {
+  const key = createHash('sha256').update(JSON.stringify([workspace, mcpCommand, mcpArgs])).digest('hex');
+  return path.join(getRuntimeHostsRoot(), key);
 }

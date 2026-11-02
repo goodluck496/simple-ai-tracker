@@ -16,7 +16,7 @@
     "dev:api": "npm run build:server && node --watch dist/server/api.mjs",
     "serve:web": "ng serve --proxy-config web/proxy.conf.json",
     "mcp": "node dist/server/mcp.mjs",
-    "worker": "node scripts/worker-docker.mjs",
+    "worker": "node scripts/worker.mjs",
     "worker:local": "node dist/server/worker.mjs",
     "worker:docker": "node scripts/worker-docker.mjs",
     "cli": "node dist/server/cli.mjs",
@@ -31,7 +31,13 @@
     "export:json": "npm run build:server && node dist/server/cli.mjs export:json",
     "db:stats": "npm run build:server && node dist/server/cli.mjs db:stats",
     "test": "tsx --test --test-reporter=./scripts/compact-test-reporter.mjs \"server/src/**/*.spec.ts\"",
-    "typecheck": "tsc -p tsconfig.server.json --noEmit"
+    "typecheck": "tsc -p tsconfig.server.json --noEmit",
+    "worker:service": "node scripts/worker-service.mjs start",
+    "worker:start": "node scripts/worker-service.mjs start",
+    "worker:stop": "node scripts/worker-service.mjs stop",
+    "worker:restart": "node scripts/worker-service.mjs restart",
+    "worker:status": "node scripts/worker-service.mjs status",
+    "worker:logs": "node scripts/worker-service.mjs logs"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.32.1",

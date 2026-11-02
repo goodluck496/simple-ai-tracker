@@ -5,7 +5,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { McpTrackerChannel } from './mcp-client.js';
 import { ProjectWorker } from './project-worker.js';
 import { ExecutionSupervisor } from './execution-supervisor.js';
-import { RuntimeCoordinator } from './runtime-coordinator.js';
+import { RuntimeCoordinator, getRuntimeHostDirectory } from './runtime-coordinator.js';
 import { AutomationTool } from '../../../../shared/automation/protocol.js';
 import { PROJECT_LIMITS, type HostStatus } from '../../../../shared/automation/project.js';
 
@@ -13,9 +13,8 @@ import { PROJECT_LIMITS, type HostStatus } from '../../../../shared/automation/p
 export class HostSupervisorApplication {
   public async run(): Promise<void> {
     const workspace = process.env.SAT_WORKSPACE ?? 'default'; const id = process.env.SAT_WORKER_ID ?? randomUUID();
-    const key = createHash('sha256').update(JSON.stringify([workspace, process.env.SAT_MCP_COMMAND, process.env.SAT_MCP_ARGS])).digest('hex');
-    const home = process.env.LOCALAPPDATA ? path.join(process.env.LOCALAPPDATA, 'SimpleAiTracker') : path.join(os.homedir(), '.cache', 'simple-ai-tracker');
-    const coordinator = new RuntimeCoordinator(path.join(home, 'hosts', key, 'coordination.sqlite'));
+    const hostDir = getRuntimeHostDirectory(workspace, process.env.SAT_MCP_COMMAND, process.env.SAT_MCP_ARGS);
+    const coordinator = new RuntimeCoordinator(path.join(hostDir, 'coordination.sqlite'));
     let lease = coordinator.tryAcquire('host');
     if (!lease) {
       process.stderr.write('Обнаружен ранее запущенный хост воркера. Принудительное завершение старого процесса...\n');

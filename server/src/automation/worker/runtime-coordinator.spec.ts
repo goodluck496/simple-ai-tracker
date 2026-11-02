@@ -74,3 +74,23 @@ test('forceRelease terminates running owner process and releases lease for resta
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test('gracefulStop terminates process and clears owner', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'sat-graceful-stop-'));
+  const file = path.join(root, 'runtime.sqlite');
+  const dummy = spawn(process.execPath, ['-e', 'process.on("SIGTERM", () => process.exit(0)); setInterval(()=>{},1000)'], { windowsHide: true, stdio: 'ignore' });
+  const store = new RuntimeCoordinator(file);
+  try {
+    (store as unknown as { db: { prepare(sql: string): { run(...args: unknown[]): void } } }).db
+      .prepare('INSERT INTO owners VALUES (?,?,?,?,?,?)').run('host', 'nonce-2', dummy.pid, os.hostname(), 0, '[]');
+    assert.ok(store.getOwner('host'));
+    assert.equal(store.listOwners().length, 1);
+    const stopped = await store.gracefulStop('host', 1500);
+    assert.equal(stopped, true);
+    assert.equal(store.getOwner('host'), undefined);
+  } finally {
+    try { process.kill(dummy.pid, 'SIGKILL'); } catch {}
+    store.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
