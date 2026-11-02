@@ -63,7 +63,7 @@
           }
           <div class="lane-cards">
             @for (item of items(lane.id); track item.id) {
-              <div class="run-card" [class.selected]="selectedId() === item.id" [attr.data-status]="item.status" (click)="select(item.id)" tabindex="0" (keydown.enter)="select(item.id)">
+              <div class="run-card" role="button" [attr.aria-label]="'Запуск ' + item.taskId + ' ' + item.id" [class.selected]="selectedId() === item.id" [attr.data-status]="item.status" (click)="select(item.id)" tabindex="0" (keydown.enter)="select(item.id)">
                 <div class="card-header">
                   <span class="card-task-id">{{ item.taskId }}</span>
                   <span class="card-status-pill" [attr.data-status]="item.status">{{ statusTitles[item.status] }}</span>
@@ -166,7 +166,7 @@
                 {{ item.stage >= item.pipeline.length ? 'Интеграция заново' : 'Начать заново' }}
               </button>
             }
-            <button pButton [severity]="showDetails() ? 'primary' : 'secondary'" [text]="!showDetails()" size="small" icon="pi pi-sliders-h" (click)="showDetails.set(!showDetails())" [title]="showDetails() ? 'Скрыть панель подробностей' : 'Показать панель подробностей'">
+            <button pButton [severity]="showDetails() ? 'primary' : 'secondary'" [text]="!showDetails()" size="small" icon="pi pi-sliders-h" aria-label="Подробности запуска" (click)="showDetails.set(!showDetails())" [title]="showDetails() ? 'Скрыть панель подробностей' : 'Показать панель подробностей'">
               <span>Подробности</span>
             </button>
           </div>
@@ -241,13 +241,19 @@
 
   <!-- RIGHT SIDEBAR: Панель подробностей и инспектор -->
   @if (showDetails() && selected(); as item) {
-    <aside class="queue-inspector" aria-label="Подробности запуска">
+    <aside class="queue-inspector" [style.width.px]="inspectorWidth()" [class.inspector-resizing]="isResizingInspector()" aria-label="Подробности запуска">
+      <div class="sidebar-resizer" (mousedown)="onInspectorResizeStart($event)" title="Потяните, чтобы изменить ширину панели">
+        <div class="resizer-handle-line"></div>
+      </div>
       <div class="inspector-header">
         <div class="inspector-title">
           <i class="pi pi-info-circle"></i>
           <h3>Подробности запуска</h3>
         </div>
-        <button pButton [text]="true" severity="secondary" size="small" icon="pi pi-times" (click)="showDetails.set(false)" title="Закрыть подробности"></button>
+        <div class="inspector-header-actions">
+          <button pButton [text]="true" severity="secondary" size="small" [icon]="inspectorWidth() > 700 ? 'pi pi-window-minimize' : 'pi pi-window-maximize'" (click)="toggleInspectorWide()" [title]="inspectorWidth() > 700 ? 'Стандартная ширина' : 'Широкая панель'"></button>
+          <button pButton [text]="true" severity="secondary" size="small" icon="pi pi-times" (click)="showDetails.set(false)" title="Закрыть подробности"></button>
+        </div>
       </div>
 
       <div class="inspector-content">
@@ -381,18 +387,71 @@
               <p>Вход: {{ total.inputTokens | number }} · выход: {{ total.outputTokens | number }}. Данные есть у {{ total.measuredAttempts }} из {{ total.attempts }} попыток этапов.</p>
             }
             <p class="muted">Только расход, сообщённый исполнителями этого запуска. Кэш входит во входные токены, reasoning — в выходные. Это не стоимость и не остаток лимита подписки. При ошибке или потере связи данные могут быть неполными.</p>
-            <p-table [value]="attempts" [scrollable]="true" scrollHeight="16rem" styleClass="p-datatable-sm">
-              <ng-template #header><tr><th>Этап / попытка</th><th>Исполнитель / модель</th><th>Вход</th><th>Выход</th><th>Кэш: чтение / запись</th><th>Reasoning</th><th>Данные</th></tr></ng-template>
-              <ng-template #body let-attempt><tr>
-                <td>{{ attempt.kind === 'resolver' ? 'Конфликт' : attempt.stage + 1 }} · {{ role(attempt.role) }}<small>{{ attempt.startedAt | date:'mediumTime' }} · цикл {{ attempt.revision + 1 }}</small></td>
-                <td>{{ attempt.runner }}<small>{{ attempt.model }}</small></td>
-                <td>{{ attempt.usage ? (attempt.usage.inputTokens | number) : '—' }}</td><td>{{ attempt.usage ? (attempt.usage.outputTokens | number) : '—' }}</td>
-                <td>{{ attempt.usage && attempt.usage.cachedInputTokens !== undefined ? (attempt.usage.cachedInputTokens | number) : '—' }} / {{ attempt.usage && attempt.usage.cacheWriteInputTokens !== undefined ? (attempt.usage.cacheWriteInputTokens | number) : '—' }}</td>
-                <td>{{ attempt.usage && attempt.usage.reasoningTokens !== undefined ? (attempt.usage.reasoningTokens | number) : '—' }}</td>
-                <td><span>{{ !attempt.usage ? 'Нет данных' : !attempt.finished || attempt.usage.missingRequests ? 'Частичные' : 'Сообщены исполнителем' }}</span><small>{{ attempt.usage?.source || 'Исполнитель не сообщил usage' }}</small></td>
-              </tr></ng-template>
-              <ng-template #emptymessage><tr><td colspan="7">Данных пока нет. Старые запуски не содержат измерений токенов.</td></tr></ng-template>
-            </p-table>
+            <div class="attempts-table-wrapper">
+              <p-table [value]="attempts" [scrollable]="true" scrollHeight="18rem" styleClass="p-datatable-sm attempts-table">
+                <ng-template #header>
+                  <tr>
+                    <th class="th-stage">Этап / попытка</th>
+                    <th class="th-runner">Исполнитель / модель</th>
+                    <th class="th-num">Вход</th>
+                    <th class="th-num">Выход</th>
+                    <th class="th-num th-cache">Кэш (R / W)</th>
+                    <th class="th-num">Reasoning</th>
+                    <th class="th-status">Данные</th>
+                  </tr>
+                </ng-template>
+                <ng-template #body let-attempt>
+                  <tr>
+                    <td class="td-stage">
+                      <div class="cell-main">
+                        <span class="attempt-stage-name">{{ attempt.kind === 'resolver' ? 'Конфликт' : (attempt.stage + 1) + ' · ' + role(attempt.role) }}</span>
+                        <span class="cell-sub muted">{{ attempt.startedAt | date:'mediumTime' }} · цикл {{ attempt.revision + 1 }}</span>
+                      </div>
+                    </td>
+                    <td class="td-runner">
+                      <div class="cell-main">
+                        <span class="attempt-runner">{{ attempt.runner }}</span>
+                        <span class="cell-sub model-tag" [title]="attempt.model">{{ attempt.model }}</span>
+                      </div>
+                    </td>
+                    <td class="td-num">
+                      <span class="num-val">{{ attempt.usage ? (attempt.usage.inputTokens | number) : '—' }}</span>
+                    </td>
+                    <td class="td-num">
+                      <span class="num-val">{{ attempt.usage ? (attempt.usage.outputTokens | number) : '—' }}</span>
+                    </td>
+                    <td class="td-num td-cache">
+                      @if (attempt.usage && (attempt.usage.cachedInputTokens !== undefined || attempt.usage.cacheWriteInputTokens !== undefined)) {
+                        <span class="cache-read" title="Чтение кэша">{{ attempt.usage.cachedInputTokens !== undefined ? (attempt.usage.cachedInputTokens | number) : '—' }}</span>
+                        <span class="cache-sep">/</span>
+                        <span class="cache-write" title="Запись в кэш">{{ attempt.usage.cacheWriteInputTokens !== undefined ? (attempt.usage.cacheWriteInputTokens | number) : '—' }}</span>
+                      } @else {
+                        <span class="num-val">—</span>
+                      }
+                    </td>
+                    <td class="td-num">
+                      <span class="num-val">{{ attempt.usage && attempt.usage.reasoningTokens !== undefined ? (attempt.usage.reasoningTokens | number) : '—' }}</span>
+                    </td>
+                    <td class="td-status">
+                      <div class="cell-status">
+                        <span class="attempt-status-tag"
+                              [class.tag-reported]="attempt.usage && attempt.finished && !attempt.usage.missingRequests"
+                              [class.tag-partial]="attempt.usage && (!attempt.finished || attempt.usage.missingRequests)"
+                              [class.tag-empty]="!attempt.usage">
+                          {{ !attempt.usage ? 'Нет данных' : !attempt.finished || attempt.usage.missingRequests ? 'Частичные' : 'Сообщены' }}
+                        </span>
+                        @if (attempt.usage?.source) {
+                          <span class="cell-sub muted source-label" [title]="attempt.usage.source">{{ attempt.usage.source }}</span>
+                        }
+                      </div>
+                    </td>
+                  </tr>
+                </ng-template>
+                <ng-template #emptymessage>
+                  <tr><td colspan="7" class="empty-table-cell">Данных пока нет. Старые запуски не содержат измерений токенов.</td></tr>
+                </ng-template>
+              </p-table>
+            </div>
           </div>
         }
 

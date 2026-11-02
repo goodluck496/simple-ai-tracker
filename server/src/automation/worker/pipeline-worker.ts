@@ -251,7 +251,10 @@ export class PipelineWorker {
         const priorSha = (await git(['rev-parse', 'HEAD'], cwd)).trim();
         const sessionKey = StageCheckpoint.key({ key, head: priorSha, cwd: path.resolve(cwd) });
         const memory = run.stageMemory?.key === sessionKey ? run.stageMemory : undefined;
-        if (run.commitSha && priorSha !== run.commitSha && !saved) throw new Error('Worktree HEAD changed after checkpoint; inspect it before resuming.');
+        if (run.commitSha && priorSha !== run.commitSha && !saved) {
+          progress(`Рабочая ветка содержит обновлённый HEAD (${priorSha.slice(0, 7)}); продолжение с текущего состояния.\n`);
+          run.commitSha = priorSha;
+        }
         let priorStatus = await git(['status', '--porcelain', '--', '.', ':!.sat'], cwd);
         const baseline = child ? (await git(['merge-base', 'HEAD', branch], cwd)).trim() : run.checkout?.baseSha ?? run.settings.baseBranch;
         const committed = await git(['diff', '--name-only', '-z', `${baseline}...HEAD`, '--', '.', ':!.sat'], cwd);

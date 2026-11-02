@@ -36,6 +36,8 @@ export class AutomationQueueComponent {
   public readonly historyTask = signal('');
   public readonly showDetails = signal(false);
   public readonly leftSidebarOpen = signal(true);
+  public readonly inspectorWidth = signal<number>(this.loadInspectorWidth());
+  public readonly isResizingInspector = signal(false);
   public readonly activeLaneFilter = signal<string>('all');
   public readonly confirmation = signal<'cleanup' | 'delete' | null>(null);
   public discard = false;
@@ -122,6 +124,57 @@ export class AutomationQueueComponent {
   public progress(text: string): string { return RunProgressText.format(text); }
   public select(id: string): void { this.selectedCache.set(this.snapshot().items.find(run => run.id === id)); this.selectedId.set(id); this.error.set(''); this.confirmation.set(null); }
   public toggleLeftSidebar(): void { this.leftSidebarOpen.update(v => !v); }
+  private loadInspectorWidth(): number {
+    try {
+      const saved = Number(localStorage.getItem('sat-queue-inspector-width'));
+      if (saved && !isNaN(saved) && saved >= 380 && saved <= 960) return saved;
+    } catch {}
+    return 560;
+  }
+  public onInspectorResizeStart(event: MouseEvent): void {
+    event.preventDefault();
+    event.stopPropagation();
+    const startX = event.clientX;
+    const startWidth = this.inspectorWidth();
+    this.isResizingInspector.set(true);
+    document.body.style.userSelect = 'none';
+    document.body.style.cursor = 'ew-resize';
+    const onMouseMove = (moveEvent: MouseEvent): void => {
+      const deltaX = startX - moveEvent.clientX;
+      const minWidth = 380;
+      const leftWidth = this.leftSidebarOpen() ? 360 : 0;
+      const minCenterWidth = 460;
+      const maxAllowed = Math.max(minWidth, window.innerWidth - leftWidth - minCenterWidth);
+      const maxWidth = Math.min(880, maxAllowed);
+      this.inspectorWidth.set(Math.min(maxWidth, Math.max(minWidth, startWidth + deltaX)));
+    };
+    const onMouseUp = (): void => {
+      this.isResizingInspector.set(false);
+      document.body.style.userSelect = '';
+      document.body.style.cursor = '';
+      window.removeEventListener('mousemove', onMouseMove);
+      window.removeEventListener('mouseup', onMouseUp);
+      try {
+        localStorage.setItem('sat-queue-inspector-width', String(this.inspectorWidth()));
+      } catch {}
+    };
+    window.addEventListener('mousemove', onMouseMove);
+    window.addEventListener('mouseup', onMouseUp);
+  }
+  public toggleInspectorWide(): void {
+    const current = this.inspectorWidth();
+    if (current > 660) {
+      this.inspectorWidth.set(560);
+    } else {
+      const leftWidth = this.leftSidebarOpen() ? 360 : 0;
+      const maxAvailable = Math.max(480, window.innerWidth - leftWidth - 500);
+      const wide = Math.min(840, Math.max(640, maxAvailable));
+      this.inspectorWidth.set(wide);
+    }
+    try {
+      localStorage.setItem('sat-queue-inspector-width', String(this.inspectorWidth()));
+    } catch {}
+  }
   public switchMode(history: boolean): void { this.historyMode.set(history); if (!history) this.historyTask.set(''); this.activeLaneFilter.set('all'); }
   public filteredLanes() { return this.activeLaneFilter() === 'all' ? this.visibleLanes() : this.visibleLanes().filter(lane => lane.id === this.activeLaneFilter()); }
   public totalActive(): number { return this.items('queued').length + this.items('running').length; }
