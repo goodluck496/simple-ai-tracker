@@ -13,3 +13,14 @@ test('commit subject requires actual task ID, Russian change and explicit purpos
     assert.throws(() => CommitMessage.validate(subject, 'SAT-14'), /Commit message rejected/);
   }
 });
+
+test('worker supplies the accepted task purpose while preserving the actual Russian change', () => {
+  const subject = '[#SAT-14] - Изменены параметры горения костра';
+  const completed = CommitMessage.forTask(subject, 'SAT-14', 'Параметризация костра');
+  assert.equal(completed, subject + ', чтобы выполнить требование задачи «Параметризация костра»');
+  assert.equal(CommitMessage.validate(completed, 'SAT-14'), completed);
+  assert.equal(CommitMessage.forTask(completed, 'SAT-14', 'Same task'), completed);
+  assert.throws(() => CommitMessage.forTask('[#OTHER] - developer stage', 'SAT-14', 'Параметризация костра'));
+  assert.throws(() => CommitMessage.forTask('[#SAT-14] - developer stage', 'SAT-14', 'Параметризация костра'));
+  assert.throws(() => CommitMessage.forTask(subject + '\nbody', 'SAT-14', 'Параметризация костра'));
+});

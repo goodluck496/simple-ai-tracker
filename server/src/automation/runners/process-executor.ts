@@ -13,6 +13,13 @@ export interface ProcessRequest {
   onStderr?: (text: string) => void;
 }
 const MAX_OUTPUT = 256 * 1024;
+export const PROCESS_PROGRESS_MS = 15000;
+
+/** Keep subprocess evidence available to agent tools without putting it in progress logs. */
+export class ProcessExecutionError extends Error {
+  public constructor(message: string, public readonly exitCode: number | null,
+    public readonly stdout: string, public readonly stderr: string) { super(message); }
+}
 
 /** Executes argv without a shell, including npm shims on Windows. */
 export class ProcessExecutor {
@@ -27,6 +34,14 @@ export class ProcessExecutor {
       });
       let observerError: unknown;
       let stdout = ''; let stderr = '';
+      const startedAt = Date.now(); let lastOutputAt = startedAt;
+      const label = CompactProgress.command(request.command, request.args);
+      const elapsed = (at: number) => `${Math.floor((Date.now() - at) / 1000)} с`;
+      if (request.compactProgress) request.onProgress?.(`Выполняется: ${label}.\n`);
+      const progressTimer = request.compactProgress && request.onProgress ? setInterval(() => {
+        const diagnostic = CompactProgress.liveOutput(stderr || stdout);
+        request.onProgress?.(`Выполняется: ${label} · прошло ${elapsed(startedAt)} · без вывода ${elapsed(lastOutputAt)}. Процент команды неизвестен.\n${diagnostic ? diagnostic + '\n' : ''}`);
+      }, PROCESS_PROGRESS_MS) : undefined;
       const abort = () => {
         if (!child.pid) return;
         if (process.platform === 'win32') {
@@ -40,26 +55,29 @@ export class ProcessExecutor {
       child.stdout?.setEncoding('utf8');
       child.stderr?.setEncoding('utf8');
       child.stdout?.on('data', (value: string) => {
+        lastOutputAt = Date.now();
         request.onStdout?.(value);
         stdout = (stdout + value).slice(-(request.maxOutputChars ?? MAX_OUTPUT));
         if (!request.compactProgress) request.onProgress?.(value);
       });
       child.stderr?.on('data', (value: string) => {
+        lastOutputAt = Date.now();
         request.onStderr?.(value);
         stderr = (stderr + value).slice(-MAX_OUTPUT);
         if (!request.compactProgress) request.onProgress?.(value);
       });
       child.stdin?.on('error', () => undefined);
       child.stdin?.end(request.stdin ?? '');
-      child.once('error', (error) => { request.signal.removeEventListener('abort', abort); reject(error); });
+      child.once('error', (error) => { clearInterval(progressTimer); request.signal.removeEventListener('abort', abort); reject(error); });
       child.once('close', (code) => {
+        clearInterval(progressTimer);
         try { if (child.pid) scope?.child?.(child.pid, false); } catch (error) { observerError ??= error; }
         request.signal.removeEventListener('abort', abort);
         if (observerError) { reject(observerError); return; }
         if (request.signal.aborted) { reject(new Error('Execution cancelled or timed out.')); return; }
         const diagnostic = request.compactProgress ? CompactProgress.diagnostics(stderr || stdout) : (stderr || stdout).slice(-6000);
         if (request.compactProgress) request.onProgress?.(`Команда: ${CompactProgress.command(request.command, request.args)} → exit ${code}.\n${code !== 0 ? diagnostic + '\n' : CompactProgress.success(stdout).map(line => line + '\n').join('')}`);
-        if (code !== 0) { reject(new Error(`${request.command} failed (${code}): ${diagnostic}`)); return; }
+        if (code !== 0) { reject(new ProcessExecutionError(`${request.command} failed (${code}): ${diagnostic}`, code, stdout, stderr)); return; }
         resolve(stdout);
       });
       try { if (child.pid) scope?.child?.(child.pid, true); } catch (error) { observerError = error; abort(); }

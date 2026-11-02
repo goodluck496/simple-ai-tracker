@@ -154,6 +154,8 @@ export interface AgentOutcome {
 }
 
 export interface AgentJob {
+  /** Worker barrier: source reads/planning may run while dependencies are prepared. */
+  waitForPreparation?: () => Promise<void>;
   baseSha?: string;
   onCheckpoint?: (note: unknown) => Promise<void>;
   trustedExecution?: boolean;

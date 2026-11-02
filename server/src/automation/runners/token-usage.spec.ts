@@ -65,13 +65,13 @@ test('model API sums every tool-loop response and exposes missing or failed late
   const request: typeof fetch = async () => {
     if (turn++ === 0) return Response.json({ usage: { prompt_tokens: 50, completion_tokens: 5, prompt_tokens_details: { cached_tokens: 10 } },
       choices: [{ message: { role: 'assistant', tool_calls: [{ id: 'x', function: { name: 'read_file', arguments: '{"path":"missing"}' } }] } }] });
-    return Response.json({ choices: [{ message: { role: 'assistant', content: 'answer' } }] });
+    return Response.json({ choices: [{ message: { role: 'assistant', content: '{"verdict":"pass","summary":"answer"}' } }] });
   };
   const j = job(os.tmpdir()); j.profile.runner = 'model-api'; j.connection = { id: 'api', label: 'API', kind: 'openai-compatible', baseUrl: 'http://fixture', supportsImages: false };
   const result = await new ModelApiRunner(new ProcessExecutor(), request).run(j, () => undefined);
   assert.equal(result.usage!.inputTokens, 50); assert.equal(result.usage!.missingRequests, 1);
   turn = 0;
-  const complete: typeof fetch = async () => Response.json({ usage: { prompt_tokens: 0, completion_tokens: 0 }, choices: [{ message: { role: 'assistant', content: 'zero' } }] });
+  const complete: typeof fetch = async () => Response.json({ usage: { prompt_tokens: 0, completion_tokens: 0 }, choices: [{ message: { role: 'assistant', content: '{"verdict":"pass","summary":"zero"}' } }] });
   assert.equal((await new ModelApiRunner(new ProcessExecutor(), complete).run(j, () => undefined)).usage!.inputTokens, 0);
   let observed = 0;
   j.onUsage = (u) => { observed = u.inputTokens; };

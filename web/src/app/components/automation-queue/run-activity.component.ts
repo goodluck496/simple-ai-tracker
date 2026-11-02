@@ -21,7 +21,10 @@ import { RUN_PHASE_TITLES, type QueueItem } from '../../../../../shared/automati
           <p>Завершено этапов агентов: {{ activity.completed }} / {{ activity.total }} ({{ activity.percent }}%)</p>
           <p-progressbar [value]="activity.percent ?? 0" [showValue]="false" [style]="{height: '.3rem'}" ariaLabel="Доля завершённых этапов агентов" />
         }
-      } @else if (activity.animated) { <span class="muted">{{ item.phase ? phases[item.phase] : 'Операция' }}: {{ elapsed(activity.phaseAge) }} · ответ {{ elapsed(activity.heartbeatAge) }} назад</span> }
+      } @else {
+        @if (activity.animated) { <span class="muted">{{ item.phase ? phases[item.phase] : 'Операция' }}: {{ elapsed(activity.phaseAge) }} · ответ {{ elapsed(activity.heartbeatAge) }} назад · процент операции неизвестен</span> }
+        @if (activity.total) { <span class="muted">Этапы агентов: {{ activity.completed }}/{{ activity.total }} ({{ activity.percent }}%)</span> }
+      }
     </div>
   `,
   styles: `

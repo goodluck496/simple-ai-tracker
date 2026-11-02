@@ -131,6 +131,12 @@ export class AutomationPanelComponent implements OnInit {
     this.settings.pipeline = selected ? this.settings.pipeline.includes(id) ? this.settings.pipeline : [...this.settings.pipeline, id] : this.settings.pipeline.filter(stage => stage !== id);
   }
   public get launchConfigurationProblems(): string[] { return PipelinePolicy.configurationProblems(this.settings); }
+  public get launchOutcomeHint(): string {
+    if (!this.settings.pipeline.length) return 'Выберите этапы запуска.';
+    if (PipelinePolicy.writes(this.settings)) return 'Результат запуска: изменения кода по задаче и проверка результата.';
+    if (PipelinePolicy.roles(this.settings).includes('analyst')) return 'Результат запуска: анализ и план. Разработчик не выбран — код изменяться не будет.';
+    return 'Результат запуска: проверка и замечания. Разработчик не выбран — код изменяться не будет.';
+  }
   public returnToTaskLaunch = false;
   public configureLaunchProject(): void {
     this.returnToTaskLaunch = this.settingsScope === 'task';

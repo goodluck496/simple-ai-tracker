@@ -3,6 +3,26 @@ const object = (v: unknown): Fields => v && typeof v === 'object' ? v as Fields 
 
 /** Allowlisted progress only. Tool payloads remain inside the native process. */
 export class CompactProgress {
+  public static apiTool(name: string, args: Fields): string {
+    const safe = (value: unknown) => typeof value === 'string' ? value.replace(/[\x00-\x1f\x7f]/g, ' ').slice(0, 240) : '';
+    const file = safe(args.path) || '.';
+    const line = (value: unknown) => Number.isSafeInteger(value) ? String(value) : '?';
+    switch (name) {
+      case 'read_file': return `read_file ${file}:${line(args.startLine ?? 1)}–${line(args.endLine ?? Number(args.startLine ?? 1) + 39)}`;
+      case 'list_files': case 'write_file': case 'edit_file': case 'inspect_changes': return `${name} ${file}`;
+      case 'explore_code': return `${name} ${safe(args.symbol)}`;
+      case 'run_check': return `${name} #${line(args.index)}`;
+      case 'call_project_tool': return `${name} ${safe(args.server)}/${safe(args.tool)}`;
+      default: return name.replace(/[^\w-]/g, '').slice(0, 80);
+    }
+  }
+  /** Bounded operational status, never arbitrary stdout/source/tool payloads. */
+  public static liveOutput(text: string): string {
+    return text.replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, '').split(/\r?\n/)
+      .filter(line => /^\s*(?:npm (?:http|timing|warn|error|err)\b|(?:added|removed|changed|audited) \d+ packages?\b)/i.test(line))
+      .slice(-3).map(line => line.replace(/(https?:\/\/)[^\s/@]+:[^\s/@]+@/g, '$1[скрыто]@')
+        .replace(/([?&](?:token|key|api_key|password|secret)=)[^&\s]+/gi, '$1[скрыто]').slice(0, 300)).join('\n');
+  }
   /** Command metadata only: never echo inline programs, patches or shell bodies. */
   public static command(command: string, args: readonly string[] = []): string {
     const raw = [command, ...args].join(' ').replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, '').trim();

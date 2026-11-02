@@ -3,7 +3,7 @@ import test from 'node:test';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
-import { ProcessExecutor } from '../runners/process-executor.js';
+import { ProcessExecutor, type ProcessRequest } from '../runners/process-executor.js';
 import { RunWorkspace } from './run-workspace.js';
 import { RunCleanup } from './run-cleanup.js';
 import { RuntimeCoordinator } from './runtime-coordinator.js';
@@ -55,3 +55,55 @@ test('cleanup fences paths, unmerged/dirty state and removes junctions without f
     assert.ok(done.branches.includes(integrationBranch), 'Verified integration branches are removed too');
   } finally { await fs.rm(temporary, { recursive: true, force: true }); }
 });
+
+for (const mode of ['receipt', 'legacy'] as const) {
+  test(`cleanup recovers ${mode} unregistered directories with long paths`, { timeout: 60000 }, async () => {
+    const temporary = await fs.mkdtemp(path.join(os.tmpdir(), 'sat-long-cleanup-'));
+    const repository = path.join(temporary, 'source'); await fs.mkdir(repository);
+    let interrupted = false;
+    const signal = AbortSignal.timeout(55000);
+    const makeRemainder = async (directory: string) => {
+      const deep = path.join(directory, ...Array.from({ length: 8 }, (_, i) => `nested-dependency-${i}-${'x'.repeat(25)}`));
+      await fs.mkdir(path.toNamespacedPath(deep), { recursive: true });
+      await fs.writeFile(path.toNamespacedPath(path.join(deep, 'remaining.txt')), 'partial deletion');
+    };
+    class Executor extends ProcessExecutor {
+      public override async run(request: ProcessRequest): Promise<string> {
+        if (mode === 'receipt' && !interrupted && request.args.includes('remove') && request.args.includes('worktree')) {
+          assert.deepEqual(request.args.slice(0, 2), ['-c', 'core.longpaths=true']);
+          await super.run(request); interrupted = true;
+          await makeRemainder(request.args.at(-1)!);
+          throw new Error('Filename too long');
+        }
+        return super.run(request);
+      }
+    }
+    const executor = new Executor();
+    const git = (args: string[]) => executor.run({ command: 'git', args, cwd: repository, signal });
+    try {
+      await git(['init', '-b', 'main']); await git(['config', 'user.name', 'Fixture']); await git(['config', 'user.email', 'fixture@example.invalid']);
+      await fs.writeFile(path.join(repository, 'keep.txt'), 'keep'); await git(['add', '.']); await git(['commit', '-m', 'fixture']);
+      const sourceSha = (await git(['rev-parse', 'HEAD'])).trim();
+      const location = await RunWorkspace.describe(repository, `long-${mode}`, 'test', executor, signal);
+      await fs.mkdir(path.dirname(location.directory), { recursive: true });
+      await git(['worktree', 'add', '-b', location.branch, location.directory]);
+      const spec: CleanupSpec = { runId: `long-${mode}`, workspace: 'test', repository, directory: location.directory,
+        baseBranch: 'main', sourceSha, merged: false, discard: true, children: [] };
+      const cleanup = new RunCleanup(executor);
+      if (mode === 'receipt') await assert.rejects(cleanup.execute(spec, signal), /Filename too long/);
+      else {
+        await git(['worktree', 'remove', '--force', location.directory]); await makeRemainder(location.directory);
+        await assert.rejects(cleanup.execute(spec, signal), /identity is missing/);
+        assert.ok(await fs.stat(location.directory));
+        await fs.mkdir(path.join(location.directory, '.sat'));
+        await fs.writeFile(path.join(location.directory, '.sat', 'checkout.json'), JSON.stringify({ runId: spec.runId, repository, baseSha: sourceSha }));
+      }
+      const result = await cleanup.execute(spec, signal);
+      assert.ok(result.paths.includes(location.directory));
+      assert.ok(result.branches.includes(location.branch));
+      await assert.rejects(fs.stat(location.directory), /ENOENT/);
+      assert.equal(await fs.readFile(path.join(repository, 'keep.txt'), 'utf8'), 'keep');
+      assert.deepEqual((await cleanup.execute(spec, signal)).paths, []);
+    } finally { await fs.rm(path.toNamespacedPath(temporary), { recursive: true, force: true }); }
+  });
+}

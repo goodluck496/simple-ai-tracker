@@ -251,6 +251,7 @@
                     </li>
                   }
                 </ul>
+                <p class="hint" role="status">{{ launchOutcomeHint }}</p>
                 <div class="launch-action-bar">
                   <p-button [label]="'Поставить группу в очередь (' + batchTaskIds.length + ')'" [loading]="starting" icon="pi pi-send"
                     [disabled]="busy || starting || !batchTaskIds.length || batchBlocked || !settings.pipeline.length" (onClick)="startBatch()" />

@@ -7,7 +7,7 @@ import { ProcessExecutor, type ProcessRequest } from '../runners/process-executo
 type SetupCommand = Pick<ProcessRequest, 'command' | 'args'>;
 interface Manifest { dependencies?: Record<string, string>; devDependencies?: Record<string, string>; optionalDependencies?: Record<string, string>; }
 
-/** Prepare the isolated checkout before spending tokens on an agent. */
+/** Prepare dependencies before mutations/checks; API source analysis may run concurrently. */
 export class WorktreePreparation {
   public constructor(private readonly executor: ProcessExecutor) {}
 
@@ -31,8 +31,13 @@ export class WorktreePreparation {
     const manifest = manifestText ? JSON.parse(manifestText) as Manifest : {};
     let missing = await this.missingDependencies(cwd, manifest);
     const prepared = (await this.read(marker)) === signature;
+    progress('Подготовка: проверены манифест и установленные зависимости.\n');
     if (!prepared || missing.length) {
-      for (const command of setup) await this.executor.run({ ...command, cwd, signal, compactProgress: true, onProgress: progress });
+      for (const [index, command] of setup.entries()) {
+        progress(`Команды подготовки: ${index}/${setup.length} (${Math.floor(index * 100 / setup.length)}%). Сейчас: ${command.command}.\n`);
+        await this.executor.run({ ...command, cwd, signal, compactProgress: true, onProgress: progress });
+        progress(`Команды подготовки: ${index + 1}/${setup.length} (${Math.floor((index + 1) * 100 / setup.length)}%).\n`);
+      }
       missing = await this.missingDependencies(cwd, manifest);
       if ((!prepared || missing.length) && !setup.length && lock) {
         try {
@@ -40,14 +45,17 @@ export class WorktreePreparation {
             throw new Error('Cannot run npm ci against shared node_modules. Configure isolated dependencies/setup first.');
           }
         } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
-        progress('Worker setup: npm ci in isolated worktree (before agent).\n');
-        await this.executor.run({ command: 'npm', args: ['ci', '--include=dev', '--no-audit', '--no-fund'], cwd, signal, compactProgress: true, onProgress: progress });
+        progress('Worker setup: npm ci in isolated worktree.\n');
+        progress('Команды подготовки: 0/1 (0%). Сейчас: npm ci.\n');
+        await this.executor.run({ command: 'npm', args: ['ci', '--include=dev', '--no-audit', '--no-fund', '--loglevel=http'], cwd, signal, compactProgress: true, onProgress: progress });
+        progress('Команды подготовки: 1/1 (100%). Проверка установленных пакетов.\n');
         missing = await this.missingDependencies(cwd, manifest);
       }
-      if (missing.length) throw new Error(`Worktree dependencies are incomplete: ${missing.slice(0, 8).join(', ')}. Configure setup or repair the installation; no agent was started.`);
+      if (missing.length) throw new Error(`Worktree dependencies are incomplete: ${missing.slice(0, 8).join(', ')}. Configure setup or repair the installation; source writes and checks are blocked.`);
       await fs.mkdir(path.dirname(marker), { recursive: true });
       await fs.writeFile(marker, signature, 'utf8');
     }
+    progress('Подготовка зависимостей завершена; проверка пакетов пройдена.\n');
   }
 
   private async missingDependencies(cwd: string, manifest: Manifest): Promise<string[]> {

@@ -86,6 +86,8 @@ export class ProjectEnvironment {
       for (const name of server.envVars) if (!environment[name]) throw new Error('Missing or host-reserved project MCP environment variable: ' + name);
       const bind = (value: string) => value.replaceAll('{worktreeRoot}', root);
       const bound = { name: server.name, command: bind(server.command), args: server.args.map(bind), envVars: server.envVars, tools: server.tools };
+      // A project server can depend on packages installed by worker setup.
+      await job.waitForPreparation?.();
       await this.probe(bound, root, job.signal);
       configured.push(bound);
       progress('MCP preflight ' + server.name + ': initialize/listTools OK; tools=' + server.tools.join(', ') + '\n');

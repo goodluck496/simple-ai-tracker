@@ -51,6 +51,8 @@ export class PipelineWorker {
     const leases: RuntimeLease[] = [];
     let runtime: TaskRuntime | undefined;
     let preparation: RunPreparation | undefined;
+    let pendingPreparation: Promise<void> | undefined;
+    let preparationError: unknown;
     let budgetError: string | undefined;
     const recoveryOnly = run.stage >= run.settings.pipeline.length && run.settings.mergePolicy === MergePolicy.Local && !!RunBudget.reason(run, Date.now());
     let timeout: ReturnType<typeof setTimeout> | undefined;
@@ -149,7 +151,11 @@ export class PipelineWorker {
       let newCheckout = false;
       try { await fs.access(cwd); }
       catch {
-        if ((await git(['status', '--porcelain'])).trim()) throw new Error('Repository has local changes; commit or preserve them before starting a new task.');
+        // A separate worktree starts from the selected committed base and cannot
+        // overwrite unrelated main-checkout edits. Only automatic publication
+        // needs a clean main checkout; manual review must remain usable.
+        if (run!.settings.mergePolicy === MergePolicy.Local && (await git(['status', '--porcelain'])).trim())
+          throw new Error('Automatic integration requires a clean target checkout. Preserve its changes or select manual review before starting.');
         if (run!.settings.mergePolicy === MergePolicy.Local && (await git(['branch', '--show-current'])).trim() !== run!.settings.baseBranch)
           throw new Error('Target branch must be checked out before automatic integration.');
         await fs.mkdir(path.dirname(cwd), { recursive: true });
@@ -169,7 +175,6 @@ export class PipelineWorker {
       }
       await this.channel.call(AutomationTool.Checkout, { id: run!.id, leaseToken: token,
         result: { repositoryRoot: repository, worktreePath: cwd, baseSha, dependencyMode: 'isolated' } });
-      await phase(RunPhase.Setup, 'Проверка и подготовка зависимостей worktree до запуска агента.');
       preparation = new RunPreparation(this.executor, common, run.settings);
       const prepareSource = async () => {
         const dependency = await preparation!.prepare(cwd, controller.signal, progress);
@@ -177,9 +182,7 @@ export class PipelineWorker {
           dependencyKey: dependency.key, dependencyNote: dependency.note };
         await this.channel.call(AutomationTool.Checkout, { id: run.id, leaseToken: token, result: run.checkout });
       };
-      if (run.status === RunStatus.Running) await prepareSource();
       const featureCwd = cwd;
-      let prepared = true;
       while (run.status === RunStatus.Running && run.stage < run.settings.pipeline.length) {
         controller.signal.throwIfAborted();
         const child = Decomposition.child(run);
@@ -192,12 +195,19 @@ export class PipelineWorker {
             await git(['worktree', 'add', '-b', `sat-child/${run.id}-${child.key}`, cwd, branch]);
           }
           if ((await git(['branch', '--show-current'], cwd)).trim() !== `sat-child/${run.id}-${child.key}`) throw new Error('Child worktree identity changed.');
-          await preparation!.prepare(cwd, controller.signal, progress);
-        } else if (!prepared) await prepareSource();
-        prepared = false;
-        await this.navigation?.prepare(cwd, controller.signal, progress);
+        }
+        const prepareStage = async () => {
+          if (child) await preparation!.prepare(cwd, controller.signal, progress);
+          else await prepareSource();
+        };
         const profileId = run.settings.pipeline[run.stage];
         const profile = run.settings.agents.find((agent) => agent.id === profileId)!;
+        const overlapPreparation = profile.runner === 'model-api' && profile.role !== AgentRole.VisualValidator;
+        if (!overlapPreparation) {
+          await phase(RunPhase.Setup, 'Проверка и подготовка зависимостей worktree.');
+          await prepareStage();
+        }
+        await this.navigation?.prepare(cwd, controller.signal, progress);
         const connection = run.settings.connections.find((entry) => entry.id === profile.connectionId)!;
         if (profile.role === AgentRole.VisualValidator) {
           const images = run.settings.artifactPaths.filter((file) => /\.(png|jpe?g|webp)$/i.test(file));
@@ -233,7 +243,7 @@ export class PipelineWorker {
         const sessionKey = StageCheckpoint.key({ key, head: priorSha, cwd: path.resolve(cwd) });
         const memory = run.stageMemory?.key === sessionKey ? run.stageMemory : undefined;
         if (run.commitSha && priorSha !== run.commitSha && !saved) throw new Error('Worktree HEAD changed after checkpoint; inspect it before resuming.');
-        const priorStatus = await git(['status', '--porcelain', '--', '.', ':!.sat'], cwd);
+        let priorStatus = await git(['status', '--porcelain', '--', '.', ':!.sat'], cwd);
         const baseline = child ? (await git(['merge-base', 'HEAD', branch], cwd)).trim() : run.checkout?.baseSha ?? run.settings.baseBranch;
         const committed = await git(['diff', '--name-only', '-z', `${baseline}...HEAD`, '--', '.', ':!.sat'], cwd);
         const pendingNames = await git(['diff', 'HEAD', '--name-only', '-z', '--', '.', ':!.sat'], cwd);
@@ -255,6 +265,7 @@ export class PipelineWorker {
         const diff = ''; // Every role reads focused current Git/source evidence; no source dump is transferred.
         const feedback = previous && run.summary.startsWith(previous.summary) ? '' : run.summary;
         const prompt = this.prompt(profile.role, profile.instructions, context, feedback, diff, run.settings.artifactPaths, run.settings.checks, run.checkout, packet)
+          + (overlapPreparation ? '\nDependencies are being prepared concurrently. Start with source reads and save_progress planning in this conversation. Write/edit/check/project tools automatically wait for successful setup. Recheck any generated source relevant to your plan after setup; do not install dependencies yourself.\n' : '')
           + (run.trustedExecution ? '\nTrusted execution: worker token/time/tool/call/revision quotas are disabled. Continue to completion unless blocked or manually stopped.\n'
             : `\nObserved tool budget for this stage: ${run.settings.maxStageToolCalls ?? 24}. Use tools for the current implementation/check, then finish with the requested outcome.\n`)
           + `\nSelected execution stages: ${PipelinePolicy.roles(run.settings).join(' → ')}. No missing roles may be added. `
@@ -263,6 +274,10 @@ export class PipelineWorker {
         const checksEvidence: StageEvidence['checks'] = saved?.checks ? [...saved.checks]
           : previous?.current && [AgentRole.Reviewer, AgentRole.VisualValidator].includes(profile.role as 'reviewer' | 'visual-validator') ? [...previous.checks] : [];
         if (saved) {
+          if (overlapPreparation) {
+            await phase(RunPhase.Setup, 'Подготовка зависимостей перед восстановлением checkpoint.');
+            await prepareStage();
+          }
           outcome = this.parseOutcome(JSON.stringify(saved.outcome));
           await phase(RunPhase.Preparing, 'Результат агента восстановлен из checkpoint; повторный вызов модели не нужен.');
         } else {
@@ -279,10 +294,36 @@ export class PipelineWorker {
         }, progress, () => controller.abort());
         await journal.start(memory);
         try {
+          let preparationReady = !overlapPreparation;
+          if (overlapPreparation) {
+            progress('Агент читает код и планирует параллельно подготовке зависимостей. Запись и проверки ждут готовности.\n');
+            pendingPreparation = prepareStage().then(async () => {
+              if ((await git(['rev-parse', 'HEAD'], cwd)).trim() !== priorSha) throw new Error('Preparation changed worktree HEAD.');
+              // Setup scripts may generate tracked files/lockfiles. Their changes
+              // are not agent edits; take the same baseline as sequential setup.
+              priorStatus = await git(['status', '--porcelain', '--', '.', ':!.sat'], cwd);
+              preparationReady = true;
+            }).catch((error: unknown) => {
+              preparationError = error; controller.abort(); throw error;
+            });
+            // Observe immediately, even while the model is still reading sources.
+            void pendingPreparation.catch(() => {});
+          }
+          const waitForPreparation = async () => {
+            controller.signal.throwIfAborted();
+            if (preparationReady) return;
+            clearTimeout(timeout);
+            await phase(RunPhase.Setup, 'Анализ выполнен; ожидание зависимостей перед записью или проверками.');
+            await pendingPreparation;
+            controller.signal.throwIfAborted();
+            await phase(RunPhase.Agent, 'Зависимости готовы; агент продолжает тот же разговор.');
+            run = await this.channel.call<AgentRun>(AutomationTool.Heartbeat, { id: run.id, leaseToken: token });
+            armBudget();
+          };
           run = await this.channel.call<AgentRun>(AutomationTool.Heartbeat, { id: run.id, leaseToken: token });
           armBudget();
           const result = await this.registry.get(profile.runner).run({ runId: run.id, cwd, prompt, profile, connection, settings: run.settings, trustedExecution: run.trustedExecution, signal: controller.signal,
-            baseSha: baseline, onCheckpoint: note => journal.checkpoint(note),
+            baseSha: baseline, onCheckpoint: note => journal.checkpoint(note), waitForPreparation,
             sessionId: profile.runner === 'antigravity' ? memory?.conversationId : undefined,
             sessionUsage: memory?.conversationId ? (run.usageAttempts ?? [])
               .filter(attempt => attempt.nativeSessionId === memory.conversationId && attempt.usage?.source === 'antigravity-json')
@@ -300,6 +341,10 @@ export class PipelineWorker {
                 }
               }
             } }, progress);
+          // Registry implementations must not bypass the setup barrier on early return.
+          await waitForPreparation();
+          await pendingPreparation;
+          pendingPreparation = undefined;
           if (result.usage && metering) metering = { ...metering, usage: result.usage };
           usageComplete = true;
           outcome = this.parseOutcome(result.text);
@@ -315,6 +360,11 @@ export class PipelineWorker {
           throw new Error(`${profile.role}/${profile.runner}: ${error instanceof Error ? error.message : String(error)}`);
         } finally {
           clearTimeout(timeout);
+          if (pendingPreparation) {
+            controller.abort();
+            await pendingPreparation.catch(() => {});
+            pendingPreparation = undefined;
+          }
           // Flush while the lease/attempt is still current, including timeout and invalid outcome.
           try { await journal.close(); }
           finally {
@@ -342,7 +392,9 @@ export class PipelineWorker {
           const staged = (await git(['diff', '--cached', '--name-only', '-z'], cwd)).split('\0').filter(Boolean);
           if (staged.some(file => /(^|\/)(?:node_modules|\.sat)(?:\/|$)/.test(file))) throw new Error('Generated dependencies/runtime must not be committed. Fix ignore rules before resuming.');
           if ((await git(['diff', '--cached', '--name-only'], cwd)).trim()) {
-            const message = CommitMessage.validate(outcome.commitMessage, stageTaskId);
+            const message = CommitMessage.forTask(outcome.commitMessage, stageTaskId, String(pack.title ?? stageTaskId));
+            outcome.commitMessage = message; saved.outcome = outcome;
+            await checkpoint.save(saved);
             await git(['commit', '-m', message], cwd);
             if ((await git(['log', '-1', '--format=%s'], cwd)).trim() !== message) throw new Error('Git hook changed the validated commit subject; inspect the source branch.');
           }
@@ -388,7 +440,8 @@ export class PipelineWorker {
       });
       finished = true;
     } catch (error) {
-      const message = redact(budgetError ?? `${this.stopping ? 'Worker остановлен; рабочая копия и checkpoints сохранены. ' : ''}${channelError ? 'Tracker connection/lease lost. ' : ''}${error instanceof Error ? error.message : String(error)}`);
+      const failure = preparationError ?? error;
+      const message = redact(budgetError ?? `${this.stopping ? 'Worker остановлен; рабочая копия и checkpoints сохранены. ' : ''}${channelError ? 'Tracker connection/lease lost. ' : ''}${failure instanceof Error ? failure.message : String(failure)}`);
       if (pending.length) { try { await this.channel.call(AutomationTool.Progress, { id: run.id, leaseToken: token, text: redact(pending.take()) }); } catch { /* Preserve terminal failure even if the lease was lost. */ } }
       try { await this.channel.call(AutomationTool.Fail, { id: run.id, leaseToken: token, text: message }); }
       catch { process.stderr.write(`${message}\n`); }
@@ -428,7 +481,7 @@ export class PipelineWorker {
       + `Configured checks: ${JSON.stringify(checks)}\nVisual artifacts: ${JSON.stringify(artifacts)}\n`
       + `Only developer/designer may edit files. Do not change branches, commit, merge, publish or alter tracker data directly; the worker handles commits. `
       + `When developer/designer changes files, include commitMessage in the JSON result. Exact format: "[#${(context as { id: string }).id}] - описание на русском, что сделано и для чего". Use an explicit purpose clause (для/чтобы/ради), one line, up to ${CommitMessage.maxLength} characters. Technical names may stay in English. A generic role/stage label is forbidden. Worker rejects invalid messages without recalling the model. `
-      + `The worker prepared dependencies before this invocation. Reuse that environment; only change/install dependencies when required by the task's manifest changes. Do not repeatedly reinstall packages for an unchanged infrastructure failure. `
+      + `The worker manages dependency preparation (API source analysis may overlap setup; mutation/check tools wait for readiness). Reuse that environment; only change/install dependencies when required by the task's manifest changes. Do not repeatedly reinstall packages for an unchanged infrastructure failure. `
       + `Dependency mode: ${checkout?.dependencyMode ?? 'isolated'}. Managed linked packages are readonly: never run npm install/ci/rebuild on links. If changing manifests, return the source changes; worker detaches and installs private dependencies before the next role. Use the assigned PORT and temporary directories. Do not start unmanaged background processes or use live databases. `
       + `For visual validation inspect the actual artifacts; if absent return questions. `
       + `Return ONLY one JSON object: {"verdict":"pass","summary":"evidence and findings","questions":[],"plan":"markdown plan for analyst, otherwise empty","commitMessage":"${READ_ONLY_AGENT_ROLES.includes(role) ? '' : `[#${(context as { id: string }).id}] - Выполнено изменение по плану, чтобы реализовать требование задачи`}"}. commitMessage is a separate top-level field, never part of summary; describe the actual change and its purpose. Allowed verdicts are pass, changes_requested, questions, blocked. Return blocked for unavailable tools, permissions, infrastructure or environment failures; do not request code revisions to bypass them. `
