@@ -17,8 +17,6 @@
     "serve:web": "ng serve --proxy-config web/proxy.conf.json",
     "mcp": "node dist/server/mcp.mjs",
     "worker": "node scripts/worker.mjs",
-    "worker:local": "node dist/server/worker.mjs",
-    "worker:docker": "node scripts/worker-docker.mjs",
     "cli": "node dist/server/cli.mjs",
     "smoke:mcp": "node scripts/smoke-mcp.mjs",
     "doctor": "npm run build:server && node dist/server/cli.mjs doctor",
