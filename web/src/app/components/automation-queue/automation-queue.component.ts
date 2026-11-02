@@ -204,6 +204,7 @@ export class AutomationQueueComponent {
   }
 
   public openProposedFix(item: QueueItem): void {
+    this.error.set('');
     if (item.proposedFix) {
       this.currentFix.set(item.proposedFix);
       this.fixingRunId.set(item.id);
@@ -215,6 +216,7 @@ export class AutomationQueueComponent {
 
   public diagnose(item: QueueItem): void {
     this.busy.set(true);
+    this.error.set('');
     this.http.post<{ fix: ProposedFix }>(`/api/automation/runs/${item.id}/fix/diagnose`, {})
       .pipe(finalize(() => this.busy.set(false)), takeUntilDestroyed(this.destroyRef))
       .subscribe({
@@ -224,7 +226,7 @@ export class AutomationQueueComponent {
           this.showFixDialog.set(true);
           this.refresh.next();
         },
-        error: (err) => this.error.set(err instanceof Error ? err.message : String(err)),
+        error: (err) => this.error.set(this.message(err)),
       });
   }
 
@@ -232,15 +234,19 @@ export class AutomationQueueComponent {
     const id = this.fixingRunId();
     if (!id) return;
     this.busy.set(true);
+    this.error.set('');
     this.http.post<{ run: AgentRun }>(`/api/automation/runs/${id}/fix/apply`, {})
       .pipe(finalize(() => this.busy.set(false)), takeUntilDestroyed(this.destroyRef))
       .subscribe({
         next: () => {
           this.showFixDialog.set(false);
-          this.notice.set('Авто-исправление применено, создан коммит. Запуск возобновляется.');
-          this.http.post<{ run: AgentRun }>(`/api/automation/runs/${id}/resume`, {}).subscribe(() => this.refresh.next());
+          this.notice.set('Авто-исправление применено. Запуск возобновляется.');
+          this.http.post<{ run: AgentRun }>(`/api/automation/runs/${id}/resume`, {}).subscribe({
+            next: () => this.refresh.next(),
+            error: (err) => this.error.set(this.message(err))
+          });
         },
-        error: (err) => this.error.set(err instanceof Error ? err.message : String(err)),
+        error: (err) => this.error.set(this.message(err)),
       });
   }
 
@@ -248,6 +254,7 @@ export class AutomationQueueComponent {
     const id = this.fixingRunId();
     if (!id) return;
     this.busy.set(true);
+    this.error.set('');
     this.http.post<{ run: AgentRun }>(`/api/automation/runs/${id}/fix/discard`, {})
       .pipe(finalize(() => this.busy.set(false)), takeUntilDestroyed(this.destroyRef))
       .subscribe({
@@ -256,7 +263,7 @@ export class AutomationQueueComponent {
           this.notice.set('Предложенное исправление отменено, изменения откатаны.');
           this.refresh.next();
         },
-        error: (err) => this.error.set(err instanceof Error ? err.message : String(err)),
+        error: (err) => this.error.set(this.message(err)),
       });
   }
 

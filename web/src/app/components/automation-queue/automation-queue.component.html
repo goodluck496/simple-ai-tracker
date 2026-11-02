@@ -419,6 +419,9 @@
 <p-dialog [(visible)]="showFixDialog" [modal]="true" header="🛠️ Исправление ошибки конвейера (Сабагент Pipeline Doctor)" [style]="{ width: '85vw', maxWidth: '1000px' }">
   @if (currentFix(); as fix) {
     <div class="fix-dialog-content">
+      @if (error()) {
+        <p class="alert-banner alert-danger">{{ error() }}</p>
+      }
       <div class="fix-header-banner">
         <div class="fix-title-row">
           <h4>{{ fix.title }}</h4>

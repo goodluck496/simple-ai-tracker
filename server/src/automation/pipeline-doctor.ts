@@ -1,3 +1,4 @@
+import fs from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import type { AgentRun, ProposedFix, ModelConnection } from '../../../shared/automation/contracts.js';
 import { ProviderKind } from '../../../shared/automation/contracts.js';
@@ -166,34 +167,46 @@ export class PipelineDoctor {
     // 1. Repository-level fix (e.g. dirty main checkout blocking local merge)
     if (fix.scope === 'repository' || fix.action === 'commit_dirty_repo') {
       const cwd = run.settings?.repositoryPath;
-      if (cwd) {
-        const git = (args: string[]) => this.executor.run({ command: 'git', args, cwd, signal });
-        await git(['add', '-A', '--', '.']);
-        const status = (await git(['status', '--porcelain'])).trim();
-        if (status) {
-          const commitMsg = `[#${run.taskId}] - WIP: сохранение локальных изменений перед запуском конвейера`;
-          await git(['commit', '-m', commitMsg]);
+      if (cwd && fs.existsSync(cwd)) {
+        try {
+          const git = (args: string[]) => this.executor.run({ command: 'git', args, cwd, signal });
+          await git(['add', '-A', '--', '.']);
+          const status = (await git(['status', '--porcelain'])).trim();
+          if (status) {
+            const commitMsg = `[#${run.taskId}] - WIP: сохранение локальных изменений перед запуском конвейера`;
+            await git(['commit', '-m', commitMsg]);
+          }
+        } catch {
+          // Best-effort
         }
       }
     }
 
     if (fix.action === 'switch_branch') {
       const cwd = run.settings?.repositoryPath;
-      if (cwd && run.settings?.baseBranch) {
-        const git = (args: string[]) => this.executor.run({ command: 'git', args, cwd, signal });
-        await git(['checkout', run.settings.baseBranch]);
+      if (cwd && run.settings?.baseBranch && fs.existsSync(cwd)) {
+        try {
+          const git = (args: string[]) => this.executor.run({ command: 'git', args, cwd, signal });
+          await git(['checkout', run.settings.baseBranch]);
+        } catch {
+          // Best-effort
+        }
       }
     }
 
     // 2. Worktree-level fix
     const wtCwd = run.checkout?.worktreePath;
-    if (wtCwd && (fix.scope === 'worktree' || !fix.scope)) {
-      const git = (args: string[]) => this.executor.run({ command: 'git', args, cwd: wtCwd, signal });
-      await git(['add', '-A', '--', '.']);
-      const status = (await git(['status', '--porcelain'])).trim();
-      if (status) {
-        const commitMsg = `[#${run.taskId}] - ${fix.title}: устранена ошибка конвейера`;
-        await git(['commit', '-m', commitMsg]);
+    if (wtCwd && (fix.scope === 'worktree' || !fix.scope) && fs.existsSync(wtCwd)) {
+      try {
+        const git = (args: string[]) => this.executor.run({ command: 'git', args, cwd: wtCwd, signal });
+        await git(['add', '-A', '--', '.']);
+        const status = (await git(['status', '--porcelain'])).trim();
+        if (status) {
+          const commitMsg = `[#${run.taskId}] - ${fix.title}: устранена ошибка конвейера`;
+          await git(['commit', '-m', commitMsg]);
+        }
+      } catch {
+        // Best-effort
       }
     }
   }
@@ -207,7 +220,7 @@ export class PipelineDoctor {
 
     if (targetFix?.scope === 'repository') {
       const repoCwd = run.settings?.repositoryPath;
-      if (repoCwd) {
+      if (repoCwd && fs.existsSync(repoCwd)) {
         try {
           await this.executor.run({ command: 'git', args: ['reset', 'HEAD'], cwd: repoCwd, signal });
         } catch {
@@ -217,7 +230,7 @@ export class PipelineDoctor {
     }
 
     const wtCwd = run.checkout?.worktreePath;
-    if (wtCwd) {
+    if (wtCwd && fs.existsSync(wtCwd)) {
       try {
         await this.executor.run({ command: 'git', args: ['reset', '--hard', 'HEAD'], cwd: wtCwd, signal });
         await this.executor.run({ command: 'git', args: ['clean', '-fd'], cwd: wtCwd, signal });
@@ -225,6 +238,18 @@ export class PipelineDoctor {
         // Best-effort cleanup
       }
     }
+  }
+
+  private resolveBaseUrl(rawBase: string): string {
+    const base = rawBase.replace(/\/$/, '');
+    try {
+      if (fs.existsSync('/.dockerenv')) {
+        return base.replace(/\b(localhost|127\.0\.0\.1)\b/g, 'host.docker.internal');
+      }
+    } catch {
+      // ignore
+    }
+    return base;
   }
 
   private resolveConnection(run: AgentRun): ModelConnection | undefined {
@@ -277,8 +302,9 @@ export class PipelineDoctor {
     worktreeDiff: string,
     worktreeFiles: string[]
   ): Promise<{ title?: string; explanation?: string; scope?: 'worktree' | 'repository'; action?: 'commit_dirty_repo' | 'patch_code' | 'switch_branch' | 'retry_stage' } | null> {
-    const base = connection.baseUrl?.replace(/\/$/, '');
-    if (!base) return null;
+    const rawBase = connection.baseUrl?.replace(/\/$/, '');
+    if (!rawBase) return null;
+    const base = this.resolveBaseUrl(rawBase);
     const url = `${base}${connection.kind === ProviderKind.Ollama && !base.endsWith('/v1') ? '/v1' : ''}/chat/completions`;
     const secret = connection.credentialEnv ? process.env[connection.credentialEnv] : undefined;
     if (connection.credentialEnv && !secret) return null;
@@ -303,7 +329,7 @@ export class PipelineDoctor {
       '}'
     ].filter(Boolean).join('\n\n');
 
-    const signal = AbortSignal.timeout(8000);
+    const signal = AbortSignal.timeout(60000);
     const response = await this.request(url, {
       method: 'POST',
       signal,

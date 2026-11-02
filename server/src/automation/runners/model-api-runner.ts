@@ -47,7 +47,18 @@ export class ModelApiRunner implements AgentRunner {
     const parameters = (name: string) => {
       const fields: Record<string, string[]> = { list_files: ['path'], read_file: ['path', 'startLine', 'endLine'], run_check: ['index'],
         write_file: ['path', 'content'], edit_file: ['path', 'oldText', 'newText'], explore_code: ['symbol'], save_progress: ['note'], inspect_changes: ['path'], call_project_tool: ['server', 'tool', 'arguments'] };
-      const definitions: Record<string, unknown> = { server: { type: 'string' }, tool: { type: 'string' }, arguments: { type: 'object' }, note: { type: 'object' },
+      const definitions: Record<string, unknown> = { server: { type: 'string' }, tool: { type: 'string' }, arguments: { type: 'object' },
+        note: {
+          type: 'object',
+          properties: {
+            summary: { type: 'string', description: 'Краткое резюме проделанной работы в одну строку (до 600 символов, без перевода строк)' },
+            implementationPlan: { type: 'array', items: { type: 'string' }, description: 'Шаги плана реализации (до 6 пунктов, без перевода строк)' },
+            findings: { type: 'array', items: { type: 'string' }, description: 'Ключевые выводы (до 6 пунктов)' },
+            completedSteps: { type: 'array', items: { type: 'string' }, description: 'Выполненные шаги (до 6 пунктов)' },
+            nextStep: { type: 'string', description: 'Следующий планируемый шаг' }
+          },
+          required: ['summary']
+        },
         path: { type: 'string' }, content: { type: 'string' }, index: { type: 'integer', enum: job.settings.checks.map((_, index) => index) }, startLine: { type: 'integer' }, endLine: { type: 'integer' }, oldText: { type: 'string' }, newText: { type: 'string' }, symbol: { type: 'string' } };
       return { type: 'object', properties: Object.fromEntries(fields[name].map(field => [field, definitions[field]])),
         ...(name === ModelTool.RunCheck ? { required: ['index'] } : {}), additionalProperties: false };
@@ -117,7 +128,17 @@ export class ModelApiRunner implements AgentRunner {
       }
       for (const call of message.tool_calls) {
         if (call.function.name !== ModelTool.Finish && ++calls > (job.maxToolCalls ?? MAX_TURNS) && !job.trustedExecution) throw new Error('Model tool-call limit exceeded.');
-        if (!names.includes(call.function.name)) throw new Error('Model requested a tool outside its role.');
+        if (!names.includes(call.function.name)) {
+          messages.push({
+            role: 'tool',
+            tool_call_id: call.id,
+            content: JSON.stringify({
+              error: `Инструмент ${call.function.name} недоступен для роли ${job.profile.role}. Доступные инструменты: ${names.join(', ')}. Роль ${job.profile.role} не может модифицировать файлы. Если проверки не пройдены, вызовите finish_task с вердиктом changes_requested.`
+            })
+          });
+          onProgress(`Модель запросила недоступный инструмент ${call.function.name} для роли ${job.profile.role}. Возвращено предупреждение.\n`);
+          continue;
+        }
         let args: Record<string, unknown> | undefined;
         try {
           const parsed: unknown = JSON.parse(call.function.arguments);
@@ -160,7 +181,35 @@ export class ModelApiRunner implements AgentRunner {
   private async tool(job: AgentJob, name: string, args: Record<string, unknown>): Promise<unknown> {
     if (name === ModelTool.Checkpoint) {
       if (!job.onCheckpoint) throw new Error('Worker checkpoint channel is unavailable.');
-      await job.onCheckpoint(args.note); return { saved: true };
+      const raw = (args.note && typeof args.note === 'object' && !Array.isArray(args.note))
+        ? args.note as Record<string, unknown>
+        : { summary: typeof args.note === 'string' ? args.note : 'Прогресс этапа' };
+
+      const cleanProse = (v: unknown, max: number): string => {
+        if (!v) return '';
+        const s = String(v).replace(/[\r\n\x00-\x1f{}]|```|~~~/g, ' ').replace(/\s+/g, ' ').trim();
+        return s.slice(0, max);
+      };
+
+      const normalized: Record<string, unknown> = {
+        summary: cleanProse(raw.summary || raw.description || raw.message || raw.text || 'Прогресс выполнения этапа', 600)
+      };
+
+      if (raw.nextStep) normalized.nextStep = cleanProse(raw.nextStep, 300);
+
+      const plan = Array.isArray(raw.implementationPlan) ? raw.implementationPlan : (Array.isArray(raw.plan) ? raw.plan : undefined);
+      if (plan) {
+        normalized.implementationPlan = plan.slice(0, 6).map(item => cleanProse(item, 220)).filter(Boolean);
+      }
+
+      for (const key of ['findings', 'completedSteps', 'files', 'checks'] as const) {
+        if (Array.isArray(raw[key])) {
+          normalized[key] = (raw[key] as unknown[]).slice(0, 6).map(item => cleanProse(item, 220)).filter(Boolean);
+        }
+      }
+
+      await job.onCheckpoint(normalized);
+      return { saved: true };
     }
     if (name === ModelTool.Changes) {
       if (!job.baseSha) throw new Error('Review baseline is unavailable.');
