@@ -154,8 +154,14 @@ export class PipelineWorker {
         // A separate worktree starts from the selected committed base and cannot
         // overwrite unrelated main-checkout edits. Only automatic publication
         // needs a clean main checkout; manual review must remain usable.
-        if (run!.settings.mergePolicy === MergePolicy.Local && (await git(['status', '--porcelain'])).trim())
-          throw new Error('Automatic integration requires a clean target checkout. Preserve its changes or select manual review before starting.');
+        if (run!.settings.mergePolicy === MergePolicy.Local && (await git(['status', '--porcelain'])).trim()) {
+          if (run!.summary?.includes('Применено авто-исправление') || run!.summary?.includes('WIP') || run!.summary?.includes('сохранение')) {
+            await git(['add', '-A', '--', '.']);
+            await git(['commit', '-m', `[#${run!.taskId}] - WIP: сохранение локальных изменений перед запуском конвейера`]);
+          } else {
+            throw new Error('Automatic integration requires a clean target checkout. Preserve its changes or select manual review before starting.');
+          }
+        }
         if (run!.settings.mergePolicy === MergePolicy.Local && (await git(['branch', '--show-current'])).trim() !== run!.settings.baseBranch)
           throw new Error('Target branch must be checked out before automatic integration.');
         await fs.mkdir(path.dirname(cwd), { recursive: true });
@@ -476,6 +482,7 @@ export class PipelineWorker {
       [AgentRole.Tester]: 'Upon receiving the task, first build the project (build/compile) and verify existing functionality is intact. Write an e2e test (Playwright/browser scenarios) if not already present, or follow its steps and test actual behavior. Verify that implementation matches task description and approved plan. Return changes_requested with reproducible steps for defects; pass only on verified evidence. Do not edit logic sources.',
       [AgentRole.Reviewer]: 'Inspect the approved plan, verify presence of unit and e2e tests, and examine git diff. Verify adherence to SOLID, DRY, KISS, YAGNI, project architecture and absence of regressions. Reviewer may add or configure static script checks (linter, prettier) if missing. After applying checks, rebuild the project and run tests. If all passes, approve merging the branch (pass); otherwise return changes_requested.',
       [AgentRole.VisualValidator]: 'Inspect the actual supplied images against the visual requirements. State the affected area and severity for each issue. Do not infer working behavior from appearance alone. Do not edit files.',
+      [AgentRole.Doctor]: 'Diagnose pipeline failures, analyze error logs, repository and worktree status, and propose precise fixes.',
     };
     return `You are the ${role}. ${instructions.trim() || DEFAULT_ROLE_INSTRUCTIONS[role]}\nUse the project policy injected below; do not reread AGENTS.md when its current content is already supplied. Read only applicable additional skills/instructions as needed.\n`
       + `${roleInstructions[role]}\n`

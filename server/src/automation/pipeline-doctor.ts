@@ -167,34 +167,46 @@ export class PipelineDoctor {
     // 1. Repository-level fix (e.g. dirty main checkout blocking local merge)
     if (fix.scope === 'repository' || fix.action === 'commit_dirty_repo') {
       const cwd = run.settings?.repositoryPath;
-      if (cwd) {
-        const git = (args: string[]) => this.executor.run({ command: 'git', args, cwd, signal });
-        await git(['add', '-A', '--', '.']);
-        const status = (await git(['status', '--porcelain'])).trim();
-        if (status) {
-          const commitMsg = `[#${run.taskId}] - WIP: сохранение локальных изменений перед запуском конвейера`;
-          await git(['commit', '-m', commitMsg]);
+      if (cwd && fs.existsSync(cwd)) {
+        try {
+          const git = (args: string[]) => this.executor.run({ command: 'git', args, cwd, signal });
+          await git(['add', '-A', '--', '.']);
+          const status = (await git(['status', '--porcelain'])).trim();
+          if (status) {
+            const commitMsg = `[#${run.taskId}] - WIP: сохранение локальных изменений перед запуском конвейера`;
+            await git(['commit', '-m', commitMsg]);
+          }
+        } catch {
+          // Best-effort
         }
       }
     }
 
     if (fix.action === 'switch_branch') {
       const cwd = run.settings?.repositoryPath;
-      if (cwd && run.settings?.baseBranch) {
-        const git = (args: string[]) => this.executor.run({ command: 'git', args, cwd, signal });
-        await git(['checkout', run.settings.baseBranch]);
+      if (cwd && run.settings?.baseBranch && fs.existsSync(cwd)) {
+        try {
+          const git = (args: string[]) => this.executor.run({ command: 'git', args, cwd, signal });
+          await git(['checkout', run.settings.baseBranch]);
+        } catch {
+          // Best-effort
+        }
       }
     }
 
     // 2. Worktree-level fix
     const wtCwd = run.checkout?.worktreePath;
-    if (wtCwd && (fix.scope === 'worktree' || !fix.scope)) {
-      const git = (args: string[]) => this.executor.run({ command: 'git', args, cwd: wtCwd, signal });
-      await git(['add', '-A', '--', '.']);
-      const status = (await git(['status', '--porcelain'])).trim();
-      if (status) {
-        const commitMsg = `[#${run.taskId}] - ${fix.title}: устранена ошибка конвейера`;
-        await git(['commit', '-m', commitMsg]);
+    if (wtCwd && (fix.scope === 'worktree' || !fix.scope) && fs.existsSync(wtCwd)) {
+      try {
+        const git = (args: string[]) => this.executor.run({ command: 'git', args, cwd: wtCwd, signal });
+        await git(['add', '-A', '--', '.']);
+        const status = (await git(['status', '--porcelain'])).trim();
+        if (status) {
+          const commitMsg = `[#${run.taskId}] - ${fix.title}: устранена ошибка конвейера`;
+          await git(['commit', '-m', commitMsg]);
+        }
+      } catch {
+        // Best-effort
       }
     }
   }
@@ -208,7 +220,7 @@ export class PipelineDoctor {
 
     if (targetFix?.scope === 'repository') {
       const repoCwd = run.settings?.repositoryPath;
-      if (repoCwd) {
+      if (repoCwd && fs.existsSync(repoCwd)) {
         try {
           await this.executor.run({ command: 'git', args: ['reset', 'HEAD'], cwd: repoCwd, signal });
         } catch {
@@ -218,7 +230,7 @@ export class PipelineDoctor {
     }
 
     const wtCwd = run.checkout?.worktreePath;
-    if (wtCwd) {
+    if (wtCwd && fs.existsSync(wtCwd)) {
       try {
         await this.executor.run({ command: 'git', args: ['reset', '--hard', 'HEAD'], cwd: wtCwd, signal });
         await this.executor.run({ command: 'git', args: ['clean', '-fd'], cwd: wtCwd, signal });

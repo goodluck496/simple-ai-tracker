@@ -64,12 +64,12 @@ test('forceRelease terminates running owner process and releases lease for resta
     assert.equal(store.tryAcquire('host'), undefined, 'cannot acquire while dummy process owns it');
     const killed = await store.forceRelease('host');
     assert.equal(killed, true);
-    assert.ok(!RuntimeCoordinator['alive'](dummy.pid));
+    assert.ok(!RuntimeCoordinator['alive'](dummy.pid!));
     const lease = store.tryAcquire('host');
     assert.ok(lease);
     lease.release();
   } finally {
-    try { process.kill(dummy.pid, 'SIGKILL'); } catch {}
+    try { if (dummy.pid) process.kill(dummy.pid, 'SIGKILL'); } catch {}
     store.close();
     await rm(root, { recursive: true, force: true });
   }
@@ -89,7 +89,7 @@ test('gracefulStop terminates process and clears owner', async () => {
     assert.equal(stopped, true);
     assert.equal(store.getOwner('host'), undefined);
   } finally {
-    try { process.kill(dummy.pid, 'SIGKILL'); } catch {}
+    try { if (dummy.pid) process.kill(dummy.pid, 'SIGKILL'); } catch {}
     store.close();
     await rm(root, { recursive: true, force: true });
   }
