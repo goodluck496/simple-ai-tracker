@@ -126,6 +126,7 @@ function parseCliArgs() {
   const lines = parseInt(getArgValue('--lines') ?? '40', 10);
   const follow = flags.includes('-f') || flags.includes('--follow');
   const all = flags.includes('--all');
+  const autoRestart = flags.includes('--auto-restart') || flags.includes('--restart');
 
   return {
     command: command === 'service' ? 'start' : command,
@@ -136,6 +137,7 @@ function parseCliArgs() {
     lines,
     follow,
     all,
+    autoRestart,
   };
 }
 
@@ -171,12 +173,18 @@ async function startService(opts) {
       const row = db.prepare('SELECT * FROM owners WHERE key=?').get('host');
       db.close();
       if (row && row.host === os.hostname() && isAlive(row.pid)) {
-        console.log(`[simple-ai-tracker] Воркер уже запущен как служба (PID: ${row.pid}).`);
-        console.log(`  Рабочая область: ${workspace}`);
-        console.log(`  Лог-файл:        ${path.join(hostDir, 'worker-service.log')}`);
-        console.log(`  Для остановки:   npm run worker:stop`);
-        console.log(`  Для перезапуска: npm run worker:restart`);
-        return;
+        if (opts.autoRestart) {
+          console.log(`[simple-ai-tracker] Обнаружен работающий воркер (PID: ${row.pid}). Перезапуск со свежей сборкой...`);
+          await stopService(opts);
+          await delay(600);
+        } else {
+          console.log(`[simple-ai-tracker] Воркер уже запущен как служба (PID: ${row.pid}).`);
+          console.log(`  Рабочая область: ${workspace}`);
+          console.log(`  Лог-файл:        ${path.join(hostDir, 'worker-service.log')}`);
+          console.log(`  Для остановки:   npm run worker:stop`);
+          console.log(`  Для перезапуска: npm run worker:restart`);
+          return;
+        }
       }
     } catch {}
   }
