@@ -420,7 +420,19 @@
   @if (currentFix(); as fix) {
     <div class="fix-dialog-content">
       <div class="fix-header-banner">
-        <h4>{{ fix.title }}</h4>
+        <div class="fix-title-row">
+          <h4>{{ fix.title }}</h4>
+          <div class="fix-badges">
+            @if (fix.model) {
+              <span class="fix-model-tag" title="Модель, подготовившая диагноз"><i class="pi pi-sparkles"></i> {{ fix.model }}</span>
+            }
+            @if (fix.scope === 'repository') {
+              <span class="fix-scope-tag repo" title="Исправление на уровне основного репозитория"><i class="pi pi-database"></i> Основной репозиторий</span>
+            } @else {
+              <span class="fix-scope-tag worktree" title="Исправление на уровне изолированной ветки задачи"><i class="pi pi-folder"></i> Рабочая ветка задачи</span>
+            }
+          </div>
+        </div>
         <p class="fix-explanation">{{ fix.explanation }}</p>
       </div>
 

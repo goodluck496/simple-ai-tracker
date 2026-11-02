@@ -66,3 +66,70 @@ test('local connection preset automatically sets trustedExecution on new runs', 
     app.close();
   }
 });
+
+
+test('doctor consults model and uses its recommendations', async () => {
+  const mockFetch = async () => ({
+    ok: true,
+    json: async () => ({
+      choices: [{
+        message: {
+          content: JSON.stringify({
+            title: 'Анализ через локальную модель Ollama',
+            explanation: 'Модель выявила отсутствие файла конфигурации',
+            scope: 'worktree',
+            action: 'patch_code'
+          })
+        }
+      }]
+    })
+  });
+
+  const { PipelineDoctor } = await import('./pipeline-doctor.js');
+  const doctor = new PipelineDoctor(undefined, mockFetch as unknown as typeof fetch);
+
+  const run: any = {
+    id: 'run-1',
+    taskId: 'TASK-1',
+    stage: 0,
+    summary: 'Build failure in module',
+    settings: {
+      ...DEFAULT_AUTOMATION_SETTINGS,
+      doctorConnectionId: 'my-ollama',
+      doctorModel: 'qwen2.5-coder:7b',
+      connections: [
+        { id: 'my-ollama', label: 'Моя Ollama', kind: ProviderKind.Ollama, baseUrl: 'http://localhost:11434', supportsImages: false, isLocal: true }
+      ],
+      agents: []
+    }
+  };
+
+  const fix = await doctor.diagnose(run, ['error TS2304']);
+  assert.equal(fix.title, 'Анализ через локальную модель Ollama');
+  assert.equal(fix.explanation, 'Модель выявила отсутствие файла конфигурации');
+  assert.equal(fix.model, 'Моя Ollama (qwen2.5-coder:7b)');
+  assert.equal(fix.scope, 'worktree');
+});
+
+test('doctor detects clean target checkout failure and diagnoses repository scope', async () => {
+  const { PipelineDoctor } = await import('./pipeline-doctor.js');
+  const doctor = new PipelineDoctor();
+
+  const run: any = {
+    id: 'run-2',
+    taskId: 'SAT-28',
+    stage: 0,
+    summary: 'Automatic integration requires a clean target checkout. Preserve its changes or select manual review before starting.',
+    settings: {
+      ...DEFAULT_AUTOMATION_SETTINGS,
+      connections: [],
+      agents: []
+    }
+  };
+
+  const fix = await doctor.diagnose(run, ['Automatic integration requires a clean target checkout.']);
+  assert.equal(fix.scope, 'repository');
+  assert.equal(fix.action, 'commit_dirty_repo');
+  assert.match(fix.title, /Сохранение локальных файлов/);
+  assert.ok(fix.explanation.includes('Автоматическая интеграция требует чистого состояния'));
+});

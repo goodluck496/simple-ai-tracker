@@ -87,6 +87,8 @@ export interface AutomationSettings {
   resolverTimeoutMinutes?: number;
   maxResolverToolCalls?: number;
   mergePolicy: MergePolicy;
+  doctorConnectionId?: string;
+  doctorModel?: string;
 }
 
 export const DEFAULT_AUTOMATION_SETTINGS: AutomationSettings = {
@@ -105,6 +107,9 @@ export interface ProposedFix {
   diff: string;
   files: string[];
   createdAt: string;
+  scope?: 'worktree' | 'repository';
+  action?: 'commit_dirty_repo' | 'patch_code' | 'switch_branch' | 'retry_stage';
+  model?: string;
 }
 
 export interface AgentRun {

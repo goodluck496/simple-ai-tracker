@@ -77,6 +77,8 @@ export class AutomationSettingsValidator {
       pipeline: settings.pipeline, checks: settings.checks.map(({ command, args }) => ({ command, args })), setup: settings.setup.map(({ command, args }) => ({ command, args })), artifactPaths: settings.artifactPaths,
       timeoutMinutes: settings.timeoutMinutes, maxRevisions: settings.maxRevisions, mergePolicy: settings.mergePolicy,
       maxAgentCalls, maxStageToolCalls, maxInputTokens, maxRunMinutes,
+      ...(typeof settings.doctorConnectionId === 'string' ? { doctorConnectionId: settings.doctorConnectionId } : {}),
+      ...(typeof settings.doctorModel === 'string' ? { doctorModel: settings.doctorModel } : {}),
       ...execution,
     };
   }

@@ -421,6 +421,12 @@ export class AutomationPanelComponent implements OnInit {
     }
     return this.connectionOptionsCache;
   }
+  public get doctorConnectionOptions() {
+    return [
+      { label: 'Авто (локальная модель Ollama / модель агента)', value: '' },
+      ...this.settings.connections.map((entry) => ({ label: entry.label || entry.id, value: entry.id })),
+    ];
+  }
   public stageNumber(run: AgentRun): number { return Math.min(run.stage + 1, run.settings.pipeline.length); }
   public addConnection(): void { this.settings.connections.push({ id: `connection-${crypto.randomUUID()}`, label: 'Подключение', kind: ProviderKind.Native, supportsImages: false }); }
   public addAgent(role: AgentRole = AgentRole.Developer): void {

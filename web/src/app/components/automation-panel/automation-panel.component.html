@@ -506,6 +506,27 @@
               </div>
             </div>
           </div>
+          <div class="panel-card">
+            <div class="panel-card-header">
+              <div class="card-title-row">
+                <h4>Диагностика сбоев (Pipeline Doctor)</h4>
+              </div>
+              <p class="card-hint">Сабагент анализирует логи сбоев конвейера, ошибки компиляции, интеграции Git и формирует авто-исправления с проверкой изменений</p>
+            </div>
+            <div class="card-body">
+              <div class="connection-details-row">
+                <label class="grow-field">
+                  <span>Провайдер / Подключение для Doctor</span>
+                  <p-select [options]="doctorConnectionOptions" optionLabel="label" optionValue="value" [(ngModel)]="settings.doctorConnectionId" appendTo="body" />
+                </label>
+                <label class="grow-field">
+                  <span>ID модели (по умолчанию локальная Ollama / модель агента)</span>
+                  <input pInputText [(ngModel)]="settings.doctorModel" placeholder="Например: qwen2.5-coder:latest или llama3" />
+                </label>
+              </div>
+              <p class="hint">Если выбрано «Авто», Doctor использует подключение, помеченное как «Локальная модель (без лимитов)» или Ollama. При недоступности сети используется встроенная эвристическая диагностика.</p>
+            </div>
+          </div>
         </div>
       }
 
