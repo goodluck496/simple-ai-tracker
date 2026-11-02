@@ -51,3 +51,26 @@ console.log(JSON.stringify({pid:process.pid,child}));setInterval(()=>{},1000);`,
     worker.kill(); survivor.kill(); store.close(); await rm(root, { recursive: true, force: true });
   }
 });
+
+
+test('forceRelease terminates running owner process and releases lease for restart', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'sat-force-release-'));
+  const file = path.join(root, 'runtime.sqlite');
+  const dummy = spawn(process.execPath, ['-e', 'setInterval(()=>{},1000)'], { windowsHide: true, stdio: 'ignore' });
+  const store = new RuntimeCoordinator(file);
+  try {
+    (store as unknown as { db: { prepare(sql: string): { run(...args: unknown[]): void } } }).db
+      .prepare('INSERT INTO owners VALUES (?,?,?,?,?,?)').run('host', 'nonce-1', dummy.pid, os.hostname(), 0, '[]');
+    assert.equal(store.tryAcquire('host'), undefined, 'cannot acquire while dummy process owns it');
+    const killed = await store.forceRelease('host');
+    assert.equal(killed, true);
+    assert.ok(!RuntimeCoordinator['alive'](dummy.pid));
+    const lease = store.tryAcquire('host');
+    assert.ok(lease);
+    lease.release();
+  } finally {
+    try { process.kill(dummy.pid, 'SIGKILL'); } catch {}
+    store.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});

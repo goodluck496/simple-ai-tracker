@@ -16,8 +16,13 @@ export class HostSupervisorApplication {
     const key = createHash('sha256').update(JSON.stringify([workspace, process.env.SAT_MCP_COMMAND, process.env.SAT_MCP_ARGS])).digest('hex');
     const home = process.env.LOCALAPPDATA ? path.join(process.env.LOCALAPPDATA, 'SimpleAiTracker') : path.join(os.homedir(), '.cache', 'simple-ai-tracker');
     const coordinator = new RuntimeCoordinator(path.join(home, 'hosts', key, 'coordination.sqlite'));
-    const lease = coordinator.tryAcquire('host');
-    if (!lease) { coordinator.close(); throw new Error('Локальный хост этого пространства уже запущен.'); }
+    let lease = coordinator.tryAcquire('host');
+    if (!lease) {
+      process.stderr.write('Обнаружен ранее запущенный хост воркера. Принудительное завершение старого процесса...\n');
+      await coordinator.forceRelease('host');
+      lease = coordinator.tryAcquire('host');
+    }
+    if (!lease) { coordinator.close(); throw new Error('Локальный хост этого пространства уже запущен и не может быть остановлен.'); }
     const controller = new AbortController(); const stop = () => controller.abort();
     process.on('SIGINT', stop); process.on('SIGTERM', stop);
     const execution = new ExecutionSupervisor(path.resolve(process.argv[1]), [...process.argv.slice(2), '--execution-child'],

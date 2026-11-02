@@ -58,6 +58,31 @@ export class RuntimeCoordinator {
       },
     };
   }
+  public async forceRelease(key: string): Promise<boolean> {
+    const row = this.db.prepare('SELECT * FROM owners WHERE key=?').get(key) as unknown as Owner | undefined;
+    if (!row) return false;
+    if (row.host === os.hostname() && row.pid !== process.pid) {
+      const pids = [row.pid, ...(JSON.parse(row.children || '[]') as number[])];
+      for (const pid of pids) {
+        if (!pid || pid <= 0) continue;
+        try {
+          if (process.platform === 'win32') {
+            try {
+              const { spawnSync } = await import('node:child_process');
+              spawnSync('taskkill', ['/F', '/T', '/PID', String(pid)], { windowsHide: true });
+            } catch {}
+          }
+          process.kill(pid, 'SIGKILL');
+        } catch {
+          try { process.kill(pid, 'SIGTERM'); } catch {}
+        }
+      }
+      await delay(300);
+      this.db.prepare('DELETE FROM owners WHERE key=?').run(key);
+      return true;
+    }
+    return false;
+  }
   private static alive(pid: number): boolean {
     try {
       process.kill(pid, 0);
