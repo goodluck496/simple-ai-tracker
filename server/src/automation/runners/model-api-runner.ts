@@ -117,7 +117,17 @@ export class ModelApiRunner implements AgentRunner {
       }
       for (const call of message.tool_calls) {
         if (call.function.name !== ModelTool.Finish && ++calls > (job.maxToolCalls ?? MAX_TURNS) && !job.trustedExecution) throw new Error('Model tool-call limit exceeded.');
-        if (!names.includes(call.function.name)) throw new Error('Model requested a tool outside its role.');
+        if (!names.includes(call.function.name)) {
+          messages.push({
+            role: 'tool',
+            tool_call_id: call.id,
+            content: JSON.stringify({
+              error: `Инструмент ${call.function.name} недоступен для роли ${job.profile.role}. Доступные инструменты: ${names.join(', ')}. Роль ${job.profile.role} не может модифицировать файлы. Если проверки не пройдены, вызовите finish_task с вердиктом changes_requested.`
+            })
+          });
+          onProgress(`Модель запросила недоступный инструмент ${call.function.name} для роли ${job.profile.role}. Возвращено предупреждение.\n`);
+          continue;
+        }
         let args: Record<string, unknown> | undefined;
         try {
           const parsed: unknown = JSON.parse(call.function.arguments);

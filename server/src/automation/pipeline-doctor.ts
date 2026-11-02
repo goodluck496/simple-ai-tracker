@@ -1,3 +1,4 @@
+import fs from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import type { AgentRun, ProposedFix, ModelConnection } from '../../../shared/automation/contracts.js';
 import { ProviderKind } from '../../../shared/automation/contracts.js';
@@ -227,6 +228,18 @@ export class PipelineDoctor {
     }
   }
 
+  private resolveBaseUrl(rawBase: string): string {
+    const base = rawBase.replace(/\/$/, '');
+    try {
+      if (fs.existsSync('/.dockerenv')) {
+        return base.replace(/\b(localhost|127\.0\.0\.1)\b/g, 'host.docker.internal');
+      }
+    } catch {
+      // ignore
+    }
+    return base;
+  }
+
   private resolveConnection(run: AgentRun): ModelConnection | undefined {
     const connections = run.settings?.connections || [];
     // 1. Doctor agent profile connection
@@ -277,8 +290,9 @@ export class PipelineDoctor {
     worktreeDiff: string,
     worktreeFiles: string[]
   ): Promise<{ title?: string; explanation?: string; scope?: 'worktree' | 'repository'; action?: 'commit_dirty_repo' | 'patch_code' | 'switch_branch' | 'retry_stage' } | null> {
-    const base = connection.baseUrl?.replace(/\/$/, '');
-    if (!base) return null;
+    const rawBase = connection.baseUrl?.replace(/\/$/, '');
+    if (!rawBase) return null;
+    const base = this.resolveBaseUrl(rawBase);
     const url = `${base}${connection.kind === ProviderKind.Ollama && !base.endsWith('/v1') ? '/v1' : ''}/chat/completions`;
     const secret = connection.credentialEnv ? process.env[connection.credentialEnv] : undefined;
     if (connection.credentialEnv && !secret) return null;
@@ -303,7 +317,7 @@ export class PipelineDoctor {
       '}'
     ].filter(Boolean).join('\n\n');
 
-    const signal = AbortSignal.timeout(8000);
+    const signal = AbortSignal.timeout(60000);
     const response = await this.request(url, {
       method: 'POST',
       signal,
