@@ -8,6 +8,7 @@
     "node": ">=22.5.0"
   },
   "scripts": {
+    "docker:run": "docker compose up -d --build && npm run worker:restart",
     "build": "npm run build:server && npm run build:web",
     "build:server": "node scripts/build-server.mjs",
     "build:web": "ng build",

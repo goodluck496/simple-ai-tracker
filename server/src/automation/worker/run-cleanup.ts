@@ -53,12 +53,17 @@ export class RunCleanup {
       }
       // Validate the complete set before deleting anything; no partial cleanup on a dirty sibling.
       for (const entry of owned) {
-        const root = await fs.realpath(entry.directory);
-        if (!same(root, entry.directory) || same(root, location.root) || (await fs.lstat(entry.directory)).isSymbolicLink()) throw new Error('Cleanup directory is redirected.');
-        if (await fs.realpath(path.resolve(root, (await git(['rev-parse', '--git-common-dir'], root)).trim())) !== location.common) throw new Error('Worktree belongs to another repository.');
-        if (!spec.discard && (await git(['status', '--porcelain', '--untracked-files=all'], root)).trim()) throw new Error('Dirty worktree retained; explicit discard is required.');
-        const base = bases.find(b => b.branch === entry.branch);
-        if (!spec.discard && base && base.sha !== entry.sha) throw new Error('Source branch changed after review; retained.');
+        try {
+          const root = await fs.realpath(entry.directory);
+          if (!same(root, entry.directory) || same(root, location.root) || (await fs.lstat(entry.directory)).isSymbolicLink()) throw new Error('Cleanup directory is redirected.');
+          if (await fs.realpath(path.resolve(root, (await git(['rev-parse', '--git-common-dir'], root)).trim())) !== location.common) throw new Error('Worktree belongs to another repository.');
+          if (!spec.discard && (await git(['status', '--porcelain', '--untracked-files=all'], root)).trim()) throw new Error('Dirty worktree retained; explicit discard is required.');
+          const base = bases.find(b => b.branch === entry.branch);
+          if (!spec.discard && base && base.sha !== entry.sha) throw new Error('Source branch changed after review; retained.');
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code === 'ENOENT') continue;
+          throw error;
+        }
       }
       const orphans: Entry[] = [];
       const recover = async (entry: Entry) => {
@@ -105,7 +110,13 @@ export class RunCleanup {
         result.paths.push(path.resolve(entry.directory));
       }
       for (const entry of owned.sort((a, b) => b.directory.length - a.directory.length)) {
+        signal.throwIfAborted();
         await this.unlinkReferences(entry.directory, signal);
+        for (const technical of ['node_modules', '.angular', '.nx', '.codegraph', '.sat', 'dist']) {
+          try {
+            await fs.rm(path.toNamespacedPath(path.join(entry.directory, technical)), { recursive: true, force: true });
+          } catch {}
+        }
         await git(['worktree', 'remove', '--force', '--', entry.directory]); result.paths.push(path.resolve(entry.directory));
       }
       const branches = (await git(['for-each-ref', '--format=%(refname:short) %(objectname)', 'refs/heads/'])).trim().split('\n');

@@ -406,10 +406,11 @@ body {
 
 /* Выпадающая панель не подстраивается под ширину триггера: растёт по контенту,
    но не шире 400px (нижняя граница — чтобы короткие списки не были «щелью»). */
+.p-select-overlay,
 .p-select .p-select-overlay {
-  width: max-content;
-  min-width: 320px;
-  max-width: 400px;
+  min-width: 180px;
+  max-width: min(380px, calc(100vw - 2rem));
+  box-sizing: border-box;
 
   .p-select-filter {
     width: 100%;
@@ -422,6 +423,11 @@ body {
     white-space: normal;
     overflow-wrap: anywhere;
     line-height: 1.35;
+
+    .p-select-option-label {
+      white-space: normal;
+      overflow-wrap: anywhere;
+    }
   }
 }
 

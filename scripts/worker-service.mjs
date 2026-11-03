@@ -118,20 +118,25 @@ function isDockerContainerRunning(container = 'simple-ai-tracker') {
   }
 }
 
-function detectWorkspace(specified) {
-  if (specified) return specified;
-  if (process.env.SAT_WORKSPACE) return process.env.SAT_WORKSPACE;
+function getRegisteredWorkspaces() {
   const wsFile = path.join(ROOT, 'data', 'workspaces.json');
   if (fs.existsSync(wsFile)) {
     try {
       const data = JSON.parse(fs.readFileSync(wsFile, 'utf8'));
-      const repoName = path.basename(ROOT);
-      const matching = data.workspaces?.find(w => w.name === repoName);
-      if (matching) return matching.name;
-      if (data.current && data.current !== 'default') return data.current;
+      if (Array.isArray(data.workspaces) && data.workspaces.length > 0) {
+        return data.workspaces;
+      }
     } catch {}
   }
-  return 'default';
+  return [{ name: 'default', label: 'default' }];
+}
+
+function resolveWorkspace(specified) {
+  if (!specified) return undefined;
+  const list = getRegisteredWorkspaces();
+  const lower = specified.toLowerCase().trim();
+  const match = list.find(w => w.name.toLowerCase() === lower || (w.label && w.label.toLowerCase() === lower));
+  return match ? match.name : specified;
 }
 
 function parseCliArgs() {
@@ -145,7 +150,8 @@ function parseCliArgs() {
   };
 
   const container = getArgValue('--container') ?? process.env.SAT_CONTAINER ?? 'simple-ai-tracker';
-  const workspace = detectWorkspace(getArgValue('--workspace'));
+  const rawWorkspace = getArgValue('--workspace') || process.env.SAT_WORKSPACE;
+  const workspace = rawWorkspace ? resolveWorkspace(rawWorkspace) : undefined;
   const isDocker = flags.includes('--docker') ? true : flags.includes('--local') ? false : isDockerContainerRunning(container);
   const isLocal = !isDocker;
   const lines = parseInt(getArgValue('--lines') ?? '40', 10);
@@ -179,12 +185,12 @@ async function buildServerIfNeeded() {
   });
 }
 
-async function startService(opts) {
-  const { workspace, isLocal, container } = opts;
+async function startOneService(workspace, opts) {
+  const { isLocal, container } = opts;
   const isDocker = !isLocal;
   const mcpCommand = isDocker ? 'docker' : undefined;
   const mcpArgs = isDocker
-    ? JSON.stringify(['exec', '-i', container, 'node', '/app/dist/server/mcp.mjs'])
+    ? JSON.stringify(['exec', '-i', '-e', `SAT_WORKSPACE=${workspace}`, container, 'node', '/app/dist/server/mcp.mjs'])
     : undefined;
 
   const hostDir = getHostDir(workspace, mcpCommand, mcpArgs);
@@ -199,27 +205,20 @@ async function startService(opts) {
       db.close();
       if (row && row.host === os.hostname() && isAlive(row.pid)) {
         if (opts.autoRestart) {
-          console.log(`[simple-ai-tracker] Обнаружен работающий воркер (PID: ${row.pid}). Перезапуск со свежей сборкой...`);
-          await stopService(opts);
+          console.log(`[simple-ai-tracker] Перезапуск службы воркера для '${workspace}' (PID: ${row.pid})...`);
+          await stopOneHost({ pid: row.pid, children: JSON.parse(row.children || '[]'), dbPath, hostDir });
           await delay(600);
         } else {
-          console.log(`[simple-ai-tracker] Воркер уже запущен как служба (PID: ${row.pid}).`);
-          console.log(`  Рабочая область: ${workspace}`);
-          console.log(`  Лог-файл:        ${path.join(hostDir, 'worker-service.log')}`);
-          console.log(`  Для остановки:   npm run worker:stop`);
-          console.log(`  Для перезапуска: npm run worker:restart`);
+          console.log(`  ● ${workspace}: уже активна (PID: ${row.pid})`);
           return;
         }
       }
     } catch {}
   }
 
-  // Сборка сервера перед запуском
-  await buildServerIfNeeded();
-
   const logFile = path.join(hostDir, 'worker-service.log');
   const logFd = fs.openSync(logFile, 'a');
-  const banner = `\n=======================================================\n[simple-ai-tracker] Запуск службы воркера: ${new Date().toISOString()}\n=======================================================\n`;
+  const banner = `\n=======================================================\n[simple-ai-tracker] Запуск службы воркера [${workspace}]: ${new Date().toISOString()}\n=======================================================\n`;
   fs.writeSync(logFd, banner);
 
   const env = {
@@ -238,7 +237,7 @@ async function startService(opts) {
 
   const pid = child.pid;
   child.unref();
-  // Do not closeSync logFd here: on Windows, closing logFd invalidates child process stdout/stderr handles.
+  try { fs.closeSync(logFd); } catch {}
 
   const metaPath = path.join(hostDir, 'worker-service.json');
   fs.writeFileSync(metaPath, JSON.stringify({
@@ -253,7 +252,7 @@ async function startService(opts) {
   // Ожидаем 800мс и проверяем, не упал ли процесс при старте
   await delay(800);
   if (!isAlive(pid)) {
-    console.error(`[simple-ai-tracker] Ошибка при запуске службы воркера (процесс PID ${pid} завершился).`);
+    console.error(`  ✕ ${workspace}: ошибка запуска (процесс PID ${pid} завершился).`);
     if (fs.existsSync(logFile)) {
       const lines = fs.readFileSync(logFile, 'utf8').trim().split('\n');
       console.error('Последние записи в логе:');
@@ -263,62 +262,74 @@ async function startService(opts) {
     return;
   }
 
+  const reg = getRegisteredWorkspaces().find(w => w.name === workspace);
+  const label = reg?.label && reg.label !== workspace ? ` (${reg.label})` : '';
+  console.log(`  ● ${workspace}${label}: служба активна (PID: ${pid})`);
+}
+
+async function startService(opts) {
+  // Сборка сервера перед запуском всех служб
+  await buildServerIfNeeded();
+
+  const targetWorkspaces = opts.workspace
+    ? [opts.workspace]
+    : getRegisteredWorkspaces().map(w => w.name);
+
   console.log(`
 =======================================================
- Simple AI Tracker — Служба воркера запущена в фоне
+ Simple AI Tracker — Запуск служб воркеров
 =======================================================
-  Статус:           ● Активна (PID: ${pid})
-  Режим:            ${isDocker ? `Docker (${container})` : 'Локальный'}
-  Рабочая область:  ${workspace}
-  Файл логов:       ${logFile}
+  Режим:            ${opts.isDocker ? `Docker (${opts.container})` : 'Локальный'}
+  Рабочие области:  ${targetWorkspaces.join(', ')}
+=======================================================`);
+
+  for (const ws of targetWorkspaces) {
+    await startOneService(ws, opts);
+  }
+
+  console.log(`
+  Службы запущены в фоне и ожидают команд.
+  Управлять выполнением (Запустить/Остановить) можно из веб-интерфейса каждой доски.
 
   Команды управления:
-    npm run worker:status   — проверить статус
+    npm run worker:status   — проверить статус всех служб
     npm run worker:logs     — посмотреть логи
-    npm run worker:stop     — остановить службу
-    npm run worker:restart  — перезапустить службу
+    npm run worker:stop     — остановить службы
+    npm run worker:restart  — перезапустить службы
 =======================================================
 `);
 }
 
-async function stopService(opts) {
-  const activeHosts = findActiveHosts();
-  if (activeHosts.length === 0) {
-    console.log('[simple-ai-tracker] Служба воркера не запущена.');
-    return;
+async function stopOneHost(host) {
+  // Мягкая остановка SIGTERM
+  try {
+    process.kill(host.pid, 'SIGTERM');
+  } catch {}
+
+  const deadline = Date.now() + 2500;
+  while (Date.now() < deadline && isAlive(host.pid)) {
+    await delay(150);
   }
 
-  for (const host of activeHosts) {
-    console.log(`[simple-ai-tracker] Остановка службы воркера (PID: ${host.pid})...`);
-    
-    // Мягкая остановка SIGTERM
+  // Принудительное завершение, если не остановился
+  if (isAlive(host.pid)) {
+    killProcessTree(host.pid);
+  }
+  for (const childPid of host.children || []) {
+    if (isAlive(childPid)) killProcessTree(childPid);
+  }
+
+  // Очистка coordination.sqlite
+  if (host.dbPath && fs.existsSync(host.dbPath)) {
     try {
-      process.kill(host.pid, 'SIGTERM');
+      const db = new DatabaseSync(host.dbPath);
+      db.prepare('DELETE FROM owners WHERE key=?').run('host');
+      db.close();
     } catch {}
+  }
 
-    const deadline = Date.now() + 2500;
-    while (Date.now() < deadline && isAlive(host.pid)) {
-      await delay(150);
-    }
-
-    // Принудительное завершение, если не остановился
-    if (isAlive(host.pid)) {
-      killProcessTree(host.pid);
-    }
-    for (const childPid of host.children) {
-      if (isAlive(childPid)) killProcessTree(childPid);
-    }
-
-    // Очистка coordination.sqlite
-    if (fs.existsSync(host.dbPath)) {
-      try {
-        const db = new DatabaseSync(host.dbPath);
-        db.prepare('DELETE FROM owners WHERE key=?').run('host');
-        db.close();
-      } catch {}
-    }
-
-    // Обновление метафайла
+  // Обновление метафайла
+  if (host.hostDir) {
     const metaPath = path.join(host.hostDir, 'worker-service.json');
     if (fs.existsSync(metaPath)) {
       try {
@@ -328,57 +339,90 @@ async function stopService(opts) {
         fs.writeFileSync(metaPath, JSON.stringify(meta, null, 2));
       } catch {}
     }
-
-    console.log(`[simple-ai-tracker] ✓ Служба воркера (PID: ${host.pid}) успешно остановлена.`);
   }
 }
 
-async function statusService() {
+async function stopService(opts) {
   const activeHosts = findActiveHosts();
-  if (activeHosts.length === 0) {
-    console.log(`
-=======================================================
- Simple AI Tracker — Статус службы воркера
-=======================================================
-  Статус: ○ Остановлена
-  Для запуска выполните: npm run worker:service
-=======================================================
-`);
+  const hostsToStop = opts?.workspace
+    ? activeHosts.filter(h => (h.serviceMeta?.workspace ?? 'default') === opts.workspace)
+    : activeHosts;
+
+  if (hostsToStop.length === 0) {
+    console.log('[simple-ai-tracker] Службы воркеров не запущены.');
     return;
   }
 
+  for (const host of hostsToStop) {
+    const ws = host.serviceMeta?.workspace ?? 'default';
+    console.log(`[simple-ai-tracker] Остановка службы воркера для '${ws}' (PID: ${host.pid})...`);
+    await stopOneHost(host);
+    console.log(`[simple-ai-tracker] ✓ Служба воркера для '${ws}' (PID: ${host.pid}) успешно остановлена.`);
+  }
+}
+
+async function statusService(opts) {
+  const activeHosts = findActiveHosts();
+  const registered = getRegisteredWorkspaces();
+
   console.log(`
 =======================================================
- Simple AI Tracker — Статус службы воркера
+ Simple AI Tracker — Статус служб воркеров
 =======================================================`);
-  for (const host of activeHosts) {
-    const meta = host.serviceMeta;
-    const uptimeStr = meta?.startedAt ? formatUptime(Date.now() - new Date(meta.startedAt).getTime()) : 'Неизвестно';
-    console.log(`  Статус:           ● Активна`);
-    console.log(`  PID:              ${host.pid}`);
-    if (host.children.length > 0) {
-      console.log(`  Дочерние процессы: ${host.children.join(', ')}`);
-    }
-    console.log(`  Рабочая область:  ${meta?.workspace ?? 'default'}`);
-    console.log(`  Режим:            ${meta?.mode ?? 'auto'}`);
-    console.log(`  Время работы:     ${uptimeStr}`);
-    console.log(`  Лог-файл:         ${path.join(host.hostDir, 'worker-service.log')}`);
+
+  if (activeHosts.length === 0) {
+    console.log(`  Статус: ○ Все службы остановлены`);
+    console.log(`  Рабочие области: ${registered.map(w => w.name + (w.label && w.label !== w.name ? ` (${w.label})` : '')).join(', ')}`);
+    console.log(`  Для запуска выполните: npm run worker:service`);
+    console.log(`=======================================================\n`);
+    return;
   }
+
+  for (const ws of registered) {
+    const host = activeHosts.find(h => (h.serviceMeta?.workspace ?? 'default') === ws.name);
+    const label = ws.label && ws.label !== ws.name ? ` (${ws.label})` : '';
+    if (host) {
+      const meta = host.serviceMeta;
+      const uptimeStr = meta?.startedAt ? formatUptime(Date.now() - new Date(meta.startedAt).getTime()) : 'Неизвестно';
+      const childStr = host.children && host.children.length > 0 ? ` [дети: ${host.children.join(', ')}]` : '';
+      console.log(`  ● ${ws.name}${label}:`);
+      console.log(`      PID:          ${host.pid}${childStr}`);
+      console.log(`      Режим:        ${meta?.mode ?? 'auto'}`);
+      console.log(`      Время работы: ${uptimeStr}`);
+      console.log(`      Лог:          ${path.join(host.hostDir, 'worker-service.log')}`);
+    } else {
+      console.log(`  ○ ${ws.name}${label}: не запущена`);
+    }
+  }
+
+  // Также показываем любые активные хосты, не найденные в workspaces.json
+  for (const host of activeHosts) {
+    const wsName = host.serviceMeta?.workspace ?? 'default';
+    if (!registered.some(w => w.name === wsName)) {
+      console.log(`  ● ${wsName} (дополнительная): PID ${host.pid}`);
+    }
+  }
+
   console.log(`
   Команды управления:
     npm run worker:logs     — посмотреть последние логи
-    npm run worker:stop     — остановить службу
-    npm run worker:restart  — перезапустить службу
+    npm run worker:stop     — остановить службы
+    npm run worker:restart  — перезапустить службы
 =======================================================
 `);
 }
 
 async function logsService(opts) {
   const activeHosts = findActiveHosts();
-  let logFile = null;
-  if (activeHosts.length > 0) {
-    logFile = path.join(activeHosts[0].hostDir, 'worker-service.log');
-  } else {
+  let host = null;
+  if (opts.workspace) {
+    host = activeHosts.find(h => (h.serviceMeta?.workspace ?? 'default') === opts.workspace);
+  } else if (activeHosts.length > 0) {
+    host = activeHosts[0];
+  }
+
+  let logFile = host ? path.join(host.hostDir, 'worker-service.log') : null;
+  if (!logFile) {
     // Ищем последний лог-файл в папке hosts
     const hostsDir = getHostsDir();
     if (fs.existsSync(hostsDir)) {
@@ -398,7 +442,8 @@ async function logsService(opts) {
     return;
   }
 
-  console.log(`[simple-ai-tracker] Журнал работы воркера (${logFile}):\n`);
+  const wsName = host?.serviceMeta?.workspace ?? opts.workspace ?? 'default';
+  console.log(`[simple-ai-tracker] Журнал работы воркера [${wsName}] (${logFile}):\n`);
   const content = fs.readFileSync(logFile, 'utf8');
   const lines = content.trimEnd().split('\n');
   const count = opts.lines || 40;
@@ -436,7 +481,7 @@ async function main() {
       await startService(opts);
       break;
     case 'status':
-      await statusService();
+      await statusService(opts);
       break;
     case 'logs':
       await logsService(opts);
@@ -444,10 +489,10 @@ async function main() {
     default:
       console.log(`Использование:
   node scripts/worker-service.mjs start [--workspace default] [--local]
-  node scripts/worker-service.mjs stop
-  node scripts/worker-service.mjs restart
+  node scripts/worker-service.mjs stop [--workspace default]
+  node scripts/worker-service.mjs restart [--workspace default]
   node scripts/worker-service.mjs status
-  node scripts/worker-service.mjs logs [--lines 50] [-f]
+  node scripts/worker-service.mjs logs [--workspace default] [--lines 50] [-f]
 `);
   }
 }

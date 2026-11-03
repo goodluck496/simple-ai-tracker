@@ -48,6 +48,7 @@ Done in 12.3s
       connections: [
         {
           id: 'conn-ollama',
+          label: 'Ollama',
           kind: ProviderKind.Ollama,
           baseUrl: 'http://localhost:11434',
           isLocal: true,
@@ -103,6 +104,7 @@ Done in 12.3s
       connections: [
         {
           id: 'conn-ollama',
+          label: 'Ollama',
           kind: ProviderKind.Ollama,
           baseUrl: 'http://localhost:11434',
           isLocal: true,

@@ -45,3 +45,19 @@ test('history, cleanup acknowledgement, discard and permanent delete preserve th
     assert.equal(app.taskService.getTaskCard(task.id).title, 'Cleanup fixture');
   } finally { app.close(); }
 });
+
+test('force delete removes a run even when cleanup is failed or uncompleted', () => {
+  const app = createContainer({ config: { dbPath: ':memory:' }, logger: new SilentLogger() });
+  try {
+    const service = app.automationService;
+    service.configure({ ...structuredClone(DEFAULT_AUTOMATION_SETTINGS), repositoryPath: '/fixture', connections: [{ id: 'n', label: 'Native', kind: 'native', supportsImages: false }],
+      agents: STANDARD_TEAM_ROLES.map(role => ({ id: role, role, runner: 'codex', connectionId: 'n', model: 'fixture', instructions: '' })), pipeline: [...STANDARD_TEAM_ROLES], checks: [{ command: 'npm', args: ['test'] }] });
+    const task = app.taskService.createTask({ title: 'Force delete fixture' });
+    const run = service.enqueue(task.id); const owned = service.claim('worker')!;
+    service.checkout(run.id, owned.leaseToken!, { repositoryRoot: '/fixture', worktreePath: `/work/.sat-worktrees/project/test/${run.id}`, baseSha: 'a'.repeat(40), dependencyMode: 'isolated' });
+    service.fail(run.id, owned.leaseToken!, 'fixture failure');
+    assert.throws(() => service.deleteRun(run.id), /Сначала очистите/);
+    service.deleteRun(run.id, true);
+    assert.equal(service.queue(true, task.id).items.length, 0);
+  } finally { app.close(); }
+});

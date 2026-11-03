@@ -552,11 +552,19 @@ export class AutomationService {
       if (!failure) this.runs.archive(run.id, this.clock.now());
     });
   }
-  public deleteRun(id: string): void {
+  public deleteRun(id: string, force = false): void {
     this.runs.db.transaction(() => {
       const run = this.runs.get(id); if (!run) return;
       if (ACTIVE_RUN_STATUSES.includes(run.status)) throw new TrackerError('CONFLICT', 'Активный запуск нельзя удалить.');
-      if ((run.checkout || run.attemptStartedAt) && run.cleanup?.state !== 'completed') throw new TrackerError('CONFLICT', 'Сначала очистите рабочую копию. История пока сохранена.');
+      if (!force && (run.checkout || run.attemptStartedAt) && run.cleanup?.state !== 'completed') throw new TrackerError('CONFLICT', 'Сначала очистите рабочую копию. История пока сохранена.');
+      if (run.cleanup?.requestId) {
+        try {
+          const req = this.projects.get(run.cleanup.requestId);
+          if (req && (req.status === 'queued' || req.status === 'running')) {
+            this.projects.complete(run.cleanup.requestId, req.token ?? '', undefined, 'Запуск удален пользователем.');
+          }
+        } catch {}
+      }
       const retained = run.cleanup?.result?.retainedBranches ?? [];
       this.tasks.addComment({ id: run.taskId, text: `История запуска ${id} удалена пользователем. Карточка и отчёты сохранены.${retained.length ? ` Сохранённые ветки: ${retained.join(', ')}.` : ''}`, kind: 'note', actor: 'agent' });
       this.runs.delete(id);

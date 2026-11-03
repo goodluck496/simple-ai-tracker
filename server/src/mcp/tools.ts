@@ -416,7 +416,7 @@ export class TrackerToolRegistry {
         case AutomationTool.History: return json(service.queue(true, asString(args, 'taskId')));
         case AutomationTool.Archive: service.hide(id()); return json({ ok: true });
         case AutomationTool.Cleanup: return json(service.cleanup(id(), (args['result'] as { discard?: boolean } | undefined)?.discard === true));
-        case AutomationTool.Delete: service.deleteRun(id()); return json({ ok: true });
+        case AutomationTool.Delete: service.deleteRun(id(), asBoolean(args, 'force')); return json({ ok: true });
         case AutomationTool.Enqueue: return json(service.enqueue(requireString(args, 'taskId'), args['settings'], false));
         case AutomationTool.EnqueueBatch: return json({ runs: service.enqueueBatch(args['taskIds'], args['settings'], args['requestId']) });
         case AutomationTool.ExtendBudget: return json(service.extendBudget(id(), args['settings']));

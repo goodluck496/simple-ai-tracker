@@ -5,14 +5,26 @@ export interface RunTimestamps {
   finishedAt?: string;
 }
 
+const formatters = new Map<string, Intl.DateTimeFormat>();
+
+function getFormatter(locale?: string, timeZone?: string): Intl.DateTimeFormat {
+  const key = `${locale ?? ''}_${timeZone ?? ''}`;
+  let formatter = formatters.get(key);
+  if (!formatter) {
+    formatter = new Intl.DateTimeFormat(locale, {
+      year: 'numeric', month: 'short', day: 'numeric',
+      hour: '2-digit', minute: '2-digit', second: '2-digit', timeZoneName: 'short', timeZone,
+    });
+    formatters.set(key, formatter);
+  }
+  return formatter;
+}
+
 export function formatQueueDate(value: string | undefined, locale?: string, timeZone?: string): string {
   if (!value) return 'Неизвестно';
   const timestamp = Date.parse(value);
   if (!Number.isFinite(timestamp)) return 'Неизвестно';
-  return new Intl.DateTimeFormat(locale, {
-    year: 'numeric', month: 'short', day: 'numeric',
-    hour: '2-digit', minute: '2-digit', second: '2-digit', timeZoneName: 'short', timeZone,
-  }).format(timestamp);
+  return getFormatter(locale, timeZone).format(timestamp);
 }
 
 function latestRunTimestamp(run: RunTimestamps): number | null {

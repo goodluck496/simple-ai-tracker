@@ -29,6 +29,7 @@ import { WorkspaceService } from '../../services/workspace.service';
         [showClear]="false"
         pTooltip="Пространство задач"
         tooltipPosition="bottom"
+        appendTo="body"
       ></p-select>
 
       <p-button
@@ -108,11 +109,16 @@ import { WorkspaceService } from '../../services/workspace.service';
       display: flex;
       align-items: center;
       gap: 0.35rem;
+      width: 100%;
+      min-width: 0;
+      box-sizing: border-box;
     }
 
     .workspace-select {
-      min-width: 140px;
-      max-width: 200px;
+      flex: 1 1 auto;
+      min-width: 0;
+      width: 100%;
+      max-width: 160px;
     }
 
     .ws-create-overlay {

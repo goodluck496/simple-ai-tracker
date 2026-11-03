@@ -143,6 +143,7 @@
           [ngModel]="typeFilter()"
           (ngModelChange)="onTypeChange($event)"
           [showClear]="true"
+          appendTo="body"
         ></p-select>
 
         <label class="sidebar-field-label">Родительская фича</label>
@@ -155,6 +156,7 @@
           [ngModel]="featureFilter()"
           (ngModelChange)="onFeatureChange($event)"
           [showClear]="true"
+          appendTo="body"
           [filter]="true"
           filterBy="label"
         ></p-select>

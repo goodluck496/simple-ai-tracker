@@ -11,7 +11,7 @@
     @if (!follow()) { Автопрокрутка приостановлена. }
   </p>
   @if (view().incomplete) { <p role="status">Получена часть структурированной записи; ожидается продолжение.</p> }
-  <div #viewport class="terminal" role="log" aria-label="Вывод выполнения" tabindex="0" (scroll)="scroll()">
+  <div #viewport class="terminal" role="log" aria-label="Вывод выполнения" tabindex="0">
     @for (line of rows(); track line.id) {
       <div class="line" [attr.data-level]="line.level"><time>{{ line.at | date:'HH:mm:ss' }}</time><span class="stage">{{ line.stage }}</span><span class="level">{{ line.level }}</span><pre>{{ line.text }}</pre></div>
     } @empty { <p>Нет строк для выбранного фильтра. Запуск может ожидать worker.</p> }

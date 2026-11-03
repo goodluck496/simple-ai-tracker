@@ -187,8 +187,11 @@
             @if (confirmAction === 'cleanup' && item.status !== runStatus.Merged && (detail()?.run?.checkout || item.attemptStartedAt)) {
               <label class="confirm-discard"><p-checkbox inputId="discard-run" [(ngModel)]="discard" [binary]="true" /> Подтверждаю удаление неперенесённого кода этого запуска</label>
             }
+            @if (confirmAction === 'delete' && (detail()?.run?.checkout || item.attemptStartedAt) && item.cleanup?.state !== 'completed') {
+              <label class="confirm-discard"><p-checkbox inputId="discard-run" [(ngModel)]="discard" [binary]="true" /> Подтверждаю принудительное удаление (рабочая копия не очищена)</label>
+            }
             <div class="confirm-buttons">
-              <button pButton severity="danger" size="small" [disabled]="busy() || confirmAction === 'cleanup' && item.status !== runStatus.Merged && (!!detail()?.run?.checkout || !!item.attemptStartedAt) && !discard" (click)="confirm(item)">Подтвердить</button>
+              <button pButton severity="danger" size="small" [disabled]="busy() || (confirmAction === 'cleanup' && item.status !== runStatus.Merged && (!!detail()?.run?.checkout || !!item.attemptStartedAt) && !discard) || (confirmAction === 'delete' && item.cleanup?.state !== 'completed' && (!!detail()?.run?.checkout || !!item.attemptStartedAt) && !discard)" (click)="confirm(item)">Подтвердить</button>
               <button pButton severity="secondary" size="small" (click)="confirmation.set(null)">Отмена</button>
             </div>
           </section>
@@ -462,7 +465,7 @@
               @if (item.cleanup?.state !== 'completed') {
                 <button pButton severity="secondary" size="small" type="button" icon="pi pi-broom" [disabled]="busy() || item.cleanup?.state === 'queued'" (click)="requestConfirmation('cleanup')">Очистить файлы</button>
               }
-              <button pButton severity="danger" size="small" type="button" icon="pi pi-trash" [disabled]="busy() || (!!detail()?.run?.checkout || !!item.attemptStartedAt) && item.cleanup?.state !== 'completed'" (click)="requestConfirmation('delete')">Удалить запуск навсегда</button>
+              <button pButton severity="danger" size="small" type="button" icon="pi pi-trash" [disabled]="busy() || (!!detail()?.run?.checkout || !!item.attemptStartedAt) && item.cleanup?.state !== 'completed' && item.cleanup?.state !== 'failed'" (click)="requestConfirmation('delete')">Удалить запуск навсегда</button>
             </div>
           }
           @if (item.cleanup; as cleanup) {

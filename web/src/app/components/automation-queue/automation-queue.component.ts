@@ -105,10 +105,23 @@ export class AutomationQueueComponent {
       catchError((error: unknown) => { this.error.set(this.message(error)); return of(null); }),
     ) : of(null)),
   ), { initialValue: null });
-  public items(lane: QueueLane): QueueItem[] {
-    const items = this.snapshot().items.filter(item => QueuePresentation.lane(item) === lane);
-    return filterQueueItems(this.historyMode() ? sortRunHistory(items) : items, this.search());
-  }
+  public readonly laneItems = computed(() => {
+    const raw = this.snapshot().items;
+    const history = this.historyMode();
+    const search = this.search();
+    const sorted = history ? sortRunHistory(raw) : raw;
+    const filtered = filterQueueItems(sorted, search);
+    const map = new Map<QueueLane, QueueItem[]>();
+    for (const lane of this.lanes) {
+      map.set(lane.id, []);
+    }
+    for (const item of filtered) {
+      const lane = QueuePresentation.lane(item);
+      map.get(lane)?.push(item);
+    }
+    return map;
+  });
+  public items(lane: QueueLane): QueueItem[] { return this.laneItems().get(lane) ?? []; }
   public archivedItems(): AgentRun[] { return sortRunHistory(this.archived() ?? []); }
   public timestamp(value: string | undefined): string { return formatQueueDate(value); }
   public total(lane: QueueLane): number { return this.snapshot().items.filter((item) => QueuePresentation.lane(item) === lane).length; }
@@ -185,7 +198,8 @@ export class AutomationQueueComponent {
   public confirm(item: QueueItem): void {
     const action = this.confirmation(); if (!action || this.busy()) return;
     this.busy.set(true); this.error.set('');
-    this.http.post(`/api/automation/runs/${item.id}/${action}`, { discard: this.discard }).pipe(finalize(() => this.busy.set(false)), takeUntilDestroyed(this.destroyRef)).subscribe({
+    const body = action === 'delete' ? { force: this.discard || item.cleanup?.state === 'failed' } : { discard: this.discard };
+    this.http.post(`/api/automation/runs/${item.id}/${action}`, body).pipe(finalize(() => this.busy.set(false)), takeUntilDestroyed(this.destroyRef)).subscribe({
       next: () => { this.confirmation.set(null); if (action === 'delete') { this.selectedId.set(null); this.selectedCache.set(undefined); } this.refresh.next(); this.changed.emit(); },
       error: (error: unknown) => this.error.set(this.message(error)),
     });
