@@ -2,7 +2,6 @@ import { CommonModule } from '@angular/common';
 import { ChangeDetectionStrategy, Component, computed, inject, model, output } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { ButtonModule } from 'primeng/button';
-import { DrawerModule } from 'primeng/drawer';
 import { SelectModule } from 'primeng/select';
 import { TooltipModule } from 'primeng/tooltip';
 import type { TaskType } from '../../models/tracker.models';
@@ -19,7 +18,6 @@ interface FilterOption<T> {
   standalone: true,
   imports: [
     CommonModule,
-    DrawerModule,
     ButtonModule,
     TooltipModule,
     WorkspaceSelectorComponent,
@@ -33,7 +31,7 @@ interface FilterOption<T> {
 export class SidebarComponent {
   public readonly store = inject(TrackerStore);
 
-  public readonly visible = model<boolean>(false);
+  public readonly isExpanded = model<boolean>(true);
 
   public readonly openQueue = output<string | null>();
   public readonly openAutomation = output<void>();
@@ -72,32 +70,26 @@ export class SidebarComponent {
   }
 
   public onOpenQueue(): void {
-    this.visible.set(false);
     this.openQueue.emit(null);
   }
 
   public onOpenAutomation(): void {
-    this.visible.set(false);
     this.openAutomation.emit();
   }
 
   public onOpenBatchAutomation(): void {
-    this.visible.set(false);
     this.openBatchAutomation.emit();
   }
 
   public onShowTags(): void {
-    this.visible.set(false);
     this.showTags.emit(true);
   }
 
   public onShowBackups(): void {
-    this.visible.set(false);
     this.showBackups.emit(true);
   }
 
   public onShowInstructions(): void {
-    this.visible.set(false);
     this.showInstructions.emit(true);
   }
 }

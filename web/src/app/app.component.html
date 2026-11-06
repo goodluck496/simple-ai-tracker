@@ -1,19 +1,7 @@
 <div class="tracker-layout">
-  <!-- Шапка: бургер, бренд, поиск с фильтром тегов, создание задачи -->
+  <!-- Шапка: бренд, поиск с фильтром тегов, создание задачи -->
   <header class="tracker-header">
     <div class="header-left">
-      <p-button
-        icon="pi pi-bars"
-        severity="secondary"
-        [text]="true"
-        [rounded]="true"
-        size="small"
-        ariaLabel="Меню"
-        pTooltip="Меню"
-        tooltipPosition="bottom"
-        (onClick)="sidebarOpen.set(true)"
-      />
-
       <div class="brand">
         <!-- Статус связи с сервером — зелёная точка прямо на логотипе -->
         <span
@@ -79,16 +67,28 @@
     </div>
   </header>
 
-  <!-- Сайдбар приложения -->
-  <sat-sidebar
-    [(visible)]="sidebarOpen"
-    (openQueue)="openQueue($event)"
-    (openAutomation)="openAutomation()"
-    (openBatchAutomation)="openBatchAutomation()"
-    (showTags)="showTags.set($event)"
-    (showBackups)="showBackups.set($event)"
-    (showInstructions)="showInstructions.set($event)"
-  />
+  <div class="content-area">
+    <!-- Сайдбар приложения -->
+    <sat-sidebar
+      [(isExpanded)]="sidebarOpen"
+      (openQueue)="openQueue($event)"
+      (openAutomation)="openAutomation()"
+      (openBatchAutomation)="openBatchAutomation()"
+      (showTags)="showTags.set($event)"
+      (showBackups)="showBackups.set($event)"
+      (showInstructions)="showInstructions.set($event)"
+    />
+
+    <!-- Канбан-доска -->
+    <main class="board-wrapper">
+      <sat-board
+        [automationPending]="automationLauncher.pending()" (startRequested)="launchTask($event)"
+        (addRequested)="onQuickAdd($event.status)"
+        (addSubtaskRequested)="onAddSubtask($event)"
+        (deleteRequested)="onDeleteTask($event.id)"
+      />
+    </main>
+  </div>
 
   <!-- Полоса загрузки: тонкая, ровно под шапкой, не сдвигает доску -->
   <div class="load-bar" [class.load-bar--active]="showProgress()" aria-hidden="true">
@@ -100,16 +100,6 @@
   @if (store.error(); as error) {
     <div class="app-error">{{ error }}</div>
   }
-
-  <!-- Канбан-доска -->
-  <main class="board-wrapper">
-    <sat-board
-      [automationPending]="automationLauncher.pending()" (startRequested)="launchTask($event)"
-      (addRequested)="onQuickAdd($event.status)"
-      (addSubtaskRequested)="onAddSubtask($event)"
-      (deleteRequested)="onDeleteTask($event.id)"
-    />
-  </main>
 
   <!-- Боковая карточка задачи -->
   @if (store.openTask(); as card) {

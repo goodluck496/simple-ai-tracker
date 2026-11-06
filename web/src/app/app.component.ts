@@ -55,7 +55,7 @@ export class AppComponent implements OnInit {
   private readonly destroyRef = inject(DestroyRef);
   public readonly store = inject(TrackerStore);
 
-  public readonly sidebarOpen = signal(false);
+  public readonly sidebarOpen = signal(true);
 
   public readonly showTags = signal(false);
   public readonly showBackups = signal(false);
@@ -64,10 +64,6 @@ export class AppComponent implements OnInit {
   public automationTaskId: string | null = null;
   public automationMessage = '';
   public automationBatch = false;
-
-  public toggleSidebar(): void {
-    this.sidebarOpen.update((v) => !v);
-  }
 
   public openAutomation(taskId: string | null = null, message = ''): void {
     this.automationBatch = false;

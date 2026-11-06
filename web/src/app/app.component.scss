@@ -16,6 +16,13 @@
   color: var(--sat-text);
 }
 
+.content-area {
+  display: flex;
+  flex-direction: row;
+  flex: 1;
+  overflow: hidden;
+}
+
 /* ------------------------------------------------------------------ шапка */
 
 /* Полоса загрузки под шапкой: занимает 3px всегда, чтобы доска не прыгала */
@@ -201,8 +208,8 @@
 }
 
 .board-wrapper {
-  flex: 1 1 auto;
-  min-height: 0;
+  flex: 1;
+  min-width: 0;
   display: flex;
   overflow: hidden;
   position: relative;

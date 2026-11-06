@@ -1,29 +1,28 @@
-<p-drawer
-  [(visible)]="visible"
-  position="left"
-  [modal]="true"
-  [dismissible]="true"
-  styleClass="sat-sidebar-drawer"
->
-  <ng-template #header>
-    <div class="sidebar-header">
-      <div class="sidebar-brand">
-        <span
-          class="sidebar-logo"
-          [pTooltip]="store.online() ? 'Сервер на связи' : 'Нет связи с сервером'"
-          tooltipPosition="bottom"
-          [attr.aria-label]="store.online() ? 'Сервер на связи' : 'Нет связи с сервером'"
-        >
-          <i class="pi pi-compass sidebar-brand-icon" aria-hidden="true"></i>
-          <span class="sidebar-brand-dot" [class.sidebar-brand-dot--offline]="!store.online()"></span>
-        </span>
-        <div class="sidebar-brand-text">
-          <span class="sidebar-title">Simple AI Tracker</span>
-          <span class="sidebar-subtitle">Kanban &amp; MCP hub</span>
-        </div>
+<aside class="sat-sidebar" [class.is-expanded]="isExpanded()">
+  <div class="sidebar-header">
+    <div class="sidebar-brand">
+      <span
+        class="sidebar-logo"
+        [pTooltip]="store.online() ? 'Сервер на связи' : 'Нет связи с сервером'"
+        tooltipPosition="bottom"
+        [attr.aria-label]="store.online() ? 'Сервер на связи' : 'Нет связи с сервером'"
+      >
+        <i class="pi pi-compass sidebar-brand-icon" aria-hidden="true"></i>
+        <span class="sidebar-brand-dot" [class.sidebar-brand-dot--offline]="!store.online()"></span>
+      </span>
+      <div class="sidebar-brand-text">
+        <span class="sidebar-title">Simple AI Tracker</span>
+        <span class="sidebar-subtitle">Kanban &amp; MCP hub</span>
       </div>
     </div>
-  </ng-template>
+    <button
+      pButton
+      icon="pi pi-bars"
+      class="sidebar-toggle-btn"
+      [attr.aria-label]="isExpanded() ? 'Свернуть' : 'Развернуть'"
+      (click)="isExpanded.set(!isExpanded())"
+    ></button>
+  </div>
 
   <div class="sidebar-content">
     <!-- Рабочее пространство -->
@@ -46,7 +45,7 @@
           (click)="onOpenQueue()"
         >
           <i class="pi pi-list"></i>
-          <span>Очередь задач</span>
+          <span class="sidebar-text">Очередь задач</span>
         </button>
 
         <button
@@ -57,7 +56,7 @@
           (click)="onOpenAutomation()"
         >
           <i class="pi pi-bolt"></i>
-          <span>Команда агентов</span>
+          <span class="sidebar-text">Команда агентов</span>
         </button>
 
         <button
@@ -68,7 +67,7 @@
           (click)="onOpenBatchAutomation()"
         >
           <i class="pi pi-send"></i>
-          <span>Группа задач</span>
+          <span class="sidebar-text">Группа задач</span>
         </button>
       </div>
     </div>
@@ -85,7 +84,7 @@
           (click)="onShowTags()"
         >
           <i class="pi pi-tags"></i>
-          <span>Реестр тегов</span>
+          <span class="sidebar-text">Реестр тегов</span>
         </button>
 
         <button
@@ -96,7 +95,7 @@
           (click)="onShowBackups()"
         >
           <i class="pi pi-cloud-download"></i>
-          <span>Бэкапы базы</span>
+          <span class="sidebar-text">Бэкапы базы</span>
         </button>
 
         <button
@@ -107,7 +106,7 @@
           (click)="onShowInstructions()"
         >
           <i class="pi pi-question-circle"></i>
-          <span>Инструкция для ИИ-агента</span>
+          <span class="sidebar-text">Инструкция для ИИ-агента</span>
         </button>
       </div>
     </div>
@@ -127,7 +126,7 @@
             (click)="resetBoardFilters()"
           >
             <i class="pi pi-filter-slash"></i>
-            <span>Сбросить</span>
+            <span class="sidebar-text">Сбросить</span>
           </button>
         }
       </div>
@@ -164,21 +163,19 @@
     </div>
   </div>
 
-  <ng-template #footer>
-    <div class="sidebar-footer">
-      <form action="api/auth/logout" method="post" class="sidebar-logout-form">
-        <button
-          pButton
-          type="submit"
-          severity="danger"
-          [text]="true"
-          class="sidebar-logout-btn"
-          ariaLabel="Выйти из системы"
-        >
-          <i class="pi pi-sign-out"></i>
-          <span>Выйти</span>
-        </button>
-      </form>
-    </div>
-  </ng-template>
-</p-drawer>
+  <div class="sidebar-footer">
+    <form action="api/auth/logout" method="post" class="sidebar-logout-form">
+      <button
+        pButton
+        type="submit"
+        severity="danger"
+        [text]="true"
+        class="sidebar-logout-btn"
+        ariaLabel="Выйти из системы"
+      >
+        <i class="pi pi-sign-out"></i>
+        <span class="sidebar-text">Выйти</span>
+      </button>
+    </form>
+  </div>
+</aside>
