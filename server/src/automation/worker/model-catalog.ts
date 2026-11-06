@@ -13,7 +13,17 @@ export class WorkerModelCatalog {
   public async list(input: ModelCatalogInput): Promise<ModelOption[]> {
     let rows: unknown; let idField: string; let labelField: string;
     if (input.connection.kind === ProviderKind.Native) {
-      if (input.runner === RunnerId.Antigravity) {
+      if (input.runner === RunnerId.OpenCode) {
+        let output: string;
+        try { output = await this.executor.run({ command: RunnerId.OpenCode, args: ['models'], cwd: os.homedir(),
+          signal: AbortSignal.timeout(MODEL_CATALOG_LIMITS.timeoutMs), maxOutputChars: MODEL_CATALOG_LIMITS.maxBytes }); }
+        catch { throw new Error('Не удалось получить каталог OpenCode. Проверьте команду opencode models и настройки провайдеров на компьютере worker.'); }
+        const models = output.split(/\r?\n/).map(line => line.trim())
+          .filter(line => /^[\w.-]+\/[\w./:@-]+$/.test(line)).map(id => ({ id }));
+        if (!models.length) throw new Error('OpenCode не вернул модели в формате provider/model. Проверьте настройки провайдеров на компьютере worker.');
+        rows = models;
+        idField = 'id'; labelField = 'id';
+      } else if (input.runner === RunnerId.Antigravity) {
         let output: string;
         try { output = await this.executor.run({ command: NativeExecutable.antigravity(this.environment), args: ['models'], cwd: os.homedir(),
           signal: AbortSignal.timeout(MODEL_CATALOG_LIMITS.timeoutMs), maxOutputChars: MODEL_CATALOG_LIMITS.maxBytes }); }

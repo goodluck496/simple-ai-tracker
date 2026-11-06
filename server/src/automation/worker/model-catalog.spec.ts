@@ -13,6 +13,19 @@ import os from 'node:os';
 import { NativeExecutable } from '../runners/native-executable.js';
 
 const native: ModelConnection = { id: 'native', label: 'Codex', kind: ProviderKind.Native, supportsImages: false };
+test('OpenCode discovery preserves provider-qualified local model IDs', async () => {
+  class Fixture extends ProcessExecutor {
+    public override async run(request: ProcessRequest): Promise<string> {
+      assert.equal(request.command, RunnerId.OpenCode);
+      assert.deepEqual(request.args, ['models']);
+      return 'Loading models...\r\nollama/qwen3:8b\r\nollama/qwen3:8b\r\nollama/user/model:tag\r\n';
+    }
+  }
+  assert.deepEqual(await new WorkerModelCatalog(new Fixture()).list({ connection: native, runner: RunnerId.OpenCode }), [
+    { id: 'ollama/qwen3:8b', label: 'ollama/qwen3:8b' },
+    { id: 'ollama/user/model:tag', label: 'ollama/user/model:tag' },
+  ]);
+});
 test('Antigravity 1.4.8 catalog uses its installed executable without inference and preserves exact TSV slugs', async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'sat-agy-catalog-'));
   try {
