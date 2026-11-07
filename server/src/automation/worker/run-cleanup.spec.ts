@@ -50,9 +50,11 @@ test('cleanup fences paths, unmerged/dirty state and removes junctions without f
     await git(['worktree', 'add', '-b', automatic.branch, automatic.directory]);
     const integrationBranch = 'sat-integration/merged-fixture-1';
     await git(['worktree', 'add', '-b', integrationBranch, `${automatic.directory}-integration-1`]);
+    await git(['branch', 'sat-integration/merged-fixture-2', sourceSha]);
     const done = await cleanup.execute({ ...spec, runId: 'merged-fixture', directory: automatic.directory, merged: true, candidateSha: sourceSha }, signal);
     assert.ok(done.branches.includes(automatic.branch), 'Verified merged source branches are removed without discard');
     assert.ok(done.branches.includes(integrationBranch), 'Verified integration branches are removed too');
+    assert.ok(done.branches.includes('sat-integration/merged-fixture-2'), 'Retry removes a published integration branch after its worktree is gone');
   } finally { await fs.rm(temporary, { recursive: true, force: true }); }
 });
 

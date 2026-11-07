@@ -8,7 +8,8 @@ import { RunLogDownload } from '../../automation/run-log-download.js';
 
 export function registerAutomationRoutes(router: Router, app: AppContainer): void {
   router.get('/api/automation/tasks/:id/preview-patch', ({ params, res }) =>
-    sendJson(res, 200, { active: app.automationService.previewPatchActive(params.id), canResumeRework: app.automationService.canResumeRework(params.id) }));
+    sendJson(res, 200, { active: app.automationService.previewPatchActive(params.id), canResumeRework: app.automationService.canResumeRework(params.id),
+      acceptance: app.automationService.acceptanceState(params.id) }));
   router.post('/api/automation/tasks/:id/preview-patch', ({ params, body, res }) =>
     sendJson(res, 201, app.automationService.requestPreviewPatch(params.id, bodyField(body, 'rollback') === true)));
   router.post('/api/automation/runs/:id/diff', ({ params, body, res }) =>

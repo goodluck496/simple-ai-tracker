@@ -43,6 +43,8 @@ import { TooltipModule } from 'primeng/tooltip';
 import { escapeHtml, renderMarkdown } from '../../shared/markdown';
 import { TrackerStore } from '../../services/tracker-store.service';
 import { TrackerApiService } from '../../services/tracker-api.service';
+import { EMPTY, catchError, exhaustMap, timer } from 'rxjs';
+import type { RunStatus } from '../../../../../shared/automation/contracts';
 import { formatBytes, formatDateTime, formatRelative } from '../../shared/format';
 import { PlanViewerComponent } from '../plan-viewer/plan-viewer.component';
 import { DecisionLogComponent } from '../decision-log/decision-log.component';
@@ -149,6 +151,7 @@ export class TaskDialogComponent {
   public readonly commentUploading = signal(false);
   public readonly hasCommentDraft = computed(() => !!this.commentDraft().trim() || this.commentImages().length > 0);
   public readonly stoppedRework = signal(false);
+  public readonly acceptance = signal<{ status: RunStatus; summary: string } | null>(null);
   private readonly api = inject(TrackerApiService);
   public readonly patchNotice = signal('');
   private readonly commentImagePattern = /^\[скриншот\] (\/api\/images\/[a-z0-9]{8,64}\.(?:png|jpg|webp|gif)(?:\?workspace=[\w%-]+)?)$/;
@@ -186,6 +189,18 @@ export class TaskDialogComponent {
   private readonly lastSyncedTaskId = signal<string | null>(null);
 
   public constructor() {
+    effect(onCleanup => {
+      const card = this.task();
+      if (card?.status !== 'review' || this.tab() !== 'discussion') return;
+      const request = timer(0, 2000).pipe(exhaustMap(() => this.api.previewPatchActive(card.id).pipe(catchError(() => EMPTY)))).subscribe(state => {
+        this.acceptance.set(state.acceptance ?? null);
+        if (state.acceptance?.status === 'merged') void this.store.reloadOpenCard().then(() => {
+          const current = this.task();
+          if (current?.id === card.id) this.status.set(current.status);
+        });
+      });
+      onCleanup(() => request.unsubscribe());
+    });
     effect(onCleanup => {
       const card = this.task();
       this.stoppedRework.set(false);
@@ -436,8 +451,10 @@ export class TaskDialogComponent {
 
   public async acceptAutomation(): Promise<void> {
     const card = this.task();
-    if (card?.status === 'review' && await this.store.reviewAutomation(card.id, 'accept') && this.task()?.id === card.id) {
+    if (card?.status === 'review' && !this.acceptance() && !this.store.busy()
+      && await this.store.reviewAutomation(card.id, 'accept') && this.task()?.id === card.id) {
       this.status.set(this.task()!.status);
+      if (this.task()!.status === 'review' && !this.acceptance()) this.acceptance.set({ status: 'queued', summary: 'Слияние поставлено в очередь.' });
     }
   }
   public async previewPatch(rollback: boolean): Promise<void> {
@@ -734,6 +751,7 @@ export class TaskDialogComponent {
     const sameCard = this.lastSyncedTaskId() === card.id;
     this.lastSyncedTaskId.set(card.id);
     if (sameCard) return;
+    this.acceptance.set(null);
 
     this.title.set(card.title);
     this.description.set(card.description);

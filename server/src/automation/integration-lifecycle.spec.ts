@@ -78,6 +78,7 @@ test('integration keeps its lease, fences publication cancellation and acknowled
     assert.throws(() => f.service.beginStage(f.run.id, f.token, true), /budget/);
     f.service.merged(f.run.id, f.token);
     assert.equal(f.service.detail(f.run.id).run.status, 'merged');
+    assert.equal(f.service.detail(f.run.id).run.cleanup?.state, 'queued');
     assert.equal(f.service.detail(f.run.id).run.finishedAt, '2026-10-27T00:01:05.000Z');
     assert.ok(f.service.detail(f.run.id).run.summary.includes(info.candidateSha), 'Final summary must describe publication instead of a stale interruption');
     assert.equal(f.app.taskService.getTaskCard(f.task.id).status, 'done');

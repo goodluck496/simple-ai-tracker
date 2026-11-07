@@ -331,14 +331,23 @@
                         <h4>Приёмка задачи</h4>
                         <div class="review-action-row">
                           <p-button label="Накатить патч" icon="pi pi-file-edit" severity="secondary" size="small"
-                            [disabled]="store.busy()" (onClick)="previewPatch(false)" />
+                            [disabled]="store.busy() || !!acceptance()" (onClick)="previewPatch(false)" />
                           <p-button label="Откатить патч" icon="pi pi-undo" severity="secondary" size="small"
-                            [disabled]="store.busy()" (onClick)="previewPatch(true)" />
+                            [disabled]="store.busy() || !!acceptance()" (onClick)="previewPatch(true)" />
                           <p-button label="Отправить замечание и вернуть" icon="pi pi-replay" severity="secondary" size="small"
-                            [disabled]="store.busy() || commentUploading()" (onClick)="returnWithFeedback(reviewFeedbackInput)" />
-                          <p-button label="Принять и слить" icon="pi pi-check" severity="success" size="small"
-                            [disabled]="store.busy()" (onClick)="acceptAutomation()" />
+                            [disabled]="store.busy() || commentUploading() || !!acceptance()" (onClick)="returnWithFeedback(reviewFeedbackInput)" />
+                          <p-button [label]="acceptance()?.status === 'queued' ? 'Слияние в очереди' : acceptance()?.status === 'integrating' ? 'Выполняется слияние' : 'Принять и слить'"
+                            icon="pi pi-check" severity="success" size="small"
+                            [disabled]="store.busy() || !!acceptance()" (onClick)="acceptAutomation()" />
                         </div>
+                        @if (acceptance(); as merge) {
+                          <p class="subform-hint" role="status">
+                            {{ merge.status === 'integrating' ? 'Воркер проверяет и сливает изменения.' : merge.summary }}
+                            @if (merge.status === 'merge_blocked' || merge.status === 'failed' || merge.status === 'interrupted') {
+                              Откройте журнал запуска, чтобы увидеть причину и продолжить слияние.
+                            }
+                          </p>
+                        }
                       </section>
                     }
                     @if (stoppedRework()) {

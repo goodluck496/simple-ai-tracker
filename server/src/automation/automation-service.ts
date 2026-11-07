@@ -629,6 +629,11 @@ export class AutomationService {
     const run = this.runs.list(taskId)[0];
     return !!run && this.projects.hasPreviewPatch(run.id);
   }
+  public acceptanceState(taskId: string): { status: RunStatus; summary: string } | null {
+    const run = this.runs.list(taskId)[0];
+    return run?.acceptedSha && run.acceptedSha === run.commitSha
+      ? { status: run.status, summary: run.summary } : null;
+  }
   public canResumeRework(taskId: string): boolean {
     const task = this.tasks.getTaskCard(taskId);
     const run = this.runs.list(taskId)[0];
@@ -721,7 +726,7 @@ export class AutomationService {
     });
   }
   public merged(id: string, token: string): void {
-    return this.runs.db.transaction(() => {
+    this.runs.db.transaction(() => {
     const run = this.requireRun(id);
     this.owned(id, token);
     if (run.status !== RunStatus.Integrating || run.integration?.state !== 'publishing') throw new TrackerError('CONFLICT', 'Merge publication is not owned by this worker.');

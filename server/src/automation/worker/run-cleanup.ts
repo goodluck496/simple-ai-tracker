@@ -69,7 +69,8 @@ export class RunCleanup {
       const recover = async (entry: Entry) => {
         if (entries.some(e => same(e.directory, entry.directory))) return;
         const root = await fs.realpath(entry.directory);
-        if (!spec.discard || !same(root, entry.directory) || same(root, location.root) || (await fs.lstat(root)).isSymbolicLink())
+        const empty = (await fs.readdir(root)).length === 0;
+        if ((!spec.discard && !empty) || !same(root, entry.directory) || same(root, location.root) || (await fs.lstat(root)).isSymbolicLink())
           throw new Error('Unregistered worktree retained; explicit discard and verified identity required.');
         try { await fs.lstat(path.join(root, '.git')); throw new Error('Unregistered worktree still has Git identity; retained.'); }
         catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
@@ -123,7 +124,13 @@ export class RunCleanup {
       for (const line of branches) {
         const [branch, sha] = line.trim().split(' ');
         const base = bases.find(b => b.branch === branch);
-        const integration = [...owned, ...orphans].some(e => e.branch === branch && branch.startsWith('sat-integration/'));
+        const integration = [...owned, ...orphans].some(e => e.branch === branch && branch.startsWith('sat-integration/'))
+          || spec.merged && bases.some(entry => {
+            const prefix = `sat-integration/${entry.integration}-`;
+            const suffix = branch.slice(prefix.length);
+            return branch.startsWith(prefix) && entry.published === sha
+              && (entry.integration === spec.runId ? /^\d+$/.test(suffix) : /^r\d+-\d+$/.test(suffix));
+          });
         if (!base && !integration) continue;
         const publication = [...bases].sort((a, b) => b.integration.length - a.integration.length).find(b => branch.startsWith(`sat-integration/${b.integration}-`))?.published;
         if (!spec.discard && !base && sha !== publication) { result.retainedBranches.push(branch); continue; }
