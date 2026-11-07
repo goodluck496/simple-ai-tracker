@@ -217,12 +217,56 @@
               @if (resumeBudgetBlocked(item)) { <span>Продолжение недоступно: бюджет исчерпан.</span> }
               @if (item.canResume) {
                 <button pButton severity="secondary" size="small" (click)="showDetails.set(true); editBudget(run)">Изменить бюджет запуска</button>
+                @if (item.status === runStatus.Failed && run.stage < run.settings.pipeline.length && !resumeBudgetBlocked(item)) {
+                  <button pButton severity="secondary" size="small" [disabled]="replacementLoading()" (click)="chooseReplacement(run)">Сменить модель</button>
+                  @if (replacement(); as choice) {
+                    @if (choice.runId === run.id) {
+                      @if (choice.options.length) {
+                        <p-select ariaLabel="Профиль для текущего этапа" placeholder="Выберите профиль" appendTo="body"
+                          [options]="choice.options" optionLabel="label" optionValue="id" [ngModel]="replacementProfileId"
+                          [disabled]="replacementLoading() || busy()" (ngModelChange)="loadReplacementModels($event)" />
+                        @if (replacementProfileId) {
+                          <p-select ariaLabel="Модель для текущего этапа" appendTo="body" [filter]="true"
+                            [options]="replacementModels()" optionLabel="label" optionValue="id" [(ngModel)]="replacementModel"
+                            [loading]="replacementLoading()" [disabled]="busy()" />
+                          @if (replacementError()) { <span role="status">{{ replacementError() }}</span> }
+                          <button pButton size="small" [disabled]="busy() || !replacementModel" (click)="resumeWithReplacement(run)">Продолжить с выбранной моделью</button>
+                        }
+                      } @else {
+                        <span>Сохраните профиль для этой роли в настройках команды.</span>
+                      }
+                    }
+                  }
+                }
               }
             </div>
           }
         }
       }
 
+      @if (detail()?.run; as run) {
+        @if (run.id === item.id && run.commitSha) {
+          <section class="inspector-card" aria-label="Изменения Git">
+            <button pButton severity="secondary" size="small" (click)="loadRunDiff(run.id, false)">Diff последнего коммита</button>
+            @if (run.checkout?.baseSha) {
+              <button pButton severity="secondary" size="small" (click)="loadRunDiff(run.id, true)">Diff всей ветки задачи</button>
+            }
+            @if (runDiff(); as diff) {
+              @if (diff.id === run.id) {
+                @if (diff.loading) { <p role="status">Загрузка Git diff…</p> }
+                @if (diff.error) { <p role="alert">{{ diff.error }}</p> }
+                @if (diff.result; as result) {
+                  <details open>
+                    <summary>{{ diff.wholeRun ? 'Ветка задачи относительно базы' : 'Последний коммит' }}</summary>
+                    @if (result.truncated) { <p>Показан конец большого diff.</p> }
+                    <pre class="run-diff-view"><code>{{ result.text || 'Изменений нет.' }}</code></pre>
+                  </details>
+                }
+              }
+            }
+          </section>
+        }
+      }
       <!-- ЖУРНАЛ ВЫПОЛНЕНИЯ: занимает всё оставшееся пространство -->
       <section class="run-console-section" aria-label="Консоль и журнал">
         <div class="console-section-header">
@@ -518,11 +562,14 @@
   }
   <ng-template pTemplate="footer">
     <div class="fix-dialog-footer">
-      <button pButton severity="success" icon="pi pi-check" [disabled]="busy()" (click)="applyFix()">
-        Применить изменения (создать коммит и продолжить)
-      </button>
+      @if (error()) { <p role="alert">{{ error() }}</p> }
+      @if (currentFix()?.action === 'retry_stage' || currentFix()?.action === 'commit_dirty_repo' || currentFix()?.action === 'switch_branch') {
+        <button pButton severity="success" icon="pi pi-check" [disabled]="busy()" (click)="applyFix()">
+          {{ currentFix()?.action === 'retry_stage' ? 'Повторить этап' : 'Применить и продолжить' }}
+        </button>
+      }
       <button pButton severity="danger" [text]="true" icon="pi pi-trash" [disabled]="busy()" (click)="discardFix()">
-        Отклонить (удалить все правки)
+        Отклонить предложение
       </button>
       <button pButton severity="secondary" [text]="true" (click)="showFixDialog.set(false)">
         Закрыть

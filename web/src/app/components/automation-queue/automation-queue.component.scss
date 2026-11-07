@@ -1433,3 +1433,10 @@
   gap: 0.75rem;
   width: 100%;
 }
+.run-diff-view {
+  max-height: 18rem;
+  max-width: 100%;
+  overflow: auto;
+  padding: 0.75rem;
+  border: 1px solid var(--p-content-border-color);
+}

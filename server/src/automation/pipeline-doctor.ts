@@ -59,11 +59,15 @@ export class PipelineDoctor {
     let title = 'Исправление сбоя конвейера';
     let explanation = '';
     let scope: 'worktree' | 'repository' = 'worktree';
-    let action: 'commit_dirty_repo' | 'patch_code' | 'switch_branch' | 'retry_stage' = 'patch_code';
+    let action: NonNullable<ProposedFix['action']> = 'advice_only';
     let files: string[] = [];
     let diff = '';
 
-    if (isCleanCheckoutError) {
+    if (/opencode.*(?:Unexpected non-whitespace character after JSON|valid JSON verdict)/i.test(failureSummary)) {
+      title = 'Повтор этапа после ошибки формата OpenCode';
+      explanation = 'OpenCode завершил вызов, но воркер не смог прочитать вердикт. После обновления адаптера можно повторить текущий этап в прежней рабочей ветке.';
+      action = 'retry_stage';
+    } else if (isCleanCheckoutError) {
       scope = 'repository';
       action = 'commit_dirty_repo';
       title = 'Сохранение локальных файлов и подготовка репозитория';
@@ -86,35 +90,32 @@ export class PipelineDoctor {
       explanation = `Для автоматического слияния требуется, чтобы в основном репозитории была активна базовая ветка ${run.settings?.baseBranch || 'main'}. Применение исправления переключит активную ветку.`;
     } else if (isBuildError) {
       scope = 'worktree';
-      action = 'patch_code';
       title = 'Устранение ошибки компиляции / синтаксиса';
       explanation = `В процессе сборки или проверки возникли ошибки компиляции:\n${failureSummary}\n\nПредлагаются изменения для устранения синтаксических нестыковок и восстановления сборки.`;
       files = wtAllFiles.length > 0 ? wtAllFiles : ['(исходный код)'];
       diff = wtDiff || (wtUntracked.length > 0 ? wtUntracked.map(f => `+ ${f}`).join('\n') : '(Ошибки компиляции зафиксированы в журнале)');
     } else if (isTestError) {
       scope = 'worktree';
-      action = 'patch_code';
       title = 'Исправление упавших проверок / тестов';
-      explanation = `Проверка завершилась с ошибкой:\n${failureSummary}\n\nВнесены исправления в код и тестовые сценарии для успешного прохождения проверки.`;
+      explanation = `Проверка завершилась с ошибкой:\n${failureSummary}\n\nДля исправления нужно проверить код и сценарий упавшего теста.`;
       files = wtAllFiles.length > 0 ? wtAllFiles : ['(тесты)'];
       diff = wtDiff || (wtUntracked.length > 0 ? wtUntracked.map(f => `+ ${f}`).join('\n') : '(Сбой тестовых проверок зафиксирован в журнале)');
     } else if (isDepError) {
       scope = 'worktree';
-      action = 'patch_code';
       title = 'Исправление зависимостей и конфигурации модулей';
-      explanation = `Обнаружена проблема с разрешением модулей или зависимостей:\n${failureSummary}\n\nСкорректированы пути импортов и конфигурация проекта.`;
+      explanation = `Обнаружена проблема с разрешением модулей или зависимостей:\n${failureSummary}`;
       files = wtAllFiles.length > 0 ? wtAllFiles : ['package.json'];
       diff = wtDiff || '(Требуется установка или обновление зависимостей)';
     } else {
       files = wtAllFiles.length > 0 ? wtAllFiles : (repoAllFiles.length > 0 ? repoAllFiles : ['(конфигурация запуска)']);
       diff = wtDiff || (wtUntracked.length > 0 ? wtUntracked.map(f => `+ ${f}`).join('\n') : (repoDiff || '(Изменений в кодовой базе не обнаружено)'));
-      explanation = `Сбой конвейера на этапе ${run.stage + 1}:\n${failureSummary}\n\nПредлагается изолированный патч для устранения сбоя.`;
+      explanation = `Сбой конвейера на этапе ${run.stage + 1}:\n${failureSummary}`;
     }
 
     // 4. Try to consult configured LLM / local Ollama model for intelligent diagnosis
     let modelBadge: string | undefined;
     const connection = this.resolveConnection(run);
-    if (connection) {
+    if (connection?.baseUrl && connection.kind !== ProviderKind.Native && action === 'advice_only') {
       const model = this.resolveModel(run, connection);
       try {
         const aiAdvice = await this.consultModel(
@@ -132,13 +133,6 @@ export class PipelineDoctor {
           modelBadge = `${connection.label || connection.id} (${model})`;
           if (aiAdvice.title) title = aiAdvice.title;
           if (aiAdvice.explanation) explanation = aiAdvice.explanation;
-          // Do not override clean checkout repository scope if repo is dirty
-          if (!isCleanCheckoutError && aiAdvice.scope) {
-            scope = aiAdvice.scope;
-          }
-          if (!isCleanCheckoutError && aiAdvice.action) {
-            action = aiAdvice.action;
-          }
         }
       } catch {
         // Graceful fallback to rule-based diagnosis on connection timeout or offline host
@@ -149,7 +143,7 @@ export class PipelineDoctor {
       id: randomUUID(),
       title,
       explanation,
-      diff,
+      diff: action === 'advice_only' ? '' : diff,
       files,
       scope,
       action,
@@ -162,84 +156,27 @@ export class PipelineDoctor {
    * Applies the proposed fix by committing changes into the task worktree or main repository.
    */
   public async apply(run: AgentRun, fix: ProposedFix): Promise<void> {
+    if (fix.action !== 'commit_dirty_repo' && fix.action !== 'switch_branch') throw new Error('Готового патча для применения нет.');
+    const cwd = run.settings.repositoryPath;
+    if (!fs.existsSync(cwd)) throw new Error('Серверу недоступен репозиторий воркера. Выполните действие на машине воркера.');
     const signal = AbortSignal.timeout(30000);
-
-    // 1. Repository-level fix (e.g. dirty main checkout blocking local merge)
-    if (fix.scope === 'repository' || fix.action === 'commit_dirty_repo') {
-      const cwd = run.settings?.repositoryPath;
-      if (cwd && fs.existsSync(cwd)) {
-        try {
-          const git = (args: string[]) => this.executor.run({ command: 'git', args, cwd, signal });
-          await git(['add', '-A', '--', '.']);
-          const status = (await git(['status', '--porcelain'])).trim();
-          if (status) {
-            const commitMsg = `[#${run.taskId}] - WIP: сохранение локальных изменений перед запуском конвейера`;
-            await git(['commit', '-m', commitMsg]);
-          }
-        } catch {
-          // Best-effort
-        }
-      }
-    }
-
+    const git = (args: string[]) => this.executor.run({ command: 'git', args, cwd, signal });
     if (fix.action === 'switch_branch') {
-      const cwd = run.settings?.repositoryPath;
-      if (cwd && run.settings?.baseBranch && fs.existsSync(cwd)) {
-        try {
-          const git = (args: string[]) => this.executor.run({ command: 'git', args, cwd, signal });
-          await git(['checkout', run.settings.baseBranch]);
-        } catch {
-          // Best-effort
-        }
-      }
+      if ((await git(['status', '--porcelain'])).trim()) throw new Error('Сохраните локальные изменения перед переключением ветки.');
+      await git(['checkout', run.settings.baseBranch]);
+      return;
     }
-
-    // 2. Worktree-level fix
-    const wtCwd = run.checkout?.worktreePath;
-    if (wtCwd && (fix.scope === 'worktree' || !fix.scope) && fs.existsSync(wtCwd)) {
-      try {
-        const git = (args: string[]) => this.executor.run({ command: 'git', args, cwd: wtCwd, signal });
-        await git(['add', '-A', '--', '.']);
-        const status = (await git(['status', '--porcelain'])).trim();
-        if (status) {
-          const commitMsg = `[#${run.taskId}] - ${fix.title}: устранена ошибка конвейера`;
-          await git(['commit', '-m', commitMsg]);
-        }
-      } catch {
-        // Best-effort
-      }
-    }
+    const status = (await git(['status', '--porcelain'])).trim();
+    if (!status) return;
+    const diff = (await git(['diff', 'HEAD'])).trim();
+    const untracked = (await git(['ls-files', '--others', '--exclude-standard'])).trim();
+    if (untracked || diff !== fix.diff) throw new Error('Состав изменений отличается от показанного. Сохраните изменения вручную.');
+    await git(['commit', '-a', '-m', `[#${run.taskId}] - WIP: сохранение локальных изменений перед запуском конвейера`]);
   }
 
   /**
    * Discards the proposed fix by resetting modified and untracked files.
    */
-  public async discard(run: AgentRun, fix?: ProposedFix | null): Promise<void> {
-    const signal = AbortSignal.timeout(30000);
-    const targetFix = fix || run.proposedFix;
-
-    if (targetFix?.scope === 'repository') {
-      const repoCwd = run.settings?.repositoryPath;
-      if (repoCwd && fs.existsSync(repoCwd)) {
-        try {
-          await this.executor.run({ command: 'git', args: ['reset', 'HEAD'], cwd: repoCwd, signal });
-        } catch {
-          // Best-effort
-        }
-      }
-    }
-
-    const wtCwd = run.checkout?.worktreePath;
-    if (wtCwd && fs.existsSync(wtCwd)) {
-      try {
-        await this.executor.run({ command: 'git', args: ['reset', '--hard', 'HEAD'], cwd: wtCwd, signal });
-        await this.executor.run({ command: 'git', args: ['clean', '-fd'], cwd: wtCwd, signal });
-      } catch {
-        // Best-effort cleanup
-      }
-    }
-  }
-
   private resolveBaseUrl(rawBase: string): string {
     const base = rawBase.replace(/\/$/, '');
     try {

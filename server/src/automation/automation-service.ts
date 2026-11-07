@@ -1,6 +1,8 @@
 import { PipelineDoctor } from './pipeline-doctor.js';
 import { ProviderKind, type ProposedFix } from '../../../shared/automation/contracts.js';
 import { randomUUID, createHash } from 'node:crypto';
+import { readFileSync, statSync } from 'node:fs';
+import { COMMENT_SCREENSHOT, SCREENSHOT_LIMIT, SCREENSHOT_MAX_BYTES, SCREENSHOT_MAX_ENCODED_LENGTH } from '../../../shared/automation/screenshots.js';
 import { DEFAULT_AUTOMATION_SETTINGS, AgentRole, RunStatus, AgentVerdict, AUTOMATION_START_TASK_STATUSES, ACTIVE_RUN_STATUSES,
   RESUMABLE_RUN_STATUSES, OWNED_RUN_STATUSES, WRITABLE_AGENT_ROLES, EVIDENCE_AGENT_ROLES, AGENT_VERDICTS, AUTOMATION_TIMING, MergePolicy,
   type AgentOutcome, type AgentRun, type AutomationSettings, type IntegrationInfo } from '../../../shared/automation/contracts.js';
@@ -28,7 +30,8 @@ export class AutomationService {
   private readonly doctor = new PipelineDoctor();
   public get projects(): ProjectRequests { return new ProjectRequests(this.repos.meta, this.runs.db); }
   public constructor(private readonly runs: AgentRunRepository, private readonly repos: Repositories,
-    private readonly tasks: TaskService, private readonly clock: Clock, private readonly workspace = 'default') {}
+    private readonly tasks: TaskService, private readonly clock: Clock, private readonly workspace = 'default',
+    private readonly images?: import('../services/image-service.js').ImageService) {}
 
   public settings(): AutomationSettings {
     const value = this.repos.meta.get(SETTINGS_KEY);
@@ -161,7 +164,7 @@ export class AutomationService {
         branch: null, commitSha: null, summary: '', restartedFromId: previous?.id, usageAttempts: [] };
       if (integrationRestart) {
         run.stage = settings.pipeline.length; run.integrationSourceSha = previous.commitSha!;
-        run.commitSha = previous.commitSha; run.mergeMessage = previous.mergeMessage;
+        run.commitSha = previous.commitSha; run.mergeMessage = previous.mergeMessage; run.acceptedSha = previous.acceptedSha;
       }
       this.runs.save(run);
       this.runs.event(run.id, RunStatus.Queued, 'Run queued with an immutable settings snapshot.', now);
@@ -349,7 +352,7 @@ export class AutomationService {
         finished: a.finished || finished, usage: sample ?? a.usage }) });
     });
   }
-  public completeStage(id: string, token: string, outcome: AgentOutcome, branch: string, commitSha: string): AgentRun {
+  public completeStage(id: string, token: string, outcome: AgentOutcome, branch: string, commitSha: string, screenshots?: unknown): AgentRun {
     return this.runs.db.transaction(() => {
       const run = this.owned(id, token);
       if (run.status !== RunStatus.Running) throw new TrackerError('CONFLICT', 'Pipeline is already complete.');
@@ -421,16 +424,28 @@ export class AutomationService {
             if (this.tasks.getTaskCard(run.taskId).status === TaskStatus.InProgress) this.tasks.setStatus({ id: run.taskId, status: TaskStatus.Testing, actor: 'agent' });
             this.tasks.setStatus({ id: run.taskId, status: TaskStatus.Review, actor: 'agent' });
           }
-          const integrate = writes && run.settings.mergePolicy === MergePolicy.Local;
-          updated = { ...updated, status: integrate ? RunStatus.Integrating : RunStatus.Review, leaseToken: integrate ? run.leaseToken : null };
+          updated = { ...updated, status: RunStatus.Review, leaseToken: null };
         }
       }
       if (updated.status === RunStatus.Failed || updated.status === RunStatus.Review) updated = { ...updated, finishedAt: now };
       this.runs.save(updated);
       this.runs.event(id, updated.status === RunStatus.Failed ? 'failed' : outcome.verdict, updated.summary, now);
       this.tasks.addComment({ id: taskId, text: `[AGENT ${profile.role}] ${outcome.summary}\nBranch: ${branch}\nCommit: ${commitSha}`, kind: 'note', actor: 'agent' });
+      if (screenshots !== undefined) this.attachStageScreenshots(taskId, screenshots, now);
       return updated;
     });
+  }
+  private attachStageScreenshots(taskId: string, screenshots: unknown, now: string): void {
+    if (!this.images || !Array.isArray(screenshots) || screenshots.length > SCREENSHOT_LIMIT
+      || screenshots.some(image => typeof image !== 'string' || image.length > SCREENSHOT_MAX_ENCODED_LENGTH
+        || !/^data:image\/png;base64,iVBORw0KGg[A-Za-z0-9+/]*={0,2}$/.test(image))) {
+      throw new TrackerError('VALIDATION_FAILED', 'Invalid stage screenshots.');
+    }
+    for (const image of new Set<string>(screenshots)) {
+      const stored = this.images.storeDataUrl(image, true);
+      const url = `${stored.url}?workspace=${encodeURIComponent(this.workspace)}`;
+      if (!this.repos.images.listByTask(taskId).some(existing => existing.url === url)) this.repos.images.add(taskId, url, now);
+    }
   }
   public fail(id: string, token: string, message: string): void {
     return this.runs.db.transaction(() => {
@@ -465,7 +480,7 @@ export class AutomationService {
       this.runs.event(id, RunStatus.Cancelled, 'Убрано из очереди пользователем. Задача и журнал сохранены.', now);
     });
   }
-  public resume(id: string): AgentRun {
+  public resume(id: string, replacementProfileId?: unknown, replacementModel?: unknown): AgentRun {
     return this.runs.db.transaction(() => {
     const run = this.requireRun(id);
     if (run.cleanup) throw new TrackerError('CONFLICT', 'Рабочая копия очищается или уже очищена. Создайте новый запуск.');
@@ -482,12 +497,101 @@ export class AutomationService {
     const role = run.settings.agents.find((agent) => agent.id === run.settings.pipeline[run.stage])?.role;
     const stage = run.status === RunStatus.Waiting && role && EVIDENCE_AGENT_ROLES.includes(role)
       ? Decomposition.child(run)?.developerStage ?? run.feature?.finalDeveloperStage ?? run.settings.pipeline.findIndex((id) => run.settings.agents.find((agent) => agent.id === id)?.role === AgentRole.Developer) : run.stage;
-    const updated: AgentRun = { ...run, stage, status: RunStatus.Queued, leaseToken: null, workerId: null, leaseUntil: null, updatedAt: this.clock.now(), finishedAt: undefined };
+    let settings = run.settings;
+    if (replacementProfileId !== undefined || replacementModel !== undefined) {
+      if (run.status !== RunStatus.Failed || mergeOnly || !role) throw new TrackerError('CONFLICT', 'Only a failed agent stage can switch profiles.');
+      const configured = this.settings();
+      const replacement = configured.agents.find(agent => agent.id === replacementProfileId && agent.role === role);
+      const connection = configured.connections.find(entry => entry.id === replacement?.connectionId);
+      if (!replacement || !connection) throw new TrackerError('VALIDATION_FAILED', 'Choose a configured profile for the same role.');
+      if (replacementModel !== undefined && (typeof replacementModel !== 'string' || !replacementModel.trim()
+        || replacementModel.length > 300 || /[\x00-\x1f]/.test(replacementModel))) throw new TrackerError('VALIDATION_FAILED', 'Invalid replacement model.');
+      const current = settings.agents.find(agent => agent.id === settings.pipeline[stage])!;
+      const profileId = randomUUID();
+      const connectionId = randomUUID();
+      settings = new AutomationSettingsValidator().validate({
+        ...settings,
+        connections: [...settings.connections, { ...connection, id: connectionId }],
+        agents: [...settings.agents, { ...replacement, model: replacementModel ?? replacement.model, id: profileId, connectionId, instructions: current.instructions }],
+        pipeline: settings.pipeline.map((agentId, index) => index === stage ? profileId : agentId),
+      });
+    }
+    const updated: AgentRun = { ...run, settings, stage, status: RunStatus.Queued, proposedFix: null, leaseToken: null, workerId: null, leaseUntil: null, updatedAt: this.clock.now(), finishedAt: undefined };
     this.runs.restore(id);
     this.runs.save(updated);
-    this.runs.event(id, 'resumed', 'Продолжение с сохранёнными настройками и checkpoint. Ожидает worker.', this.clock.now());
+    this.runs.event(id, 'resumed', replacementProfileId === undefined
+      ? 'Продолжение с сохранёнными настройками и checkpoint. Ожидает worker.'
+      : 'Текущий этап поставлен в очередь с другим профилем агента. Рабочая ветка сохранена.', this.clock.now());
     return this.publicRun(updated);
     });
+  }
+
+  public reviewTask(taskId: string, decision: 'accept' | 'rework', feedback?: unknown): AgentRun {
+    return this.runs.db.transaction(() => {
+      const task = this.tasks.getTaskCard(taskId);
+      const run = this.runs.list(taskId)[0];
+      if (task.status === TaskStatus.Review && run?.status === RunStatus.Merged && !task.openQuestionsCount
+        && !this.runs.hasActive(taskId)) {
+        if (decision === 'accept') {
+          this.tasks.setStatus({ id: taskId, status: TaskStatus.Done, actor: 'user' });
+          return this.publicRun(run);
+        }
+        if (typeof feedback !== 'string' || !feedback.trim()) throw new TrackerError('VALIDATION_FAILED', 'Опишите, что нужно исправить.');
+        const stage = run.feature?.finalDeveloperStage ?? run.settings.pipeline.findIndex(agentId =>
+          run.settings.agents.some(agent => agent.id === agentId && WRITABLE_AGENT_ROLES.includes(agent.role)));
+        if (stage < 0) throw new TrackerError('CONFLICT', 'В запуске нет этапа для доработки.');
+        this.tasks.setStatus({ id: taskId, status: TaskStatus.Ready, actor: 'user', comment: feedback.trim() });
+        const continuation = this.createRun(taskId, { ...run.settings, pipeline: run.settings.pipeline.slice(stage) }, undefined, false);
+        const updated = { ...continuation, restartedFromId: run.id, summary: feedback.trim(), reviewFeedback: feedback.trim() };
+        this.runs.save(updated);
+        this.runs.event(updated.id, 'resumed', 'Доработка ранее слитого результата от текущей базовой ветки.', this.clock.now());
+        return this.publicRun(updated);
+      }
+      if (task.status !== TaskStatus.Review || !run || run.status !== RunStatus.Review || !run.checkout || run.cleanup
+        || !run.commitSha || run.stage < run.settings.pipeline.length || !PipelinePolicy.writes(run.settings)
+        || task.openQuestionsCount || this.runs.hasActive(taskId)) {
+        throw new TrackerError('CONFLICT', 'Нет завершённого агентского запуска, ожидающего приёмки.');
+      }
+      const now = this.clock.now();
+      let updated: AgentRun = { ...run, status: RunStatus.Queued, finishedAt: undefined, updatedAt: now,
+        workerId: null, leaseUntil: null, leaseToken: null, proposedFix: null };
+      if (decision === 'accept') {
+        updated = { ...updated, settings: { ...run.settings, mergePolicy: MergePolicy.Local },
+          acceptedSha: run.commitSha, summary: 'Результат принят пользователем. Ожидает слияния.' };
+      } else {
+        if (typeof feedback !== 'string' || !feedback.trim()) throw new TrackerError('VALIDATION_FAILED', 'Опишите, что нужно исправить.');
+        const stage = run.feature?.finalDeveloperStage ?? run.settings.pipeline.findIndex(agentId =>
+          run.settings.agents.some(agent => agent.id === agentId && WRITABLE_AGENT_ROLES.includes(agent.role)));
+        if (stage < 0) throw new TrackerError('CONFLICT', 'В запуске нет этапа для доработки.');
+        const budgetReason = RunBudget.reason(run, Date.parse(now), true);
+        if (budgetReason) throw new TrackerError('CONFLICT', budgetReason);
+        this.tasks.setStatus({ id: taskId, status: TaskStatus.InProgress, actor: 'user', comment: feedback.trim() });
+        updated = { ...updated, acceptedSha: undefined, stage, revision: run.revision + 1, stageMemory: undefined, summary: feedback.trim(), reviewFeedback: feedback.trim() };
+      }
+      this.runs.restore(run.id);
+      this.runs.save(updated);
+      this.runs.event(run.id, 'resumed', decision === 'accept' ? updated.summary : 'Пользователь вернул задачу на доработку в прежней ветке.', now);
+      return this.publicRun(updated);
+    });
+  }
+
+  public reviewEvidence(id: string, token: string): { name: string; base64: string }[] {
+    const run = this.owned(id, token);
+    return (run.reviewFeedback ?? '').split('\n').flatMap(line => {
+      const match = COMMENT_SCREENSHOT.exec(line);
+      return match && (!match[3] || match[3] === encodeURIComponent(this.workspace)) ? [match[2]] : [];
+    }).slice(0, SCREENSHOT_LIMIT).flatMap(name => {
+      const file = this.images?.resolveFile(name);
+      return file && statSync(file).size <= SCREENSHOT_MAX_BYTES ? [{ name, base64: readFileSync(file).toString('base64') }] : [];
+    });
+  }
+
+  public requestDiff(id: string, wholeRun: boolean) {
+    const run = this.requireRun(id);
+    const head = run.commitSha;
+    const base = wholeRun ? run.checkout?.baseSha : undefined;
+    if (!head || (wholeRun && !base)) throw new TrackerError('CONFLICT', 'Для этого сравнения пока нет сохранённых коммитов.');
+    return this.projects.enqueue({ action: ProjectAction.Diff, path: run.checkout?.repositoryRoot ?? run.settings.repositoryPath, diff: { head, base } }, true);
   }
   /** Explicit UI action only: no MCP tool allows agents to raise their budget. */
   public extendBudget(id: string, input: unknown): AgentRun {
@@ -576,13 +680,17 @@ export class AutomationService {
     this.owned(id, token);
     if (run.status !== RunStatus.Integrating || run.integration?.state !== 'publishing') throw new TrackerError('CONFLICT', 'Merge publication is not owned by this worker.');
     if (run.mergeReviewRequired) this.tasks.setStatus({ id: run.taskId, status: TaskStatus.Review, actor: 'agent' });
+    const accepted = run.acceptedSha === run.commitSha && !!run.acceptedSha;
+    if (accepted && this.tasks.getTaskCard(run.taskId).status === TaskStatus.Review) {
+      this.tasks.setStatus({ id: run.taskId, status: TaskStatus.Done, actor: 'user' });
+    }
     const now = this.clock.now();
     const evidence = `${run.branch}@${run.commitSha} -> ${run.integration.targetBranch}@${run.integration.candidateSha}`;
     this.runs.save({ ...run, budgetElapsedMs: RunBudget.elapsed(run, Date.parse(now)), budgetUpdatedAt: now,
       summary: `Squash merged: ${evidence}`,
       integration: { ...run.integration, state: 'merged' }, status: RunStatus.Merged, leaseToken: null, updatedAt: now, finishedAt: now });
     this.runs.event(id, 'merged', evidence, now);
-    this.tasks.addComment({ id: run.taskId, text: `[AUTOMATION MERGED] ${evidence}. Task remains in review for user acceptance.`, actor: 'agent' });
+    this.tasks.addComment({ id: run.taskId, text: `[AUTOMATION MERGED] ${evidence}. Integration completed.`, actor: 'agent' });
     });
     try { this.cleanup(id); } catch (error) {
       const run = this.requireRun(id);
@@ -619,15 +727,20 @@ export class AutomationService {
 
   public async diagnoseFix(id: string): Promise<ProposedFix> {
     const run = this.requireRun(id);
+    if (!RESUMABLE_RUN_STATUSES.includes(run.status)) throw new TrackerError('CONFLICT', 'Анализ доступен после остановки запуска.');
     const events = this.runs.events(id).map(e => e.text);
     const fix = await this.doctor.diagnose(run, events);
-    this.runs.save({ ...run, proposedFix: fix });
+    const current = this.requireRun(id);
+    if (current.status !== run.status || current.updatedAt !== run.updatedAt) throw new TrackerError('CONFLICT', 'Запуск изменился во время диагностики.');
+    this.runs.save({ ...current, proposedFix: fix });
     return fix;
   }
 
   public async applyFix(id: string): Promise<AgentRun> {
     const run = this.requireRun(id);
     if (!run.proposedFix) throw new TrackerError('CONFLICT', 'Нет предложенного исправления.');
+    if (!RESUMABLE_RUN_STATUSES.includes(run.status)) throw new TrackerError('CONFLICT', 'Сначала остановите запуск.');
+    if (run.proposedFix.action === 'retry_stage') return this.resume(id);
     await this.doctor.apply(run, run.proposedFix);
     const now = this.clock.now();
     const updated: AgentRun = { ...run, proposedFix: null, updatedAt: now, summary: `Применено авто-исправление: ${run.proposedFix.title}` };
@@ -638,13 +751,10 @@ export class AutomationService {
 
   public async discardFix(id: string): Promise<AgentRun> {
     const run = this.requireRun(id);
-    if (run.proposedFix) {
-      await this.doctor.discard(run);
-    }
     const now = this.clock.now();
     const updated: AgentRun = { ...run, proposedFix: null, updatedAt: now };
     this.runs.save(updated);
-    this.runs.event(id, 'cancelled', 'Предложенное авто-исправление отклонено, изменения откатаны.', now);
+    this.runs.event(id, 'cancelled', 'Предложение диагностики отклонено.', now);
     return this.publicRun(updated);
   }
 

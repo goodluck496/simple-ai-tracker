@@ -72,6 +72,9 @@ export class TrackerApiService {
   public setStatus(id: string, status: string, comment?: string): Observable<TaskResponse> {
     return this.http.post<TaskResponse>(`${API_BASE}/tasks/${encodeURIComponent(id)}/status`, { status, comment });
   }
+  public reviewAutomation(id: string, decision: 'accept' | 'rework', feedback?: string): Observable<unknown> {
+    return this.http.post(`/api/automation/tasks/${encodeURIComponent(id)}/review/${decision}`, { feedback });
+  }
 
   public moveTask(
     id: string,

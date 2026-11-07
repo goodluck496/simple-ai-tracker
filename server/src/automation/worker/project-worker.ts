@@ -41,6 +41,16 @@ export class ProjectWorker {
     const target = input.path || os.homedir();
     if (!path.isAbsolute(target)) throw new Error('Укажите абсолютную папку на машине worker.');
     const directory = await realpath(target);
+    if (input.action === ProjectAction.Diff) {
+      const { head, base } = input.diff ?? {};
+      const sha = /^[a-f0-9]{40}(?:[a-f0-9]{24})?$/;
+      if (!head || !sha.test(head) || (base !== undefined && !sha.test(base))) throw new Error('Некорректный диапазон Git.');
+      const args = base ? ['diff', base, head] : ['show', '--format=', head];
+      const limit = 32000;
+      const text = await this.executor.run({ command: 'git', args: [...args, '--no-ext-diff', '--no-textconv', '--no-color', '--'],
+        cwd: directory, signal: AbortSignal.timeout(PROJECT_LIMITS.commandMs), maxOutputChars: limit });
+      return { path: directory, diff: { text, truncated: text.length >= limit } };
+    }
     if (input.action === ProjectAction.Browse) {
       const entries = (await readdir(directory, { withFileTypes: true })).filter((entry) => entry.isDirectory() && !entry.name.startsWith('.')).sort((a, b) => a.name.localeCompare(b.name));
       return { path: directory, parent: path.dirname(directory), truncated: entries.length > PROJECT_LIMITS.maxEntries,

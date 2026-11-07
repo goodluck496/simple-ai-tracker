@@ -41,6 +41,9 @@ export class ModelApiRunner implements AgentRunner {
       }
       if (job.profile.role === AgentRole.VisualValidator && contents.length < 2) throw new Error('Visual validator requires at least one generated image artifact.');
     }
+    if (job.connection.supportsImages) {
+      for (const url of job.reviewImageData ?? []) contents.push({ type: 'image_url', image_url: { url } });
+    }
     const messages: Message[] = [{ role: 'system', content: 'Follow the task instructions and return the requested JSON outcome. Use only the supplied tools. Use save_progress(note) to save findings and implementationPlan, not .sat filesystem writes. inspect_changes() lists changed files, inspect_changes(path) reads a focused current Git diff.' }, { role: 'user', content: contents.length > 1 ? contents : job.prompt }];
     const names: string[] = job.profile.role === AgentRole.VisualValidator ? [ModelTool.Finish] : [...READ_MODEL_TOOLS.filter(name => name !== ModelTool.RunCheck || job.settings.checks.length > 0), ...(job.projectMcp?.length ? [ModelTool.Project] : []), ...(writable ? [ModelTool.WriteFile, ModelTool.EditFile] : []), ModelTool.Finish];
     messages.push({ role: 'system', content: 'When the assigned work is finished or blocked, call finish_task with the actual verdict and evidence as structured arguments. It ends this stage immediately; no prose final answer or extra confirmation is needed. Never report pass when required work or checks are incomplete. The worker independently validates changes and configured checks.' });

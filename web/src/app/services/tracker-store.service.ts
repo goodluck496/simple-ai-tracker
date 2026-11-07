@@ -474,13 +474,22 @@ export class TrackerStore {
     });
   }
 
-  public async setTaskStatus(id: string, status: TaskStatus, comment?: string): Promise<void> {
-    await this.run(async () => {
+  public async setTaskStatus(id: string, status: TaskStatus, comment?: string): Promise<boolean> {
+    return (await this.run(async () => {
       const response = await firstValueFrom(this.api.setStatus(id, status, comment));
       if (this.openTaskSignal()?.id === id) this.openTaskSignal.set(response.task);
       await this.refresh();
-      return null;
-    });
+      return true;
+    })) === true;
+  }
+
+  public async reviewAutomation(id: string, decision: 'accept' | 'rework', feedback?: string): Promise<boolean> {
+    return (await this.run(async () => {
+      await firstValueFrom(this.api.reviewAutomation(id, decision, feedback));
+      await this.reloadOpenCard();
+      await this.refresh();
+      return true;
+    })) === true;
   }
 
   public async moveTask(
@@ -522,13 +531,13 @@ export class TrackerStore {
     });
   }
 
-  public async addComment(id: string, text: string): Promise<void> {
-    await this.run(async () => {
+  public async addComment(id: string, text: string): Promise<boolean> {
+    return (await this.run(async () => {
       await firstValueFrom(this.api.addComment(id, text));
       await this.reloadOpenCard();
       await this.refresh();
-      return null;
-    });
+      return true;
+    })) === true;
   }
 
   public async askQuestions(id: string, questions: readonly string[], phase: QuestionPhase): Promise<void> {

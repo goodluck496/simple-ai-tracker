@@ -23,9 +23,8 @@ test('custom pipelines run only selected roles; readonly results do not merge or
         service.completeStage(run.id, owned.leaseToken!, { verdict: 'pass', summary: `${role} passed`, ...(role === 'analyst' ? { plan: '# Refined plan' } : {}) }, `sat/${run.id}`, 'a'.repeat(40));
       }
       const writes = PipelinePolicy.writes({ ...settings, pipeline });
-      assert.equal(service.detail(run.id).run.status, writes ? 'integrating' : 'review');
+      assert.equal(service.detail(run.id).run.status, 'review');
       assert.equal(app.taskService.getTaskCard(task.id).status, writes ? 'review' : 'ready');
-      if (writes) service.fail(run.id, owned.leaseToken!, 'End fixture integration');
     }
     const reviewTask = app.taskService.createTask({ title: 'Assessment without an implementation plan' });
     const review = service.enqueue(reviewTask.id, { ...settings, pipeline: ['reviewer'] }, false); const claimed = service.claim('fixture')!;

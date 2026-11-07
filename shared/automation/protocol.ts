@@ -13,6 +13,7 @@ export const AutomationTool = {
   Resume: `${AUTOMATION_TOOL_PREFIX}resume`, Merged: `${AUTOMATION_TOOL_PREFIX}merged`,
   ExtendBudget: `${AUTOMATION_TOOL_PREFIX}extend_budget`,
   Checkout: `${AUTOMATION_TOOL_PREFIX}checkout`, Integration: `${AUTOMATION_TOOL_PREFIX}integration`,
+  ReviewEvidence: `${AUTOMATION_TOOL_PREFIX}review_evidence`,
   HostPoll: `${AUTOMATION_TOOL_PREFIX}host_poll`, HostComplete: `${AUTOMATION_TOOL_PREFIX}host_complete`,
   HostStatus: `${AUTOMATION_TOOL_PREFIX}host_status`, WorkerStart: `${AUTOMATION_TOOL_PREFIX}worker_start`, WorkerStop: `${AUTOMATION_TOOL_PREFIX}worker_stop`,
 } as const;

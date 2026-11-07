@@ -287,7 +287,7 @@ export class WorkspaceManager {
     const verificationService = new VerificationService(finalConfig, repos, taskService);
     const backupService = new BackupService(finalConfig, db, clock, this.logger);
     const imageService = new ImageService(finalConfig, this.logger);
-    const automationService = new AutomationService(new AgentRunRepository(db), repos, taskService, clock, workspaceName);
+    const automationService = new AutomationService(new AgentRunRepository(db), repos, taskService, clock, workspaceName, imageService);
 
     return {
       config: finalConfig,

@@ -36,10 +36,15 @@ test('manual review runs in a separate worktree while preserving unrelated main-
     assert.equal(await fs.readFile(path.join(fixture.repository, 'b.txt'), 'utf8'), 'user change\n');
     assert.equal(await fs.readFile(path.join(actual.checkout!.worktreePath, 'a.txt'), 'utf8'), '1\n');
     assert.equal((await fixture.git(['diff', '--name-only'])).trim(), 'b.txt');
-    const automatic = app.automationService.enqueue(app.taskService.createTask({ title: 'Automatic integration still protects edits' }).id,
+    const second = app.taskService.createTask({ title: 'Approved integration still protects edits' });
+    app.taskService.attachPlan({ id: second.id, planContent: '1. Change a.txt to 1. Preserve b.txt.', actor: 'agent' });
+    const automatic = app.automationService.enqueue(second.id,
       { ...app.automationService.settings(), mergePolicy: 'local' }, false);
     await worker.tick();
-    assert.match(app.automationService.detail(automatic.id).run.summary, /clean target checkout/);
+    assert.equal(app.automationService.detail(automatic.id).run.status, 'review');
+    app.automationService.reviewTask(second.id, 'accept');
+    await worker.tick();
+    assert.match(app.automationService.detail(automatic.id).run.summary, /Target checkout must be clean/);
     assert.equal(await fs.readFile(path.join(fixture.repository, 'b.txt'), 'utf8'), 'user change\n');
   } finally { app.close(); await fixture.dispose(); }
 });

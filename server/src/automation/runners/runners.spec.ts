@@ -4,10 +4,19 @@ import { mkdtemp, mkdir, writeFile, readFile, rm } from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
 import { NativeAgentRunner } from './native-runner.js';
+import { openCodeOutcome } from './opencode-outcome.js';
 import { ModelApiRunner } from './model-api-runner.js';
 import { ProcessExecutor, type ProcessRequest } from './process-executor.js';
 import { NativeExecutable } from './native-executable.js';
 import { DEFAULT_AUTOMATION_SETTINGS, type AgentJob, type RunnerId } from '../../../../shared/automation/contracts.js';
+
+test('OpenCode selects the last structured verdict among commentary and repeated answers', () => {
+  const last = { verdict: 'blocked', summary: 'Unfinished {work}', screenshots: [] };
+  const output = ['Reading files', '{"verdict":"pass","summary":"draft"}', 'More commentary',
+    '```json', JSON.stringify(last, null, 2), '```', 'End of response'].join('\n');
+  assert.deepEqual(JSON.parse(openCodeOutcome(output)), last);
+  assert.equal(openCodeOutcome('No verdict'), 'No verdict');
+});
 
 test('native adapters preserve model, prompt and native result/error envelopes', async () => {
   const cwd = await mkdtemp(path.join(os.tmpdir(), 'sat-adapters-'));

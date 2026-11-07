@@ -13,6 +13,29 @@ function exampleSettings(): AutomationSettings {
     pipeline: ['analyst', 'developer', 'tester', 'reviewer'], checks: [{ command: 'node', args: ['--version'] }] };
 }
 
+test('resume can replace only the failed stage using a configured profile for the same role', () => {
+  const app = createContainer({ config: { dbPath: ':memory:' }, logger: new SilentLogger() });
+  try {
+    const service = app.automationService;
+    const settings = exampleSettings();
+    service.configure(settings);
+    const task = app.taskService.createTask({ title: 'Resume fixture' });
+    const queued = service.enqueue(task.id);
+    const claimed = service.claim('worker')!;
+    service.beginStage(claimed.id, claimed.leaseToken!);
+    service.fail(claimed.id, claimed.leaseToken!, 'Provider quota exhausted');
+    service.configure({ ...settings, agents: settings.agents.map(agent =>
+      agent.role === 'analyst' ? { ...agent, runner: 'opencode', model: 'ollama/fixture' } : agent) });
+    assert.throws(() => service.resume(queued.id, 'developer'), /same role/);
+    const resumed = service.resume(queued.id, 'analyst', 'ollama/selected');
+    assert.equal(resumed.stage, claimed.stage);
+    assert.equal(resumed.id, queued.id);
+    assert.equal(resumed.usageAttempts?.length, 1);
+    assert.deepEqual(resumed.settings.pipeline.slice(1), settings.pipeline.slice(1));
+    assert.equal(resumed.settings.agents.find(agent => agent.id === resumed.settings.pipeline[0])?.model, 'ollama/selected');
+  } finally { app.close(); }
+});
+
 test('run budgets survive resume, include cached input once, and fence new agent calls', () => {
   let now = '2026-10-25T00:00:00.000Z';
   const app = createContainer({ config: { dbPath: ':memory:' }, clock: { now: () => now }, logger: new SilentLogger() });

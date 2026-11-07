@@ -295,13 +295,24 @@
                       [ngModel]="commentDraft()"
                       (ngModelChange)="commentDraft.set($event)"
                     ></textarea>
+                    @for (image of commentImages(); track $index) {
+                      <p-image [src]="imageUrl(image)" [preview]="true" alt="Скриншот комментария" width="80"></p-image>
+                      <p-button icon="pi pi-times" ariaLabel="Удалить скриншот из комментария" size="small" [text]="true"
+                        (onClick)="removeCommentImage($index)" />
+                    }
                     <p-button
                       label="Отправить"
                       icon="pi pi-send"
                       size="small"
-                      [disabled]="!commentDraft().trim()"
+                      [disabled]="!commentDraft().trim() || store.busy()"
                       (onClick)="submitComment()"
                     ></p-button>
+                    @if (card.status === 'review') {
+                      <p-button label="Вернуть на доработку" icon="pi pi-replay" severity="secondary" size="small"
+                        [disabled]="!commentDraft().trim() || store.busy()" (onClick)="submitComment(true)" />
+                      <p-button label="Принять и слить" icon="pi pi-check" severity="success" size="small"
+                        [disabled]="store.busy()" (onClick)="acceptAutomation()" />
+                    }
                   </div>
 
                   <sat-decision-log [events]="card.events" />
@@ -321,7 +332,10 @@
                                   <p-tag [value]="commentKindLabel(comment.kind)" severity="secondary" [rounded]="true"></p-tag>
                                   <span class="comment-time">{{ formatDateTime(comment.createdAt) }}</span>
                                 </header>
-                                <p>{{ comment.text }}</p>
+                                <p>{{ commentText(comment.text) }}</p>
+                                @for (image of commentScreenshots(comment.text); track $index) {
+                                  <p-image [src]="imageUrl(image)" [preview]="true" alt="Скриншот комментария" width="120"></p-image>
+                                }
                               </li>
                             }
                           </ul>

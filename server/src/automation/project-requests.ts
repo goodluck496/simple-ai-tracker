@@ -14,6 +14,7 @@ export class ProjectRequests {
   public status(): HostStatus { const state = this.read(); return { online: !!state.lastSeen && this.now() - state.lastSeen < PROJECT_LIMITS.requestMs, workerId: state.workerId, lastSeen: state.lastSeen, platform: state.platform, execution: state.execution, executionDesired: state.executionDesired }; }
   public enqueue(input: ProjectInput, internal = false): ProjectRequest {
     if (input?.action === ProjectAction.Cleanup && (!internal || !input.cleanup)) throw new TrackerError('VALIDATION_FAILED', 'Очистку запуска создаёт только сервис запусков.');
+    if (input?.action === ProjectAction.Diff && (!internal || !input.diff)) throw new TrackerError('VALIDATION_FAILED', 'Diff запрашивается по сохранённому запуску.');
     if (!input || !Object.values(ProjectAction).includes(input.action) || typeof input.path !== 'string' || input.path.length > 4096) throw new TrackerError('VALIDATION_FAILED', 'Некорректный запрос проекта.');
     if (input.action === ProjectAction.CreateBranch && (!input.baseBranch || !input.newBranch || input.baseBranch.length > 250 || input.newBranch.length > 250)) throw new TrackerError('VALIDATION_FAILED', 'Укажите исходную и новую ветки.');
     let catalog: ProjectInput['catalog'];
@@ -33,7 +34,7 @@ export class ProjectRequests {
         if (previous) return this.public(previous);
       }
       if (!internal && state.requests.some((r) => r.status === ProjectRequestStatus.Queued || r.status === ProjectRequestStatus.Running)) throw new TrackerError('CONFLICT', 'Предыдущий запрос к worker ещё выполняется.');
-      const request: ProjectRequest = { action: input.action, path: input.path, baseBranch: input.baseBranch, newBranch: input.newBranch, catalog, cleanup: input.cleanup,
+      const request: ProjectRequest = { action: input.action, path: input.path, baseBranch: input.baseBranch, newBranch: input.newBranch, catalog, cleanup: input.cleanup, diff: input.diff,
         id: randomUUID(), status: ProjectRequestStatus.Queued, createdAt: this.now(), ...(control ? { targetWorkerId: state.workerId } : {}) };
       const retained = state.requests.filter((r, index) => r.status === ProjectRequestStatus.Queued || r.status === ProjectRequestStatus.Running || index >= state.requests.length - PROJECT_LIMITS.maxHistory + 1);
       if (control) state.executionDesired = input.action === ProjectAction.StartWorker;

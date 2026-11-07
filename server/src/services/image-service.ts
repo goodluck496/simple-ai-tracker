@@ -38,7 +38,7 @@ export class ImageService {
   }
 
   /** Сохраняет data-URL в файл и возвращает публичный URL. */
-  public storeDataUrl(dataUrl: string): StoredImage {
+  public storeDataUrl(dataUrl: string, deduplicate = false): StoredImage {
     const match = /^data:([\w/+.-]+);base64,([\s\S]+)$/.exec((dataUrl ?? '').trim());
     if (!match) {
       throw new TrackerError('VALIDATION_FAILED', 'Ожидается data-URL изображения (data:image/png;base64,…).');
@@ -61,8 +61,10 @@ export class ImageService {
     }
 
     fs.mkdirSync(this.config.imagesDir, { recursive: true });
-    const fileName = `${crypto.randomBytes(12).toString('hex')}.${extension}`;
-    fs.writeFileSync(path.join(this.config.imagesDir, fileName), buffer);
+    const key = deduplicate ? crypto.createHash('sha256').update(buffer).digest('hex') : crypto.randomBytes(12).toString('hex');
+    const fileName = `${key}.${extension}`;
+    const filePath = path.join(this.config.imagesDir, fileName);
+    if (!deduplicate || !fs.existsSync(filePath)) fs.writeFileSync(filePath, buffer);
     this.logger?.info('Сохранено изображение', { fileName, size: buffer.length });
 
     return { url: `/api/images/${fileName}`, fileName, size: buffer.length };

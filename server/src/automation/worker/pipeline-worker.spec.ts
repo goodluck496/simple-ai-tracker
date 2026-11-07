@@ -18,7 +18,7 @@ test('worker runs isolated Git pipeline, executes real checks, fixes review find
   await mkdir(repo);
   const executor = new ProcessExecutor();
   const git = (args: string[]) => executor.run({ command: 'git', args, cwd: repo, signal: AbortSignal.timeout(30000) });
-  const app = createContainer({ config: { dbPath: ':memory:' }, logger: new SilentLogger() });
+  const app = createContainer({ config: { dbPath: ':memory:', imagesDir: path.join(root, 'images') }, logger: new SilentLogger() });
   try {
     await git(['init', '-b', 'main']);
     await git(['config', 'user.email', 'test@example.invalid']);
@@ -31,7 +31,13 @@ if(role==='analyst') plan='# Plan\\nUpdate answer and verify it.';
 if(role==='developer') { fs.writeFileSync('answer.txt',String(Number(fs.readFileSync('answer.txt','utf8'))+1)); const order=JSON.parse(fs.readFileSync('.sat/work-order.json','utf8')); fs.writeFileSync('.sat/work-progress.json',JSON.stringify({workOrderKey:order.workOrderKey,completedSteps:['S1'],summary:'answer updated'})); }
 if(role==='tester'||role==='reviewer') { const order=JSON.parse(fs.readFileSync('.sat/work-order.json','utf8')); require('node:assert').equal(order.previousStage.role,role==='tester'?'developer':'tester'); require('node:assert').ok(order.changedFiles.includes('answer.txt')); if(role==='reviewer') require('node:assert').equal(order.previousStage.checks.length,1); }
 if(role==='reviewer' && fs.readFileSync('answer.txt','utf8')!=='2') verdict='changes_requested';
-process.stdout.write(JSON.stringify({verdict,summary:role+': '+verdict,plan,commitMessage:'[#SAT-1] - Изменено значение ответа, чтобы проверить ожидаемое поведение'}));`, 'utf8');
+const screenshots = [];
+if(role==='tester') {
+  fs.mkdirSync('.sat/screenshots',{recursive:true});
+  fs.writeFileSync('.sat/screenshots/evidence.png',Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/l2QAAAAASUVORK5CYII=','base64'));
+  screenshots.push('.sat/screenshots/evidence.png');
+}
+process.stdout.write(JSON.stringify({verdict,summary:role+': '+verdict,plan,screenshots,commitMessage:'[#SAT-1] - Изменено значение ответа, чтобы проверить ожидаемое поведение'}));`, 'utf8');
     const roles = ['analyst', 'developer', 'tester', 'reviewer'] as const;
     const settings: AutomationSettings = { ...structuredClone(DEFAULT_AUTOMATION_SETTINGS), repositoryPath: repo, mergePolicy: 'local',
       connections: [{ id: 'fixture', label: 'Deterministic fixture', kind: 'native', supportsImages: false }],
@@ -48,12 +54,19 @@ process.stdout.write(JSON.stringify({verdict,summary:role+': '+verdict,plan,comm
       return JSON.parse(text) as T;
     } }, 'fixture-worker', executor);
     assert.equal(await worker.tick(), true);
+    assert.equal(app.automationService.detail(run.id).run.status, 'review');
+    app.automationService.reviewTask(task.id, 'accept');
+    assert.equal(await worker.tick(), true);
     const detail = app.automationService.detail(run.id);
     assert.equal(detail.run.status, 'merged', detail.run.summary);
     assert.equal(detail.run.revision, 1);
     assert.equal(detail.run.usageAttempts!.length, 7, 'Every role invocation, including revisions, retains its own token attempt');
     assert.ok(detail.run.usageAttempts!.every((attempt) => attempt.finished && !attempt.usage), 'Custom CLI output without usage remains unknown');
-    assert.equal(app.taskService.getTaskCard(task.id).status, 'review');
+    assert.equal(app.taskService.getTaskCard(task.id).status, 'done');
+    const images = app.taskService.getTaskCard(task.id).images;
+    assert.equal(images.length, 1, 'Repeated tester evidence is attached only once');
+    const imageName = new URL(images[0].url, 'http://tracker.test').pathname.split('/').pop()!;
+    assert.ok(app.imageService.resolveFile(imageName));
     assert.equal(await readFile(path.join(repo, 'answer.txt'), 'utf8'), '2');
     assert.equal((await git(['log', '--format=%s', '-1'])).trim(), '[#SAT-1] - Изменено значение ответа, чтобы проверить ожидаемое поведение');
     assert.equal((await git(['rev-list', '--count', 'HEAD'])).trim(), '2', 'One squash commit in target');

@@ -5,6 +5,9 @@ import { DatePipe, DecimalPipe } from '@angular/common';
 import { TableModule } from 'primeng/table';
 import { ButtonModule } from 'primeng/button';
 import { FormsModule } from '@angular/forms';
+import { SelectModule } from 'primeng/select';
+import { PROJECT_LIMITS, ProjectAction, ProjectRequestStatus, type ProjectDiff, type ProjectRequest } from '../../../../../shared/automation/project';
+import type { ModelCatalogInput, ModelOption } from '../../../../../shared/automation/model-catalog';
 import { CheckboxModule } from 'primeng/checkbox';
 import { TokenMeter } from '../../../../../shared/automation/token-usage';
 import { RunBudget } from '../../../../../shared/automation/budget';
@@ -13,8 +16,8 @@ import { RunActivityComponent } from './run-activity.component';
 import { ACTIVITY_TIMING } from '../../../../../shared/automation/queue-activity';
 import { HttpClient } from '@angular/common/http';
 import { takeUntilDestroyed, toObservable, toSignal } from '@angular/core/rxjs-interop';
-import { EMPTY, Subject, catchError, combineLatest, exhaustMap, finalize, map, merge, of, switchMap, tap, timer } from 'rxjs';
-import { AUTOMATION_TIMING, RunStatus, RunAction, type AgentRun, type RunEvent } from '../../../../../shared/automation/contracts';
+import { EMPTY, Subject, catchError, combineLatest, exhaustMap, filter, finalize, map, merge, of, switchMap, take, tap, timeout, timer, type Observable } from 'rxjs';
+import { AUTOMATION_TIMING, RunStatus, RunAction, type AgentRun, type AutomationSettings, type RunEvent } from '../../../../../shared/automation/contracts';
 import { QUEUE_LANES, QUEUE_LIMITS, RUN_EVENT_TITLES, RUN_PHASE_TITLES, RUN_STATUS_TITLES, INTEGRATION_STATE_TITLES, QueuePresentation, RunProgressText,
   type QueueItem, type QueueSnapshot, type QueueLane } from '../../../../../shared/automation/queue';
 import { ROLE_OPTIONS } from '../../../../../shared/automation/presets';
@@ -23,7 +26,7 @@ import { WorkspaceService } from '../../services/workspace.service';
 import { filterQueueItems } from './queue-search';
 import { formatQueueDate, sortRunHistory } from './queue-dates';
 
-@Component({ selector: 'sat-automation-queue', standalone: true, imports: [DatePipe, DecimalPipe, RunConsoleComponent, RunActivityComponent, TableModule, ButtonModule, FormsModule, CheckboxModule, DialogModule],
+@Component({ selector: 'sat-automation-queue', standalone: true, imports: [DatePipe, DecimalPipe, RunConsoleComponent, RunActivityComponent, TableModule, ButtonModule, FormsModule, CheckboxModule, DialogModule, SelectModule],
   changeDetection: ChangeDetectionStrategy.OnPush, templateUrl: './automation-queue.component.html', styleUrl: './automation-queue.component.scss' })
 export class AutomationQueueComponent {
   private readonly http = inject(HttpClient);
@@ -129,6 +132,84 @@ export class AutomationQueueComponent {
   public resumeBudgetBlocked(item: QueueItem): boolean {
     const run = this.detail()?.run;
     return !!run && run.id === item.id && !!RunBudget.reason(run, this.now(), run.stage < run.settings.pipeline.length);
+  }
+  public readonly replacement = signal<{ runId: string; options: { id: string; label: string; model: string; catalog: ModelCatalogInput }[] } | null>(null);
+  public replacementProfileId = '';
+  public replacementModel = '';
+  public readonly replacementModels = signal<ModelOption[]>([]);
+  public readonly replacementLoading = signal(false);
+  public readonly replacementError = signal('');
+  public chooseReplacement(run: AgentRun): void {
+    const role = run.settings.agents.find(agent => agent.id === run.settings.pipeline[run.stage])?.role;
+    this.replacementProfileId = '';
+    this.http.get<AutomationSettings>('/api/automation/settings').pipe(takeUntilDestroyed(this.destroyRef)).subscribe({
+      next: settings => {
+        const options = settings.agents.filter(agent => agent.role === role).flatMap(agent => {
+          const connection = settings.connections.find(entry => entry.id === agent.connectionId);
+          return connection ? [{ id: agent.id, label: `${agent.runner} · ${connection.label} · ${agent.model}`, model: agent.model,
+            catalog: { runner: agent.runner, connection } }] : [];
+        });
+        this.replacement.set({ runId: run.id, options });
+        if (options.length === 1) this.loadReplacementModels(options[0].id);
+      },
+      error: error => this.error.set(this.message(error)),
+    });
+  }
+  public loadReplacementModels(id: string): void {
+    const choice = this.replacement();
+    const option = choice?.options.find(entry => entry.id === id);
+    if (!option || this.replacementLoading()) return;
+    this.replacementProfileId = id;
+    this.replacementModel = option.model;
+    this.replacementModels.set([{ id: option.model, label: option.model }]);
+    this.replacementError.set('');
+    this.replacementLoading.set(true);
+    this.awaitProject(this.http.post<ProjectRequest>('/api/automation/project-requests', { action: ProjectAction.Models, path: '', catalog: option.catalog })).pipe(
+      finalize(() => this.replacementLoading.set(false)),
+      takeUntilDestroyed(this.destroyRef),
+    ).subscribe({
+      next: result => {
+        if (this.replacement() !== choice) return;
+        if (result.status === ProjectRequestStatus.Failed) {
+          this.replacementError.set(result.error ?? 'Не удалось загрузить модели.');
+          return;
+        }
+        const models = result.result?.models ?? [];
+        this.replacementModels.set(models.some(model => model.id === option.model)
+          ? models : [{ id: option.model, label: option.model }, ...models]);
+      },
+      error: error => { if (this.replacement() === choice) this.replacementError.set(this.message(error)); },
+    });
+  }
+  private awaitProject(request: Observable<ProjectRequest>) {
+    return request.pipe(switchMap(created => timer(0, PROJECT_LIMITS.pollMs).pipe(
+      exhaustMap(() => this.http.get<ProjectRequest>(`/api/automation/project-requests/${created.id}`)),
+      filter(result => result.status === ProjectRequestStatus.Completed || result.status === ProjectRequestStatus.Failed),
+      take(1),
+    )), timeout(PROJECT_LIMITS.requestMs + PROJECT_LIMITS.pollMs));
+  }
+  public readonly runDiff = signal<{ id: string; wholeRun: boolean; loading?: boolean; result?: ProjectDiff; error?: string } | null>(null);
+  public loadRunDiff(id: string, wholeRun: boolean): void {
+    const pending = { id, wholeRun, loading: true };
+    this.runDiff.set(pending);
+    this.awaitProject(this.http.post<ProjectRequest>(`/api/automation/runs/${id}/diff`, { wholeRun }))
+      .pipe(takeUntilDestroyed(this.destroyRef)).subscribe({
+        next: reply => {
+          if (this.runDiff() !== pending) return;
+          this.runDiff.set({ id, wholeRun, result: reply.result?.diff, error: reply.error });
+        },
+        error: error => { if (this.runDiff() === pending) this.runDiff.set({ id, wholeRun, error: this.message(error) }); },
+      });
+  }
+  public resumeWithReplacement(run: AgentRun): void {
+    if (this.busy() || !this.replacementProfileId || !this.replacementModel || this.replacement()?.runId !== run.id) return;
+    this.busy.set(true);
+    this.error.set('');
+    this.http.post(`/api/automation/runs/${run.id}/resume`, { replacementProfileId: this.replacementProfileId, replacementModel: this.replacementModel })
+      .pipe(finalize(() => this.busy.set(false)), takeUntilDestroyed(this.destroyRef)).subscribe({
+        next: () => { this.replacement.set(null); this.refresh.next(); },
+        error: error => this.error.set(this.message(error)),
+      });
   }
   public health(item: QueueItem): string { return QueuePresentation.health(item, this.now(), this.snapshot().host); }
   public role(role: string): string { return ROLE_OPTIONS.find((entry) => entry.value === role)?.label ?? role; }
@@ -303,15 +384,14 @@ export class AutomationQueueComponent {
     this.busy.set(true);
     this.error.set('');
     this.http.post<{ run: AgentRun }>(`/api/automation/runs/${id}/fix/apply`, {})
-      .pipe(finalize(() => this.busy.set(false)), takeUntilDestroyed(this.destroyRef))
+      .pipe(switchMap(result => result.run.status === RunStatus.Queued ? of(result)
+        : this.http.post<{ run: AgentRun }>(`/api/automation/runs/${id}/resume`, {})),
+        finalize(() => this.busy.set(false)), takeUntilDestroyed(this.destroyRef))
       .subscribe({
         next: () => {
           this.showFixDialog.set(false);
-          this.notice.set('Авто-исправление применено. Запуск возобновляется.');
-          this.http.post<{ run: AgentRun }>(`/api/automation/runs/${id}/resume`, {}).subscribe({
-            next: () => this.refresh.next(),
-            error: (err) => this.error.set(this.message(err))
-          });
+          this.notice.set('Запуск поставлен в очередь.');
+          this.refresh.next();
         },
         error: (err) => this.error.set(this.message(err)),
       });
@@ -327,7 +407,7 @@ export class AutomationQueueComponent {
       .subscribe({
         next: () => {
           this.showFixDialog.set(false);
-          this.notice.set('Предложенное исправление отменено, изменения откатаны.');
+          this.notice.set('Предложение диагностики отклонено.');
           this.refresh.next();
         },
         error: (err) => this.error.set(this.message(err)),

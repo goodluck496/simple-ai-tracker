@@ -51,6 +51,8 @@ test('parallel pipelines across workspaces isolate identical task IDs and squash
       if (result.isError) throw new Error(text); return JSON.parse(text) as T;
     } });
     await Promise.all([new PipelineWorker(channel('default'), 'one', f.executor, new Fixtures()).tick(), new PipelineWorker(channel('other'), 'two', f.executor, new Fixtures()).tick()]);
+    prepared.forEach(({ task }, index) => app.workspaceManager.within(spaces[index], () => app.automationService.reviewTask(task.id, 'accept')));
+    await Promise.all([new PipelineWorker(channel('default'), 'one', f.executor, new Fixtures()).tick(), new PipelineWorker(channel('other'), 'two', f.executor, new Fixtures()).tick()]);
     const final = prepared.map(({ run }, index) => app.workspaceManager.within(spaces[index], () => app.automationService.detail(run.id).run));
     assert.ok(final.every(run => run.status === 'merged'), JSON.stringify(final.map(run => ({ status: run.status, summary: run.summary }))));
     assert.equal(resolvers, 1); assert.equal(developers, 2);
@@ -58,6 +60,6 @@ test('parallel pipelines across workspaces isolate identical task IDs and squash
     assert.equal(final.flatMap(run => run.usageAttempts ?? []).filter(a => a.kind === 'resolver').length, 1);
     assert.equal((await f.git(['rev-list', '--count', 'master'])).trim(), '3');
     assert.equal(await readFile(path.join(f.repository, 'a.txt'), 'utf8'), '5\n');
-    assert.ok(prepared.every(({ task }, index) => app.workspaceManager.within(spaces[index], () => app.taskService.getTaskCard(task.id).status === 'review')));
+    assert.ok(prepared.every(({ task }, index) => app.workspaceManager.within(spaces[index], () => app.taskService.getTaskCard(task.id).status === 'done')));
   } finally { app.close(); await f.dispose(); }
 });

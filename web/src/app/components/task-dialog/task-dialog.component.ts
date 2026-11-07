@@ -144,6 +144,8 @@ export class TaskDialogComponent {
   public readonly tags = signal<readonly string[]>([]);
   public readonly tagDraft = signal('');
   public readonly commentDraft = signal('');
+  public readonly commentImages = signal<string[]>([]);
+  private readonly commentImagePattern = /^\[скриншот\] (\/api\/images\/[a-z0-9]{8,64}\.(?:png|jpg|webp|gif)(?:\?workspace=[\w%-]+)?)$/;
   public readonly clarificationDraft = signal('');
   public readonly clarificationReason = signal('');
   public readonly clarificationImpact = signal('');
@@ -388,12 +390,37 @@ export class TaskDialogComponent {
     this.closed.emit();
   }
 
-  public async submitComment(): Promise<void> {
+  public async submitComment(returnToWork = false): Promise<void> {
     const card = this.task();
     const text = this.commentDraft().trim();
-    if (!card || !text) return;
-    await this.store.addComment(card.id, text);
-    this.commentDraft.set('');
+    if (!card || !text || (returnToWork && card.status !== 'review')) return;
+    const message = [text, ...this.commentImages().map(url => `[скриншот] ${url}`)].join('\n');
+    const saved = returnToWork ? await this.store.reviewAutomation(card.id, 'rework', message)
+      : await this.store.addComment(card.id, message);
+    if (saved && this.task()?.id === card.id) {
+      if (returnToWork) this.status.set(this.task()!.status);
+      this.commentDraft.set('');
+      this.commentImages.set([]);
+    }
+  }
+
+  public async acceptAutomation(): Promise<void> {
+    const card = this.task();
+    if (card?.status === 'review' && await this.store.reviewAutomation(card.id, 'accept') && this.task()?.id === card.id) {
+      this.status.set(this.task()!.status);
+    }
+  }
+
+  public commentText(text: string): string {
+    return text.split('\n').filter(line => !this.commentImagePattern.test(line)).join('\n');
+  }
+
+  public commentScreenshots(text: string): string[] {
+    return text.split('\n').flatMap(line => this.commentImagePattern.exec(line)?.[1] ?? []);
+  }
+
+  public removeCommentImage(position: number): void {
+    this.commentImages.update(images => images.filter((_, index) => index !== position));
   }
 
   public async submitClarification(): Promise<void> {
@@ -490,7 +517,11 @@ export class TaskDialogComponent {
       }
     }
     if (files.length === 0) files.push(...Array.from(clipboard.files ?? []));
-    if (files.length > 0) void this.processImageFiles(files);
+    if (files.length > 0) {
+      const inComment = event.target instanceof HTMLElement && !!event.target.closest('.comment-form');
+      if (inComment) event.preventDefault();
+      void this.processImageFiles(files, inComment ? this.commentImages : this.images);
+    }
   }
 
   public onDragOverFiles(event: DragEvent): void {
@@ -520,13 +551,13 @@ export class TaskDialogComponent {
   }
 
   /** Читает изображения и загружает их на сервер (/api/images). */
-  private async processImageFiles(files: readonly File[]): Promise<void> {
+  private async processImageFiles(files: readonly File[], target = this.images): Promise<void> {
     for (const file of files) {
       if (!file.type.startsWith('image/')) continue;
       const dataUrl = await readFileAsDataUrl(file);
       if (!dataUrl) continue;
       const url = await this.store.uploadImage(dataUrl);
-      if (url) this.images.update((current) => [...current, url]);
+      if (url) target.update((current) => [...current, url]);
     }
   }
 
@@ -660,6 +691,7 @@ export class TaskDialogComponent {
     this.images.set(card.images.map((image) => image.url));
     this.attachments.set(card.attachments);
     this.commentDraft.set('');
+    this.commentImages.set([]);
     this.tab.set(card.openQuestionsCount > 0 ? 'questions' : 'overview');
   }
 

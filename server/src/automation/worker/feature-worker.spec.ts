@@ -114,6 +114,7 @@ test('feature asks before dispatch, resumes legacy budget checkpoint automatical
     assert.equal(app.automationService.detail(run.id).run.status, 'failed');
     assert.match(app.automationService.detail(run.id).run.summary, /acknowledgement failure/);
     app.automationService.resume(run.id); await worker().tick();
+    app.automationService.reviewTask(task.id, 'accept'); await worker().tick();
     const result = app.automationService.detail(run.id).run;
     assert.equal(result.status, 'merged', result.summary);
     assert.equal(analyses, 2, 'Automatic call budget reuses the completed analyst checkpoint');
@@ -128,7 +129,7 @@ test('feature asks before dispatch, resumes legacy budget checkpoint automatical
       assert.equal(child.state, 'merged'); assert.equal(app.taskService.getTaskCard(child.taskId).status, 'review');
       assert.match(await git(['log', '-1', '--format=%s', child.mergedSha!]), new RegExp(`\\[#${child.taskId}\\]`));
     }
-    assert.equal(app.taskService.getTaskCard(task.id).status, 'review');
+    assert.equal(app.taskService.getTaskCard(task.id).status, 'done');
     assert.equal(await readFile(path.join(repo, 'alpha.txt'), 'utf8'), 'alpha'); assert.equal(await readFile(path.join(repo, 'beta.txt'), 'utf8'), 'beta2');
     assert.equal((await git(['rev-list', '--count', `${initial}..HEAD`])).trim(), '1', 'Main receives one aggregate squash');
     assert.equal((await readFile(checked, 'utf8')).split('checked').length - 1, 2, 'Full checks only aggregate tester and final merge candidate');

@@ -12,6 +12,7 @@ import { AntigravityResult } from './antigravity-result.js';
 import { WorktreePermissions } from './worktree-permissions.js';
 import { AntigravityStream } from './antigravity-stream.js';
 import { StageNotes } from '../../../../shared/automation/stage-note.js';
+import { openCodeOutcome } from './opencode-outcome.js';
 
 interface Envelope { type?: string; is_error?: boolean; result?: string; response?: string; status?: string; session_id?: string; conversation_id?: string; item?: { type?: string; text?: string }; part?: { type?: string; text?: string }; }
 const NATIVE_SUCCESS_STATUSES = new Set(['SUCCESS', 'success']);
@@ -169,6 +170,7 @@ export class NativeAgentRunner implements AgentRunner {
       if (envelope.type === 'text' && envelope.part?.text) answer += envelope.part.text;
     }
     // DeepSeek/custom profiles may use a different event envelope; preserve output for strict outcome parsing.
-    return { text: answer || raw.trim(), sessionId, usage: meter.usage };
+    const finalText = answer || raw.trim();
+    return { text: this.id === RunnerId.OpenCode ? openCodeOutcome(finalText) : finalText, sessionId, usage: meter.usage };
   }
 }

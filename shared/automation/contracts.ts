@@ -109,7 +109,7 @@ export interface ProposedFix {
   files: string[];
   createdAt: string;
   scope?: 'worktree' | 'repository';
-  action?: 'commit_dirty_repo' | 'patch_code' | 'switch_branch' | 'retry_stage';
+  action?: 'commit_dirty_repo' | 'patch_code' | 'switch_branch' | 'retry_stage' | 'advice_only';
   model?: string;
 }
 
@@ -124,6 +124,8 @@ export interface AgentRun {
   feature?: import('./decomposition.js').FeatureExecution;
   integrationSourceSha?: string;
   mergeReviewRequired?: boolean;
+  acceptedSha?: string;
+  reviewFeedback?: string;
   checkout?: { repositoryRoot: string; worktreePath: string; baseSha: string; dependencyMode: 'isolated' | 'linked'; dependencyKey?: string; dependencyNote?: string };
   integration?: IntegrationInfo;
   mergeMessage?: string;
@@ -162,6 +164,7 @@ export interface IntegrationInfo {
 }
 export interface RunEvent { id: number; runId: string; at: string; kind: string; text: string; }
 export interface AgentOutcome {
+  screenshots?: string[];
   decomposition?: import('./decomposition.js').DecomposedTask[];
   delivery?: { childKey: string; sourceSha: string; mergedSha: string };
   commitMessage?: string;
@@ -172,6 +175,7 @@ export interface AgentOutcome {
 }
 
 export interface AgentJob {
+  reviewImageData?: string[];
   /** Worker barrier: source reads/planning may run while dependencies are prepared. */
   waitForPreparation?: () => Promise<void>;
   baseSha?: string;

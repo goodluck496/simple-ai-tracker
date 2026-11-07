@@ -29,6 +29,7 @@ import type { StageEvidence } from '../../../../shared/automation/work-order.js'
 import { WorkOrder } from '../../../../shared/automation/work-order.js';
 import { Decomposition } from '../../../../shared/automation/decomposition.js';
 import type { WorktreeCodeGraph } from './code-navigation.js';
+import { readStageScreenshots } from './stage-screenshots.js';
 
 export class PipelineWorker {
   private activeController?: AbortController;
@@ -152,19 +153,7 @@ export class PipelineWorker {
       let newCheckout = false;
       try { await fs.access(cwd); }
       catch {
-        // A separate worktree starts from the selected committed base and cannot
-        // overwrite unrelated main-checkout edits. Only automatic publication
-        // needs a clean main checkout; manual review must remain usable.
-        if (run!.settings.mergePolicy === MergePolicy.Local && (await git(['status', '--porcelain'])).trim()) {
-          if (run!.summary?.includes('Применено авто-исправление') || run!.summary?.includes('WIP') || run!.summary?.includes('сохранение')) {
-            await git(['add', '-A', '--', '.']);
-            await git(['commit', '-m', `[#${run!.taskId}] - WIP: сохранение локальных изменений перед запуском конвейера`]);
-          } else {
-            throw new Error('Automatic integration requires a clean target checkout. Preserve its changes or select manual review before starting.');
-          }
-        }
-        if (run!.settings.mergePolicy === MergePolicy.Local && (await git(['branch', '--show-current'])).trim() !== run!.settings.baseBranch)
-          throw new Error('Target branch must be checked out before automatic integration.');
+        // Isolated work starts from the committed base. Only publication needs a clean target checkout.
         await fs.mkdir(path.dirname(cwd), { recursive: true });
         await git(['worktree', 'add', '-b', branch, cwd, run!.integrationSourceSha ?? run!.settings.baseBranch]);
         newCheckout = true;
@@ -277,7 +266,21 @@ export class PipelineWorker {
         if (packet.length > HANDOFF_LIMITS.taskChars) throw new Error('Role handoff with checkpoints exceeds the context limit; split the task.');
         const diff = ''; // Every role reads focused current Git/source evidence; no source dump is transferred.
         const feedback = previous && run.summary.startsWith(previous.summary) ? '' : run.summary;
+        const reviewImages: string[] = [];
+        const reviewImageData: string[] = [];
+        if (run.reviewFeedback) {
+          const images = await this.channel.call<{ name: string; base64: string }[]>(AutomationTool.ReviewEvidence, { id: run.id, leaseToken: token });
+          for (const image of images) {
+            const relative = `.sat/review-${run.revision}-${image.name}`;
+            await fs.writeFile(path.join(cwd, relative), Buffer.from(image.base64, 'base64'), { flag: 'wx' })
+              .catch(error => { if (error.code !== 'EEXIST') throw error; });
+            reviewImages.push(relative);
+            const extension = path.extname(image.name).slice(1);
+            reviewImageData.push(`data:image/${extension === 'jpg' ? 'jpeg' : extension};base64,${image.base64}`);
+          }
+        }
         const prompt = this.prompt(profile.role, profile.instructions, context, feedback, diff, run.settings.artifactPaths, run.settings.checks, run.checkout, packet)
+          + (run.reviewFeedback ? `\nHuman acceptance feedback:\n${AgentHandoff.feedback(run.reviewFeedback)}\nFeedback screenshots in worktree: ${JSON.stringify(reviewImages)}. Inspect them if your tools support images.\n` : '')
           + (overlapPreparation ? '\nDependencies are being prepared concurrently. Start with source reads and save_progress planning in this conversation. Write/edit/check/project tools automatically wait for successful setup. Recheck any generated source relevant to your plan after setup; do not install dependencies yourself.\n' : '')
           + (run.trustedExecution ? '\nTrusted execution: worker token/time/tool/call/revision quotas are disabled. Continue to completion unless blocked or manually stopped.\n'
             : `\nObserved tool budget for this stage: ${run.settings.maxStageToolCalls ?? 24}. Use tools for the current implementation/check, then finish with the requested outcome.\n`)
@@ -336,7 +339,7 @@ export class PipelineWorker {
           run = await this.channel.call<AgentRun>(AutomationTool.Heartbeat, { id: run.id, leaseToken: token });
           armBudget();
           const result = await this.registry.get(profile.runner).run({ runId: run.id, cwd, prompt, profile, connection, settings: run.settings, trustedExecution: run.trustedExecution, signal: controller.signal,
-            baseSha: baseline, onCheckpoint: note => journal.checkpoint(note), waitForPreparation,
+            baseSha: baseline, onCheckpoint: note => journal.checkpoint(note), waitForPreparation, reviewImageData,
             sessionId: profile.runner === 'antigravity' ? memory?.conversationId : undefined,
             sessionUsage: memory?.conversationId ? (run.usageAttempts ?? [])
               .filter(attempt => attempt.nativeSessionId === memory.conversationId && attempt.usage?.source === 'antigravity-json')
@@ -393,6 +396,7 @@ export class PipelineWorker {
         saved = { key, head: priorSha, fingerprint: '', priorHead: priorSha, priorStatus, outcome };
         if (outcome.verdict === AgentVerdict.Pass) await checkpoint.save(saved);
         }
+        const screenshots = await readStageScreenshots(cwd, outcome.screenshots);
         if (profile.role === AgentRole.Developer && !pack.plan && outcome.verdict === AgentVerdict.Pass) {
           const latest = await this.channel.call<Record<string, unknown>>('tracker_get_task', { id: stageTaskId, commentsLimit: 1 });
           if (!latest.plan) { await checkpoint.invalidate(); throw new Error('Developer must save implementationPlan through the stage checkpoint before editing sources.'); }
@@ -454,7 +458,8 @@ export class PipelineWorker {
           sha = delivered.candidateSha ?? delivered.baseSha;
           outcome = { ...outcome, delivery: { childKey: child.key, sourceSha, mergedSha: sha } };
         }
-        run = await this.channel.call<AgentRun>(AutomationTool.CompleteStage, { id: run.id, leaseToken: token, outcome, branch, commitSha: sha });
+        run = await this.channel.call<AgentRun>(AutomationTool.CompleteStage, { id: run.id, leaseToken: token, outcome, branch, commitSha: sha,
+          ...(screenshots.length ? { result: { screenshots } } : {}) });
       }
       cwd = featureCwd;
       if (run.status === RunStatus.Integrating) await integrate(false);
@@ -501,7 +506,8 @@ export class PipelineWorker {
       + `The worker owns the configured full checks after the tester stage and on the squash candidate. Run focused checks for your step or independent scenario only; avoid repeating the full build/test matrix inside every role. Never treat current=false previous-stage evidence as current verification.\n`
       + `Developer/designer: use actual work-order step IDs in the stage-note completedSteps. The stage-note is the only required intermediate journal; do not duplicate it into work-progress.json or other progress files. Resume treats saved notes as unverified hints: confirm the relevant changed files without repeating general analysis. Never change the approved work order yourself.\n`
       + `Configured checks: ${JSON.stringify(checks)}\nVisual artifacts: ${JSON.stringify(artifacts)}\n`
-      + `Only developer/designer may edit files. Do not change branches, commit, merge, publish or alter tracker data directly; the worker handles commits. `
+      + 'If browser tools or a configured check are available, capture relevant UI evidence as PNG in .sat/screenshots. Return up to four relative paths such as .sat/screenshots/bug.png in screenshots, or an empty array. Use separate files for original evidence, annotated copies and before/after views. Describe what each file shows in summary. Screenshots are attached by the worker. '
+      + `Only developer/designer may edit project files. Any role may save screenshot evidence under .sat/screenshots. Do not change branches, commit, merge, publish or alter tracker data directly; the worker handles commits. `
       + `When developer/designer changes files, include commitMessage in the JSON result. Exact format: "[#${(context as { id: string }).id}] - описание на русском, что сделано и для чего". Use an explicit purpose clause (для/чтобы/ради), one line, up to ${CommitMessage.maxLength} characters. Technical names may stay in English. A generic role/stage label is forbidden. Worker rejects invalid messages without recalling the model. `
       + `The worker manages dependency preparation (API source analysis may overlap setup; mutation/check tools wait for readiness). Reuse that environment; only change/install dependencies when required by the task's manifest changes. Do not repeatedly reinstall packages for an unchanged infrastructure failure. `
       + `Dependency mode: ${checkout?.dependencyMode ?? 'isolated'}. Managed linked packages are readonly: never run npm install/ci/rebuild on links. If changing manifests, return the source changes; worker detaches and installs private dependencies before the next role. Use the assigned PORT and temporary directories. Do not start unmanaged background processes or use live databases. `

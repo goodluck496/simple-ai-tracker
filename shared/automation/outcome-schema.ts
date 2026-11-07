@@ -7,9 +7,10 @@ export const AGENT_OUTCOME_SCHEMA = {
     questions: { type: 'array', items: { type: 'string' } },
     plan: { type: 'string' },
     commitMessage: { type: 'string' },
+    screenshots: { type: 'array', items: { type: 'string' } },
     decomposition: { type: 'array', items: { type: 'object', additionalProperties: false,
       properties: { key: { type: 'string' }, title: { type: 'string' }, description: { type: 'string' }, plan: { type: 'string' },
         dependsOn: { type: 'array', items: { type: 'string' } } }, required: ['key', 'title', 'description', 'plan', 'dependsOn'] } },
   },
-  required: ['verdict', 'summary', 'questions', 'plan', 'commitMessage', 'decomposition'],
+  required: ['verdict', 'summary', 'questions', 'plan', 'commitMessage', 'decomposition', 'screenshots'],
 } as const;
