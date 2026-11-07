@@ -4,13 +4,14 @@ import type { SqlDatabase } from '../db/sql-database.js';
 import { TrackerError } from '../core/errors.js';
 import { DEFAULT_AUTOMATION_SETTINGS, RUNNER_IDS, RunnerId, ProviderKind } from '../../../shared/automation/contracts.js';
 import { AutomationSettingsValidator } from './settings.js';
-import { ProjectAction, ProjectRequestStatus, PROJECT_LIMITS, type HostStatus, type ProjectInput, type ProjectRequest, type ProjectResult, type ExecutionStatus } from '../../../shared/automation/project.js';
+import { ProjectAction, ProjectRequestStatus, PROJECT_LIMITS, type HostStatus, type ProjectInput, type ProjectRequest, type ProjectResult, type ExecutionStatus, type ProjectPassport } from '../../../shared/automation/project.js';
 
 const STATE_KEY = 'automation_host_requests_v1';
-interface HostState { workerId?: string; lastSeen?: number; platform?: string; execution?: ExecutionStatus; executionDesired?: boolean; requests: ProjectRequest[]; previewRuns?: string[]; }
+interface HostState { workerId?: string; lastSeen?: number; platform?: string; execution?: ExecutionStatus; executionDesired?: boolean; requests: ProjectRequest[]; passport?: ProjectPassport; previewRuns?: string[]; }
 /** Workspace-scoped mailbox: only the host worker touches its filesystem. */
 export class ProjectRequests {
   public constructor(private readonly meta: MetaRepository, private readonly db: SqlDatabase, private readonly now: () => number = Date.now) {}
+  public passport(): ProjectPassport | undefined { return this.read().passport; }
   public status(): HostStatus { const state = this.read(); return { online: !!state.lastSeen && this.now() - state.lastSeen < PROJECT_LIMITS.requestMs, workerId: state.workerId, lastSeen: state.lastSeen, platform: state.platform, execution: state.execution, executionDesired: state.executionDesired }; }
   public hasPreviewPatch(runId: string): boolean {
     const state = this.read();
@@ -23,11 +24,17 @@ export class ProjectRequests {
     if (input?.action === ProjectAction.PreviewPatch && (!internal || !input.previewPatch)) throw new TrackerError('VALIDATION_FAILED', 'Патч запрашивается по сохранённому запуску.');
     if (!input || !Object.values(ProjectAction).includes(input.action) || typeof input.path !== 'string' || input.path.length > 4096) throw new TrackerError('VALIDATION_FAILED', 'Некорректный запрос проекта.');
     if (input.action === ProjectAction.CreateBranch && (!input.baseBranch || !input.newBranch || input.baseBranch.length > 250 || input.newBranch.length > 250)) throw new TrackerError('VALIDATION_FAILED', 'Укажите исходную и новую ветки.');
+    if (input.action === ProjectAction.Research && (!input.path.trim() || typeof input.baseBranch !== 'string' || !input.baseBranch.trim() || input.baseBranch.length > 250)) {
+      throw new TrackerError('VALIDATION_FAILED', 'Укажите репозиторий и базовую ветку.');
+    }
     let catalog: ProjectInput['catalog'];
-    if (input.action === ProjectAction.Models) {
+    if (input.action === ProjectAction.Models || input.action === ProjectAction.UnloadOllama) {
       if (!input.catalog || !RUNNER_IDS.includes(input.catalog.runner)) throw new TrackerError('VALIDATION_FAILED', 'Укажите исполнитель и подключение моделей.');
       const connection = new AutomationSettingsValidator().validate({ ...structuredClone(DEFAULT_AUTOMATION_SETTINGS), connections: [input.catalog.connection] }).connections[0];
       if ((connection.kind === ProviderKind.Native) === (input.catalog.runner === RunnerId.ModelApi)) throw new TrackerError('VALIDATION_FAILED', 'Исполнитель не соответствует типу подключения.');
+      if (input.action === ProjectAction.UnloadOllama && (connection.kind !== ProviderKind.Ollama || typeof input.model !== 'string' || !/^[\w][\w./:-]{0,199}$/.test(input.model))) {
+        throw new TrackerError('VALIDATION_FAILED', 'Выберите подключение Ollama и укажите точное имя модели.');
+      }
       catalog = { runner: input.catalog.runner, connection };
     }
     return this.db.transaction(() => {
@@ -40,7 +47,7 @@ export class ProjectRequests {
         if (previous) return this.public(previous);
       }
       if (!internal && state.requests.some((r) => r.status === ProjectRequestStatus.Queued || r.status === ProjectRequestStatus.Running)) throw new TrackerError('CONFLICT', 'Предыдущий запрос к worker ещё выполняется.');
-      const request: ProjectRequest = { action: input.action, path: input.path, baseBranch: input.baseBranch, newBranch: input.newBranch, catalog, cleanup: input.cleanup, diff: input.diff, previewPatch: input.previewPatch,
+      const request: ProjectRequest = { action: input.action, path: input.path, baseBranch: input.baseBranch, newBranch: input.newBranch, catalog, model: input.action === ProjectAction.UnloadOllama ? input.model : undefined, cleanup: input.cleanup, diff: input.diff, previewPatch: input.previewPatch,
         id: randomUUID(), status: ProjectRequestStatus.Queued, createdAt: this.now(), ...(control ? { targetWorkerId: state.workerId } : {}) };
       const retained = state.requests.filter((r, index) => r.status === ProjectRequestStatus.Queued || r.status === ProjectRequestStatus.Running || index >= state.requests.length - PROJECT_LIMITS.maxHistory + 1);
       if (control) state.executionDesired = input.action === ProjectAction.StartWorker;
@@ -71,6 +78,7 @@ export class ProjectRequests {
         else runs.add(request.previewPatch.runId);
         state.previewRuns = [...runs];
       }
+      if (!error && request.action === ProjectAction.Research && result?.passport) state.passport = result.passport;
       request.result = result; request.error = error?.slice(0, 4000); delete request.token; this.save(state);
       if (!error && (request.action === ProjectAction.StartWorker || request.action === ProjectAction.StopWorker) && result?.execution && state.workerId === request.workerId) { state.execution = this.execution(result.execution); this.save(state); }
     });

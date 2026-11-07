@@ -685,6 +685,60 @@
                 </label>
               </div>
 
+              <section aria-label="Ресурсы Ollama">
+                <h4>Ресурсы Ollama</h4>
+                @if (ollamaConnections.length) {
+                  <label>Сервер Ollama
+                    <select [(ngModel)]="ollamaConnectionId">
+                      <option value="">Выберите подключение</option>
+                      @for (connection of ollamaConnections; track connection.id) {
+                        <option [value]="connection.id">{{ connection.label }} · {{ connection.baseUrl }}</option>
+                      }
+                    </select>
+                  </label>
+                  <label>Имя модели <input pInputText [(ngModel)]="ollamaModel" placeholder="gemma4:26b" /></label>
+                  <p-button label="Выгрузить модель" severity="warn" size="small"
+                    [disabled]="!host.online || projectBusy || !ollamaConnectionId || !ollamaModel.trim()" (onClick)="unloadOllama()" />
+                } @else {
+                  <p>Добавьте подключение Ollama в настройках моделей, указав адрес нужного сервера.</p>
+                }
+              </section>
+
+              <section aria-label="Паспорт проекта">
+                <p-button label="Исследовать проект" severity="secondary" size="small" icon="pi pi-search"
+                  [disabled]="projectBusy || !host.online || !settings.repositoryPath.trim() || !settings.baseBranch.trim()"
+                  (onClick)="researchProject()" />
+                @if (projectPassport; as passport) {
+                  <h4>Паспорт проекта · черновик</h4>
+                  <p>{{ passport.branch }} · <code>{{ passport.commit }}</code></p>
+                  <p>Источники найдены в Git. Команды требуют проверки.</p>
+                  @for (section of [
+                    { title: 'Архитектура и возможные точки входа', sources: passport.architecture },
+                    { title: 'Запуск и отладка', sources: passport.runtime },
+                    { title: 'Разработка и проверки', sources: passport.development },
+                    { title: 'Готовые скиллы', sources: passport.skills }
+                  ]; track section.title) {
+                    <details>
+                      <summary>{{ section.title }} ({{ section.sources.length }})</summary>
+                      <ul>
+                        @for (source of section.sources; track source) { <li><code>{{ source }}</code></li> }
+                        @empty { <li>Источники не найдены.</li> }
+                      </ul>
+                    </details>
+                  }
+                  @if (passport.commands.length) {
+                    <details>
+                      <summary>Скрипты из package.json</summary>
+                      <ul>
+                        @for (entry of passport.commands; track entry.source) {
+                          <li><code>{{ entry.source }}</code> · {{ entry.names.join(', ') }}</li>
+                        }
+                      </ul>
+                    </details>
+                  }
+                }
+              </section>
+
               <!-- Лимиты и слияние -->
               <div class="limits-grid">
                 <label><span>Лимит одного вызова агента (мин)</span><input pInputText type="number" [(ngModel)]="settings.timeoutMinutes" [min]="limits.timeoutMinutes.min" [max]="limits.timeoutMinutes.max" /></label>

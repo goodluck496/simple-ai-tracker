@@ -69,7 +69,7 @@
                   <span class="card-status-pill" [attr.data-status]="item.status">{{ statusTitles[item.status] }}</span>
                   @if (item.trustedExecution) { <span class="card-pos">Без лимитов</span> }
                   @if (item.queuePosition) { <span class="card-pos">#{{ item.queuePosition }}</span> }
-                  @if (item.proposedFix) { <button type="button" class="card-fix-badge" (click)="$event.stopPropagation(); openProposedFix(item)" title="Сабагент подготовил исправление сбоя">🛠️ ПРОВЕРЬ ИЗМЕНЕНИЯ</button> }
+                  @if (item.proposedFix) { <button type="button" class="card-fix-badge" (click)="$event.stopPropagation(); openProposedFix(item)" [title]="item.proposedFix.title">🛠️ {{ item.proposedFix.action === 'retry_stage' ? 'Анализ сбоя' : 'ПРОВЕРЬ ИЗМЕНЕНИЯ' }}</button> }
                 </div>
                 <div class="card-title">{{ item.title }}</div>
                 <div class="card-stage">Этап {{ item.stage < item.pipeline.length ? item.stage + 1 : item.pipeline.length }}/{{ item.pipeline.length }} · {{ currentRole(item) }}</div>
@@ -149,7 +149,7 @@
             }
             @if (item.proposedFix) {
               <button pButton severity="warn" size="small" class="doctor-fix-btn" icon="pi pi-wrench" (click)="openProposedFix(item)">
-                <strong>ПРОВЕРЬ ИЗМЕНЕНИЯ</strong>
+                <strong>{{ item.proposedFix.action === 'retry_stage' ? 'Анализ сбоя' : 'ПРОВЕРЬ ИЗМЕНЕНИЯ' }}</strong>
               </button>
             } @else if (item.status === runStatus.Failed || item.status === runStatus.Interrupted) {
               <button pButton severity="secondary" size="small" icon="pi pi-sparkles" [disabled]="busy()" (click)="diagnose(item)">

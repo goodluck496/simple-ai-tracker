@@ -30,7 +30,7 @@ export class CompactProgress {
     let text = /(?:powershell|pwsh)(?:\.exe)?["']?\s/i.test(raw) && shell
       ? shell[1].replace(/["']$/, '').trim() : raw;
     const executable = text.match(/^"?([^"\s]+)"?/)?.[1]?.split(/[\\/]/).pop() ?? 'команда';
-    if (/^(?:codex|claude|dsh|agy)(?:\.exe|\.cmd)?$/i.test(executable)) return `${executable}: запуск агента`;
+    if (/^(?:codex|claude|dsh|agy|opencode)(?:\.exe|\.cmd)?$/i.test(executable)) return `${executable}: запуск агента`;
     if (text.length > 320 || /[\r\n;|<>`]|\$\(|(?:^|\s)(?:-e|-c|--eval|-Command)(?:\s|=)|(?:apply_patch|Set-Content|WriteAllText|writeFile|echo|printf)(?:\s|\()/i.test(text)) {
       const actions = [...new Set(text.match(/\b(?:Get-Content|Select-Object|Select-String|rg|git|npm(?:\.cmd)?|npx(?:\.cmd)?|codegraph|apply_patch)\b/gi) ?? [])].slice(0, 5);
       return `${actions.length ? actions.join(', ') : executable}: сценарий (текст скрыт)`;
@@ -50,6 +50,21 @@ export class CompactProgress {
   }
   public static record(value: unknown): string[] {
     const event = object(value); const item = object(event.item); const type = String(event.type ?? '');
+    if (type === 'step_start') return ['OpenCode: начался шаг агента.'];
+    if (type === 'tool_use') {
+      const part = object(event.part);
+      const state = object(part.state);
+      const input = object(state.input);
+      const tool = typeof part.tool === 'string' ? part.tool.replace(/[^\w.-]/g, '').slice(0, 80) : '';
+      if (state.status !== 'completed' && state.status !== 'error') return [];
+      const command = tool === 'bash' && typeof input.command === 'string'
+        ? input.command.match(/^\s*(npm(?:\.cmd)?(?:\s+(?:test|run\s+[\w:-]+))?|git(?:\s+[\w-]+)?|rg|node|pnpm|yarn|powershell|pwsh)(?=\s|$)/i)?.[1] : undefined;
+      const path = ['read', 'edit', 'write'].includes(tool) && typeof input.filePath === 'string'
+        ? input.filePath.replace(/[\x00-\x1f\x7f]/g, '').slice(0, 240) : '';
+      const exit = tool === 'bash' ? object(state.metadata).exit : undefined;
+      const status = typeof exit === 'number' ? `код выхода ${exit}` : state.status === 'error' ? 'ошибка' : 'завершено';
+      return [`OpenCode: ${(command ?? tool) || 'инструмент'}${path ? ` ${path}` : ''} → ${status}.`];
+    }
     if (type === 'item.started' && item.type === 'command_execution' && typeof item.command === 'string') return [`Выполняется: ${this.command(item.command)}`];
     if ((type === 'item.started' || type === 'item.completed') && item.type === 'mcp_tool_call') {
       const name = [item.server, item.tool].filter(v => typeof v === 'string').map(v => String(v).replace(/[^\w.-]/g, '').slice(0, 100)).join('/');

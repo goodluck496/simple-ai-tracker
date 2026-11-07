@@ -19,7 +19,7 @@ import { AGENT_ROLES, RUNNER_IDS, DEFAULT_AUTOMATION_SETTINGS, PROVIDER_KINDS, R
   DEFAULT_CHECK_COMMAND, DEFAULT_SETUP_COMMAND, ProviderKind, RunnerId, AgentRole,
   type AgentRun, type AutomationSettings, type CheckCommand, type AgentProfile, type ModelConnection } from '../../../../../shared/automation/contracts';
 import { ProjectAction, ProjectRequestStatus, PROJECT_LIMITS, SETUP_PRESETS, CHECK_PRESETS, WorkerPlatform,
-  type ProjectInput, type ProjectRequest, type ProjectResult, type HostStatus, type CommandPreset } from '../../../../../shared/automation/project';
+  type ProjectPassport, type ProjectInput, type ProjectRequest, type ProjectResult, type HostStatus, type CommandPreset } from '../../../../../shared/automation/project';
 import { CONNECTION_PRESETS, PROVIDER_OPTIONS, RUNNER_OPTIONS, ROLE_OPTIONS, STANDARD_TEAM_ROLES, type ConnectionPreset } from '../../../../../shared/automation/presets';
 import type { TaskSummary } from '../../models/tracker.models';
 import { WorkspaceService } from '../../services/workspace.service';
@@ -214,6 +214,19 @@ export class AutomationPanelComponent implements OnInit {
     if (this.projectBusy) return 'Выполняется другой запрос к worker...';
     return 'Запросить список моделей с компьютера worker';
   }
+  public ollamaConnectionId = '';
+  public ollamaModel = '';
+  public get ollamaConnections() { return this.settings.connections.filter(connection => connection.kind === ProviderKind.Ollama); }
+  public unloadOllama(): void {
+    const connection = this.ollamaConnections.find(entry => entry.id === this.ollamaConnectionId);
+    const model = this.ollamaModel.trim();
+    if (!connection || !model || !window.confirm(`Выгрузить ${model} на «${connection.label}»? Это может затронуть другие запросы к этой модели.`)) return;
+    void this.project({ action: ProjectAction.UnloadOllama, path: '', model,
+      catalog: { runner: RunnerId.ModelApi, connection: structuredClone(connection) } }, result => {
+      if (result.unloaded !== model) throw new Error('Worker не подтвердил выгрузку модели.');
+      this.notice = `Ollama подтвердила выгрузку ${model}.`;
+    });
+  }
   public async loadModels(agent: AgentProfile): Promise<void> {
     const connection = this.settings.connections.find((entry) => entry.id === agent.connectionId);
     if (!connection || this.projectBusy) return;
@@ -283,6 +296,10 @@ export class AutomationPanelComponent implements OnInit {
   }
   public showHostConnection(): void { this.changeScope('project'); this.activeTab = AutomationTab.Project; }
   public projectBusy = false;
+  private passport: ProjectPassport | null = null;
+  public get projectPassport(): ProjectPassport | null {
+    return this.passport?.path === this.settings.repositoryPath && this.passport.branch === this.settings.baseBranch ? this.passport : null;
+  }
   public browserOpen = false;
   public directory: ProjectResult | null = null;
   public branchOptions: string[] = [];
@@ -336,6 +353,8 @@ export class AutomationPanelComponent implements OnInit {
       if (this.settingsScope === 'task' && this.selectedTask) await this.loadTaskTeam(this.selectedTask);
       if (prepared.repaired) this.repairNotice = 'Исправлены совпадающие ID агентов в черновике. Проверьте порядок этапов и сохраните настройки.';
       await this.refresh();
+      const { passport } = await firstValueFrom(this.http.get<{ passport: ProjectPassport | null }>('/api/automation/project-passport'));
+      this.passport ??= passport;
     });
     timer(AUTOMATION_TIMING.pollMs, AUTOMATION_TIMING.pollMs).pipe(
       filter(() => !this.busy && !this.starting), exhaustMap(() => this.poll()), takeUntilDestroyed(this.destroyRef),
@@ -379,6 +398,15 @@ export class AutomationPanelComponent implements OnInit {
   }
   public browse(path = ''): void { void this.project({ action: ProjectAction.Browse, path }, (result) => { this.directory = result; this.browserOpen = true; }); }
   public inspect(): void { void this.project({ action: ProjectAction.Inspect, path: this.settings.repositoryPath }, (result) => this.applyProject(result)); }
+  public researchProject(): void {
+    const path = this.settings.repositoryPath;
+    void this.project({ action: ProjectAction.Research, path, baseBranch: this.settings.baseBranch }, result => {
+      if (!result.passport) throw new Error('Worker не вернул паспорт. Проверьте его версию.');
+      if (this.settings.repositoryPath === path) this.settings.repositoryPath = result.path;
+      this.passport = result.passport;
+      this.notice = 'Черновик паспорта сохранён в пространстве.';
+    });
+  }
   public chooseDirectory(): void { if (this.directory) { this.setProjectPath(this.directory.path); this.browserOpen = false; this.inspect(); } }
   public createBranch(): void {
     void this.project({ action: ProjectAction.CreateBranch, path: this.settings.repositoryPath, baseBranch: this.settings.baseBranch, newBranch: this.newBranch }, (result) => {

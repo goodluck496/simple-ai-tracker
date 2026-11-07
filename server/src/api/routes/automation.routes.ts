@@ -27,6 +27,7 @@ export function registerAutomationRoutes(router: Router, app: AppContainer): voi
   router.post('/api/automation/runs/:id/hide', ({ params, res }) => { app.automationService.hide(params.id); sendJson(res, 200, { ok: true }); });
   router.post('/api/automation/runs/:id/restore', ({ params, res }) => { app.automationService.restore(params.id); sendJson(res, 200, { ok: true }); });
   router.post('/api/automation/runs/:id/restart', ({ params, res }) => sendJson(res, 201, { run: app.automationService.restart(params.id) }));
+  router.get('/api/automation/project-passport', ({ res }) => sendJson(res, 200, { passport: app.automationService.projects.passport() ?? null }));
   router.post('/api/automation/project-requests', ({ body, res }) => sendJson(res, 201, app.automationService.projects.enqueue(body as ProjectInput)));
   router.get('/api/automation/project-requests/:id', ({ params, res }) => sendJson(res, 200, app.automationService.projects.get(params.id)));
   router.get('/api/automation/catalog', ({ res }) => sendJson(res, 200, { roles: AGENT_ROLES, runners: RUNNER_IDS }));

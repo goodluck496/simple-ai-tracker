@@ -57,3 +57,13 @@ test('compact progress identifies commands and MCP tools without copying payload
   assert.match(CompactProgress.record({ type: 'item.completed', item: { type: 'mcp_tool_call', server: 'codegraph', tool: 'codegraph_explore', status: 'failed' } })[0], /ошибка/);
   assert.deepEqual(CompactProgress.success('PRIVATE_SOURCE_SENTINEL\n✅ All 17 tests passed successfully\n'), ['Тесты: 17 пройдено.']);
 });
+
+test('OpenCode progress shows completed operations without tool output or command arguments', () => {
+  assert.deepEqual(CompactProgress.record({ type: 'step_start' }), ['OpenCode: начался шаг агента.']);
+  assert.deepEqual(CompactProgress.record({ type: 'tool_use', part: { tool: 'bash', state: {
+    status: 'completed', input: { command: 'npm run build --token PRIVATE' }, output: 'PRIVATE', metadata: { exit: 1 },
+  } } }), ['OpenCode: npm run build → код выхода 1.']);
+  assert.deepEqual(CompactProgress.record({ type: 'tool_use', part: { tool: 'edit', state: {
+    status: 'completed', input: { filePath: 'src/app.ts', newString: 'PRIVATE' },
+  } } }), ['OpenCode: edit src/app.ts → завершено.']);
+});

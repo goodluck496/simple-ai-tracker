@@ -10,6 +10,9 @@ export interface ProcessRequest {
   /** Maximum retained stdout characters; large structured catalogs need more than log tails. */
   maxOutputChars?: number;
   compactProgress?: boolean;
+  progressIntervalMs?: number;
+  outputIdleTimeoutMs?: number;
+  outputIdleWarningMs?: number;
   onStdout?: (text: string) => void;
   onStderr?: (text: string) => void;
 }
@@ -42,7 +45,7 @@ export class ProcessExecutor {
       const progressTimer = request.compactProgress && request.onProgress ? setInterval(() => {
         const diagnostic = CompactProgress.liveOutput(stderr || stdout);
         request.onProgress?.(`Выполняется: ${label} · прошло ${elapsed(startedAt)} · без вывода ${elapsed(lastOutputAt)}. Процент команды неизвестен.\n${diagnostic ? diagnostic + '\n' : ''}`);
-      }, PROCESS_PROGRESS_MS) : undefined;
+      }, request.progressIntervalMs ?? PROCESS_PROGRESS_MS) : undefined;
       const abort = () => {
         if (!child.pid) return;
         if (process.platform === 'win32') {
@@ -52,30 +55,57 @@ export class ProcessExecutor {
           try { process.kill(-child.pid, 'SIGKILL'); } catch { child.kill('SIGKILL'); }
         }
       };
+      let warningTimer: ReturnType<typeof setTimeout> | undefined;
+      let idleTimer: ReturnType<typeof setTimeout> | undefined;
+      let outputTimedOut = false;
+      const armIdleTimer = () => {
+        clearTimeout(warningTimer);
+        clearTimeout(idleTimer);
+        if (request.outputIdleWarningMs && !outputTimedOut && request.onProgress) {
+          warningTimer = setTimeout(() => {
+            const diagnostic = CompactProgress.liveOutput(stderr || stdout);
+            const deadline = request.outputIdleTimeoutMs
+              ? ` При ${request.outputIdleTimeoutMs / 1000} с тишины воркер завершит процесс.` : '';
+            request.onProgress?.(`Предупреждение: ${label} · процесс запущен, stdout/stderr молчат ${elapsed(lastOutputAt)}. Состояние запроса к модели неизвестно.${deadline}\n${diagnostic ? diagnostic + '\n' : ''}`);
+          }, request.outputIdleWarningMs);
+        }
+        if (request.outputIdleTimeoutMs && !outputTimedOut) {
+          idleTimer = setTimeout(() => { outputTimedOut = true; abort(); }, request.outputIdleTimeoutMs);
+        }
+      };
+      armIdleTimer();
       request.signal.addEventListener('abort', abort, { once: true });
       child.stdout?.setEncoding('utf8');
       child.stderr?.setEncoding('utf8');
       child.stdout?.on('data', (value: string) => {
         lastOutputAt = Date.now();
+        armIdleTimer();
         request.onStdout?.(value);
         stdout = (stdout + value).slice(-(request.maxOutputChars ?? MAX_OUTPUT));
         if (!request.compactProgress) request.onProgress?.(value);
       });
       child.stderr?.on('data', (value: string) => {
         lastOutputAt = Date.now();
+        armIdleTimer();
         request.onStderr?.(value);
         stderr = (stderr + value).slice(-MAX_OUTPUT);
         if (!request.compactProgress) request.onProgress?.(value);
       });
       child.stdin?.on('error', () => undefined);
       child.stdin?.end(request.stdin ?? '');
-      child.once('error', (error) => { clearInterval(progressTimer); request.signal.removeEventListener('abort', abort); reject(error); });
+      child.once('error', (error) => { clearTimeout(warningTimer); clearTimeout(idleTimer); clearInterval(progressTimer); request.signal.removeEventListener('abort', abort); reject(error); });
       child.once('close', (code) => {
+        clearTimeout(warningTimer);
+        clearTimeout(idleTimer);
         clearInterval(progressTimer);
         try { if (child.pid) scope?.child?.(child.pid, false); } catch (error) { observerError ??= error; }
         request.signal.removeEventListener('abort', abort);
         if (observerError) { reject(observerError); return; }
         if (request.signal.aborted) { reject(new Error('Execution cancelled or timed out.')); return; }
+        if (outputTimedOut) {
+          reject(new ProcessExecutionError(`${label}: нет вывода ${request.outputIdleTimeoutMs! / 1000} с.`, code, stdout, stderr));
+          return;
+        }
         const network = code !== 0 ? runFailure(stderr + '\n' + stdout) : undefined;
         const diagnostic = request.compactProgress
           ? network?.code ? `${network.title} (${network.code}).` : CompactProgress.diagnostics(stderr || stdout)

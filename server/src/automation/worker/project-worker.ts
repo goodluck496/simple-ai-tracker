@@ -7,6 +7,7 @@ import { AutomationTool } from '../../../../shared/automation/protocol.js';
 import { ProjectAction, PROJECT_LIMITS, type PreviewPatch, type ProjectInput, type ProjectRequest, type ProjectResult } from '../../../../shared/automation/project.js';
 import { WindowsFolderPicker, type FolderPicker } from './folder-picker.js';
 import { WorkerModelCatalog } from './model-catalog.js';
+import { researchProject } from './project-research.js';
 import { RunCleanup } from './run-cleanup.js';
 import type { ExecutionControl } from './execution-supervisor.js';
 
@@ -29,6 +30,11 @@ export class ProjectWorker {
     if (input.action === ProjectAction.Cleanup) {
       if (!input.cleanup) throw new Error('Missing cleanup identity.');
       return { path: input.path, cleanup: await new RunCleanup(this.executor).execute(input.cleanup, AbortSignal.timeout(PROJECT_LIMITS.cleanupMs - 5000)) };
+    }
+    if (input.action === ProjectAction.UnloadOllama) {
+      if (!input.catalog || !input.model) throw new Error('Укажите подключение Ollama и модель.');
+      await new WorkerModelCatalog().unload(input.catalog.connection, input.model);
+      return { path: '', unloaded: input.model };
     }
     if (input.action === ProjectAction.Models) {
       if (!input.catalog) throw new Error('Не указано подключение моделей.');
@@ -62,6 +68,9 @@ export class ProjectWorker {
         directories: entries.slice(0, PROJECT_LIMITS.maxEntries).map((entry) => ({ name: entry.name, path: path.join(directory, entry.name) })) };
     }
     const root = (await this.git(directory, ['rev-parse', '--show-toplevel'])).trim();
+    if (input.action === ProjectAction.Research) {
+      return { path: root, passport: await researchProject(this.executor, root, input.baseBranch ?? '') };
+    }
     if (input.action === ProjectAction.CreateBranch) {
       const branch = input.newBranch ?? ''; const base = input.baseBranch ?? '';
       if (branch.startsWith('-') || base.startsWith('-') || !base || !branch) throw new Error('Некорректное имя ветки.');

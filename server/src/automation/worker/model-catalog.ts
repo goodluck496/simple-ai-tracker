@@ -1,5 +1,5 @@
 import os from 'node:os';
-import { ProviderKind, RunnerId } from '../../../../shared/automation/contracts.js';
+import { ProviderKind, RunnerId, type ModelConnection } from '../../../../shared/automation/contracts.js';
 import { MODEL_CATALOG_LIMITS, type ModelCatalogInput, type ModelOption } from '../../../../shared/automation/model-catalog.js';
 import { ProcessExecutor } from '../runners/process-executor.js';
 import { NativeExecutable } from '../runners/native-executable.js';
@@ -65,6 +65,32 @@ export class WorkerModelCatalog {
       if (models.size > MODEL_CATALOG_LIMITS.maxModels) throw new Error('Каталог превышает лимит моделей. Используйте ручной ввод ID.');
     }
     return [...models.values()];
+  }
+  public async unload(connection: ModelConnection, model: string): Promise<void> {
+    if (connection.kind !== ProviderKind.Ollama || !connection.baseUrl || !/^[\w][\w./:-]{0,199}$/.test(model)) {
+      throw new Error('Некорректное подключение Ollama или имя модели.');
+    }
+    const base = connection.baseUrl.replace(/\/+$/, '').replace(/\/v1$/, '');
+    const secret = connection.credentialEnv ? this.environment[connection.credentialEnv] : undefined;
+    if (connection.credentialEnv && !secret) throw new Error(`На worker не задана переменная ${connection.credentialEnv}.`);
+    let response: Response;
+    try {
+      response = await this.request(base + '/api/generate', {
+        method: 'POST', headers: { 'Content-Type': 'application/json', ...(secret ? { Authorization: 'Bearer ' + secret } : {}) },
+        body: JSON.stringify({ model, keep_alive: 0, stream: false }), signal: AbortSignal.timeout(10000), redirect: 'error',
+      });
+      if (!response.ok) {
+        await response.body?.cancel();
+        throw new Error(`Ollama вернула HTTP ${response.status} при выгрузке модели.`);
+      }
+      const result = this.parse(await this.read(response));
+      if (result.done !== true || result.done_reason !== 'unload') throw new Error('Ollama не подтвердила выгрузку модели.');
+    } catch (error) {
+      if (error instanceof TypeError || error instanceof DOMException) {
+        throw new Error('Ollama не ответила на запрос выгрузки. Проверьте сервер Ollama на машине, где запущена модель.');
+      }
+      throw error;
+    }
   }
   private antigravityRows(output: string): CatalogRow[] {
     if (Buffer.byteLength(output) > MODEL_CATALOG_LIMITS.maxBytes) throw new Error('Каталог моделей слишком большой.');

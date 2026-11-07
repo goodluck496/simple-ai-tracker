@@ -352,7 +352,7 @@ export class AutomationService {
         finished: a.finished || finished, usage: sample ?? a.usage }) });
     });
   }
-  public completeStage(id: string, token: string, outcome: AgentOutcome, branch: string, commitSha: string, screenshots?: unknown): AgentRun {
+  public completeStage(id: string, token: string, outcome: AgentOutcome, branch: string, commitSha: string, screenshots?: unknown, checkFailed = false): AgentRun {
     return this.runs.db.transaction(() => {
       const run = this.owned(id, token);
       if (run.status !== RunStatus.Running) throw new TrackerError('CONFLICT', 'Pipeline is already complete.');
@@ -377,8 +377,9 @@ export class AutomationService {
           content: `# ${profile.role}\n\nVerdict: ${outcome.verdict}\nCommit: ${commitSha}\nBranch: ${branch}\n\n${outcome.summary}\n\n## Worker evidence\n${this.runs.events(id).filter((event) => event.kind === 'progress').slice(-10).map((event) => event.text).join('\n')}` });
       }
       const budgetReason = RunBudget.reason(run, Date.parse(now));
+      const retryWriterCheck = checkFailed && WRITABLE_AGENT_ROLES.includes(profile.role) && PipelinePolicy.checkAt(run.settings, run.stage);
       if ((budgetReason && outcome.verdict !== AgentVerdict.Questions) || outcome.verdict === AgentVerdict.Blocked
-        || (outcome.verdict === AgentVerdict.ChangesRequested && WRITABLE_AGENT_ROLES.includes(profile.role))) {
+        || (outcome.verdict === AgentVerdict.ChangesRequested && WRITABLE_AGENT_ROLES.includes(profile.role) && !retryWriterCheck)) {
         updated = { ...updated, status: RunStatus.Failed, leaseToken: null,
           summary: budgetReason ?? `Execution blocked; no automatic retry: ${outcome.summary}` };
       } else if (outcome.verdict === AgentVerdict.Questions) {
@@ -388,8 +389,9 @@ export class AutomationService {
         updated = { ...updated, status: RunStatus.Waiting, leaseToken: null };
       } else if (outcome.verdict === AgentVerdict.ChangesRequested) {
         if (profile.role === AgentRole.Analyst) throw new TrackerError('VALIDATION_FAILED', 'Analyst must return a plan or questions.');
-        const developer = child?.developerStage ?? run.feature?.finalDeveloperStage ?? run.settings.pipeline.findIndex((profileId) => WRITABLE_AGENT_ROLES.includes(run.settings.agents.find((agent) => agent.id === profileId)!.role));
-        updated = developer < 0 ? { ...updated, status: RunStatus.Review, leaseToken: null } : !run.trustedExecution && run.revision >= run.settings.maxRevisions ? { ...updated, status: RunStatus.Failed, leaseToken: null }
+        const developer = retryWriterCheck ? run.stage : child?.developerStage ?? run.feature?.finalDeveloperStage ?? run.settings.pipeline.findIndex((profileId) => WRITABLE_AGENT_ROLES.includes(run.settings.agents.find((agent) => agent.id === profileId)!.role));
+        updated = developer < 0 ? { ...updated, status: RunStatus.Review, leaseToken: null } : (checkFailed || !run.trustedExecution) && run.revision >= run.settings.maxRevisions
+          ? { ...updated, status: RunStatus.Failed, leaseToken: null, summary: `Revision limit reached: ${outcome.summary}` }
           : { ...updated, stage: developer, revision: run.revision + 1 };
       } else {
         if (profile.role === AgentRole.Analyst) {
@@ -447,12 +449,17 @@ export class AutomationService {
       if (!this.repos.images.listByTask(taskId).some(existing => existing.url === url)) this.repos.images.add(taskId, url, now);
     }
   }
-  public fail(id: string, token: string, message: string): void {
+  public fail(id: string, token: string, message: string, recoveryError?: string): void {
     return this.runs.db.transaction(() => {
     const run = this.requireRun(id);
     if (!token || run.leaseToken !== token || !OWNED_RUN_STATUSES.includes(run.status)) throw new TrackerError('CONFLICT', 'Run is no longer owned by this worker.');
     const now = this.clock.now();
     this.runs.save({ ...run, budgetElapsedMs: RunBudget.elapsed(run, Date.parse(now)), budgetUpdatedAt: now,
+      proposedFix: recoveryError ? {
+        id: randomUUID(), title: 'Автоматическое восстановление этапа остановилось',
+        explanation: 'Первый сбой: ' + recoveryError.slice(0, 2000) + '\n\nПричина остановки: ' + message.slice(0, 4000),
+        diff: '', files: [], createdAt: now, action: 'retry_stage',
+      } : run.proposedFix,
       status: run.status === RunStatus.Integrating ? RunStatus.MergeBlocked : RunStatus.Failed,
       integration: run.integration ? { ...run.integration, state: 'blocked', error: message } : undefined, finishedAt: now,
       leaseToken: null, updatedAt: now, summary: message });

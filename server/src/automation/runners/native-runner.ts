@@ -142,7 +142,9 @@ export class NativeAgentRunner implements AgentRunner {
       }
     });
     let raw: string; let diagnosticTail = '';
-    try { raw = await this.executor.run({ command, args, cwd: job.cwd, stdin, env: TaskEnvironment.create(), signal: antigravity ? AbortSignal.any([job.signal, nativeStop.signal]) : job.signal, compactProgress: true, onProgress, onStdout: (text) => meter.push(text),
+    try { raw = await this.executor.run({ command, args, cwd: job.cwd, stdin, env: TaskEnvironment.create(), signal: antigravity ? AbortSignal.any([job.signal, nativeStop.signal]) : job.signal, compactProgress: true,
+      ...(this.id === RunnerId.OpenCode ? { progressIntervalMs: 60000, outputIdleWarningMs: 90000, outputIdleTimeoutMs: 600000 } : {}),
+      onProgress, onStdout: (text) => meter.push(text),
       onStderr: this.id === RunnerId.Antigravity ? text => { diagnosticTail = (diagnosticTail + text).slice(-8000); } : undefined }); }
     catch (error) { if (nativeError) throw new Error(nativeError); throw error; }
     finally { meter.finish(); }

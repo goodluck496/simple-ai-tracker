@@ -90,5 +90,23 @@ test('host worker browses folders, reads branches/scripts and creates branch wit
     await assert.rejects(worker.execute({ action: ProjectAction.CreateBranch, path: repo, baseBranch: 'main', newBranch: 'feature/selected' }));
     await assert.rejects(worker.execute({ action: ProjectAction.CreateBranch, path: repo, baseBranch: '--help', newBranch: 'bad' }));
     await assert.rejects(worker.execute({ action: ProjectAction.Inspect, path: root }));
+    await mkdir(path.join(repo, 'skills', 'debug'), { recursive: true });
+    await writeFile(path.join(repo, 'skills', 'debug', 'SKILL.md'), '# Debug');
+    await writeFile(path.join(repo, 'AGENTS.md'), '# Project rules');
+    await git(['add', '.']); await git(['commit', '-m', 'project knowledge']);
+    const commit = (await git(['rev-parse', 'HEAD'])).trim();
+    await git(['switch', 'feature/selected']);
+    await writeFile(path.join(repo, 'package.json'), JSON.stringify({ scripts: { dirty: 'echo local' } }));
+    const status = await git(['status', '--porcelain']);
+    const research = app.automationService.projects.enqueue({ action: ProjectAction.Research, path: repo, baseBranch: 'main' });
+    await worker.tick();
+    const passport = app.automationService.projects.get(research.id).result?.passport;
+    assert.equal(passport?.commit, commit);
+    assert.deepEqual(passport.skills, ['skills/debug/SKILL.md']);
+    assert.ok(passport.development.includes('AGENTS.md'));
+    assert.deepEqual(passport.commands, [{ source: 'package.json', names: ['test', 'build:web'] }]);
+    assert.deepEqual(new ProjectRequests(app.repos.meta, app.db).passport(), passport);
+    assert.equal(await git(['status', '--porcelain']), status);
+    assert.equal((await git(['branch', '--show-current'])).trim(), 'feature/selected');
   } finally { app.close(); await rm(root, { recursive: true, force: true }); }
 });
