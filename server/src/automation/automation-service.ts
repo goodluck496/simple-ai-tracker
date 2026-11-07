@@ -531,6 +531,22 @@ export class AutomationService {
       const task = this.tasks.getTaskCard(taskId);
       const run = this.runs.list(taskId)[0];
       if (run && this.projects.hasPreviewPatch(run.id)) throw new TrackerError('CONFLICT', 'Сначала откатите патч проверки.');
+      if (decision === 'rework' && run && task.status === TaskStatus.InProgress && this.stoppedRework(run)
+        && !task.openQuestionsCount && !this.runs.hasActive(taskId)) {
+        if (typeof feedback !== 'string' || !feedback.trim()) throw new TrackerError('VALIDATION_FAILED', 'Опишите, что нужно исправить.');
+        const now = this.clock.now();
+        const reason = RunBudget.reason(run, Date.parse(now), true);
+        if (reason) throw new TrackerError('CONFLICT', reason);
+        this.tasks.addComment({ id: taskId, text: feedback.trim(), actor: 'user' });
+        const attempted = run.usageAttempts?.some(attempt => attempt.stage === run.stage && attempt.revision === run.revision);
+        const updated: AgentRun = { ...run, status: RunStatus.Queued, reviewFeedback: feedback.trim(), summary: feedback.trim(),
+          revision: run.revision + (attempted ? 1 : 0), stageMemory: undefined, proposedFix: null,
+          leaseToken: null, workerId: null, leaseUntil: null, finishedAt: undefined, updatedAt: now };
+        this.runs.restore(run.id);
+        this.runs.save(updated);
+        this.runs.event(run.id, 'resumed', 'Остановленная доработка продолжена с обновлённым замечанием.', now);
+        return this.publicRun(updated);
+      }
       if (task.status === TaskStatus.Review && run?.status === RunStatus.Merged && !task.openQuestionsCount
         && !this.runs.hasActive(taskId)) {
         if (decision === 'accept') {
@@ -612,6 +628,16 @@ export class AutomationService {
     this.tasks.getTaskCard(taskId);
     const run = this.runs.list(taskId)[0];
     return !!run && this.projects.hasPreviewPatch(run.id);
+  }
+  public canResumeRework(taskId: string): boolean {
+    const task = this.tasks.getTaskCard(taskId);
+    const run = this.runs.list(taskId)[0];
+    return task.status === TaskStatus.InProgress && !task.openQuestionsCount && !!run
+      && this.stoppedRework(run) && !this.runs.hasActive(taskId);
+  }
+  private stoppedRework(run: AgentRun): boolean {
+    return RESUMABLE_RUN_STATUSES.includes(run.status) && !!run.reviewFeedback && !!run.checkout && !run.cleanup
+      && run.stage < run.settings.pipeline.length;
   }
   /** Explicit UI action only: no MCP tool allows agents to raise their budget. */
   public extendBudget(id: string, input: unknown): AgentRun {

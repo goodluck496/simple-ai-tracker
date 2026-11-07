@@ -42,6 +42,7 @@ import { TextareaModule } from 'primeng/textarea';
 import { TooltipModule } from 'primeng/tooltip';
 import { escapeHtml, renderMarkdown } from '../../shared/markdown';
 import { TrackerStore } from '../../services/tracker-store.service';
+import { TrackerApiService } from '../../services/tracker-api.service';
 import { formatBytes, formatDateTime, formatRelative } from '../../shared/format';
 import { PlanViewerComponent } from '../plan-viewer/plan-viewer.component';
 import { DecisionLogComponent } from '../decision-log/decision-log.component';
@@ -147,6 +148,8 @@ export class TaskDialogComponent {
   public readonly commentImages = signal<string[]>([]);
   public readonly commentUploading = signal(false);
   public readonly hasCommentDraft = computed(() => !!this.commentDraft().trim() || this.commentImages().length > 0);
+  public readonly stoppedRework = signal(false);
+  private readonly api = inject(TrackerApiService);
   public readonly patchNotice = signal('');
   private readonly commentImagePattern = /^\[скриншот\] (\/api\/images\/[a-z0-9]{8,64}\.(?:png|jpg|webp|gif)(?:\?workspace=[\w%-]+)?)$/;
   public readonly clarificationDraft = signal('');
@@ -183,6 +186,16 @@ export class TaskDialogComponent {
   private readonly lastSyncedTaskId = signal<string | null>(null);
 
   public constructor() {
+    effect(onCleanup => {
+      const card = this.task();
+      this.stoppedRework.set(false);
+      if (card?.status !== 'in_progress' || this.tab() !== 'discussion') return;
+      const request = this.api.previewPatchActive(card.id).subscribe({
+        next: state => this.stoppedRework.set(state.canResumeRework === true),
+        error: () => this.stoppedRework.set(false),
+      });
+      onCleanup(() => request.unsubscribe());
+    });
     effect(() => {
       const card = this.task();
       const initialType = this.createType();
@@ -396,19 +409,29 @@ export class TaskDialogComponent {
   public async submitComment(returnToWork = false): Promise<void> {
     const card = this.task();
     const text = this.commentDraft().trim();
-    if (!card || this.commentUploading() || (returnToWork ? card.status !== 'review' : !this.hasCommentDraft())) return;
-    const fallback = this.commentImages().length ? 'См. прикреплённые скриншоты.' : 'Результат приёмки отклонён. Пользователь вернул задачу на доработку.';
-    const message = [text || fallback, ...this.commentImages().map(url => `[скриншот] ${url}`)].join('\n');
+    if (!card || this.commentUploading() || !this.hasCommentDraft()
+      || (returnToWork && card.status !== 'review' && !this.stoppedRework())) return;
+    const message = [text || 'См. прикреплённые скриншоты.', ...this.commentImages().map(url => `[скриншот] ${url}`)].join('\n');
     const saved = returnToWork ? await this.store.reviewAutomation(card.id, 'rework', message)
       : await this.store.addComment(card.id, message);
     if (saved && this.task()?.id === card.id) {
       if (returnToWork) {
+        this.stoppedRework.set(false);
         this.status.set(this.task()!.status);
         this.patchNotice.set('Задача возвращена на доработку. Если приложение собрано с патчем, пересоберите его для возврата к основной версии.');
       }
       this.commentDraft.set('');
       this.commentImages.set([]);
     }
+  }
+
+  public returnWithFeedback(input: HTMLTextAreaElement): void {
+    if (!this.hasCommentDraft()) {
+      this.patchNotice.set('Опишите, что нужно исправить, или вставьте скриншот. Доработка пока не запущена.');
+      input.focus();
+      return;
+    }
+    void this.submitComment(true);
   }
 
   public async acceptAutomation(): Promise<void> {

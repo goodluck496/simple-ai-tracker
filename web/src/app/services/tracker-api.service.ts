@@ -76,8 +76,8 @@ export class TrackerApiService {
   public reviewAutomation(id: string, decision: 'accept' | 'rework', feedback?: string): Observable<unknown> {
     return this.http.post(`/api/automation/tasks/${encodeURIComponent(id)}/review/${decision}`, { feedback });
   }
-  public previewPatchActive(id: string): Observable<{ active: boolean }> {
-    return this.http.get<{ active: boolean }>(`/api/automation/tasks/${encodeURIComponent(id)}/preview-patch`);
+  public previewPatchActive(id: string): Observable<{ active: boolean; canResumeRework: boolean }> {
+    return this.http.get<{ active: boolean; canResumeRework: boolean }>(`/api/automation/tasks/${encodeURIComponent(id)}/preview-patch`);
   }
   public previewPatch(id: string, rollback: boolean): Observable<ProjectRequest> {
     return this.http.post<ProjectRequest>(`/api/automation/tasks/${encodeURIComponent(id)}/preview-patch`, { rollback }).pipe(

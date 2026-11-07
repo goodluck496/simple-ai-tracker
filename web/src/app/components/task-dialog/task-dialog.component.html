@@ -288,10 +288,11 @@
 
                   <div class="comment-form">
                     <textarea
+                      #reviewFeedbackInput
                       pTextarea
                       rows="3"
                       class="w-full"
-                      [placeholder]="card.status === 'review' ? 'Опишите, что нужно исправить…' : 'Комментарий к задаче…'"
+                      [placeholder]="card.status === 'review' || stoppedRework() ? 'Опишите, что нужно исправить…' : 'Комментарий к задаче…'"
                       [ngModel]="commentDraft()"
                       (ngModelChange)="commentDraft.set($event)"
                     ></textarea>
@@ -329,10 +330,17 @@
                           <p-button label="Откатить патч" icon="pi pi-undo" severity="secondary" size="small"
                             [disabled]="store.busy()" (onClick)="previewPatch(true)" />
                           <p-button label="Вернуть на доработку" icon="pi pi-replay" severity="secondary" size="small"
-                            [disabled]="store.busy() || commentUploading()" (onClick)="submitComment(true)" />
+                            [disabled]="store.busy() || commentUploading()" (onClick)="returnWithFeedback(reviewFeedbackInput)" />
                           <p-button label="Принять и слить" icon="pi pi-check" severity="success" size="small"
                             [disabled]="store.busy()" (onClick)="acceptAutomation()" />
                         </div>
+                      </section>
+                    }
+                    @if (stoppedRework()) {
+                      <section class="review-actions" aria-label="Остановленная доработка">
+                        <h4>Доработка остановлена</h4>
+                        <p-button label="Продолжить доработку" icon="pi pi-play" size="small"
+                          [disabled]="store.busy() || commentUploading()" (onClick)="returnWithFeedback(reviewFeedbackInput)" />
                       </section>
                     }
                     @if (patchNotice()) { <p class="patch-notice" role="status">{{ patchNotice() }}</p> }

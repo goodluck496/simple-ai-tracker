@@ -45,6 +45,15 @@ test('human rework keeps the branch, run history and prior agent usage', () => {
     assert.equal(queued.stage, 0);
     assert.equal(queued.revision, reviewed.revision + 1);
     assert.equal(f.app.taskService.getTaskCard(f.task.id).status, 'in_progress');
+    f.service.cancel(queued.id);
+    assert.equal(f.service.canResumeRework(f.task.id), true);
+    assert.throws(() => f.service.reviewTask(f.task.id, 'rework', ' '), /Опишите/);
+    const resumed = f.service.reviewTask(f.task.id, 'rework', 'Добавлено точное описание проблемы.');
+    assert.equal(resumed.id, queued.id);
+    assert.equal(resumed.stage, queued.stage);
+    assert.equal(resumed.revision, queued.revision);
+    assert.equal(resumed.reviewFeedback, 'Добавлено точное описание проблемы.');
+    assert.equal(f.service.canResumeRework(f.task.id), false);
     assert.equal(f.service.claim('rework')?.status, 'running');
   } finally { f.app.close(); }
 });
