@@ -287,8 +287,10 @@
                   }
 
                   <div class="comment-form">
+                    <label class="field-label" for="sat-review-feedback">Текст замечания</label>
                     <textarea
                       #reviewFeedbackInput
+                      id="sat-review-feedback"
                       pTextarea
                       rows="3"
                       class="w-full"
@@ -297,6 +299,9 @@
                       (ngModelChange)="commentDraft.set($event)"
                     ></textarea>
                     <p class="subform-hint">Вставьте скриншот из буфера через Ctrl+V на этой вкладке или выберите файл.</p>
+                    @if (card.status === 'review' || stoppedRework()) {
+                      <p class="subform-hint">«Сохранить комментарий» добавит текст и снимки в обсуждение. Действие доработки ниже отправит этот же черновик агентам и запустит работу.</p>
+                    }
                     @if (commentImages().length) {
                       <div class="comment-previews">
                         @for (image of commentImages(); track $index) {
@@ -314,7 +319,7 @@
                       <p-button label="Добавить скриншоты" icon="pi pi-image" severity="secondary" size="small"
                         [disabled]="store.busy() || commentUploading()" (onClick)="commentFileInput.click()" />
                       <p-button
-                        label="Отправить"
+                        label="Сохранить комментарий"
                         icon="pi pi-send"
                         size="small"
                         [disabled]="!hasCommentDraft() || store.busy() || commentUploading()"
@@ -329,7 +334,7 @@
                             [disabled]="store.busy()" (onClick)="previewPatch(false)" />
                           <p-button label="Откатить патч" icon="pi pi-undo" severity="secondary" size="small"
                             [disabled]="store.busy()" (onClick)="previewPatch(true)" />
-                          <p-button label="Вернуть на доработку" icon="pi pi-replay" severity="secondary" size="small"
+                          <p-button label="Отправить замечание и вернуть" icon="pi pi-replay" severity="secondary" size="small"
                             [disabled]="store.busy() || commentUploading()" (onClick)="returnWithFeedback(reviewFeedbackInput)" />
                           <p-button label="Принять и слить" icon="pi pi-check" severity="success" size="small"
                             [disabled]="store.busy()" (onClick)="acceptAutomation()" />
@@ -339,7 +344,7 @@
                     @if (stoppedRework()) {
                       <section class="review-actions" aria-label="Остановленная доработка">
                         <h4>Доработка остановлена</h4>
-                        <p-button label="Продолжить доработку" icon="pi pi-play" size="small"
+                        <p-button label="Отправить замечание и продолжить" icon="pi pi-play" size="small"
                           [disabled]="store.busy() || commentUploading()" (onClick)="returnWithFeedback(reviewFeedbackInput)" />
                       </section>
                     }
