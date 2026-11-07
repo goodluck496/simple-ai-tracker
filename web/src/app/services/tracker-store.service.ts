@@ -485,6 +485,9 @@ export class TrackerStore {
 
   public async reviewAutomation(id: string, decision: 'accept' | 'rework', feedback?: string): Promise<boolean> {
     return (await this.run(async () => {
+      if (decision === 'rework' && (await firstValueFrom(this.api.previewPatchActive(id))).active) {
+        await firstValueFrom(this.api.previewPatch(id, true));
+      }
       await firstValueFrom(this.api.reviewAutomation(id, decision, feedback));
       await this.reloadOpenCard();
       await this.refresh();

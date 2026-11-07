@@ -607,6 +607,12 @@ export class AutomationService {
         previewPatch: { runId: run.id, head: run.commitSha, branch: run.settings.baseBranch, rollback } }, true);
     });
   }
+
+  public previewPatchActive(taskId: string): boolean {
+    this.tasks.getTaskCard(taskId);
+    const run = this.runs.list(taskId)[0];
+    return !!run && this.projects.hasPreviewPatch(run.id);
+  }
   /** Explicit UI action only: no MCP tool allows agents to raise their budget. */
   public extendBudget(id: string, input: unknown): AgentRun {
     return this.runs.db.transaction(() => {

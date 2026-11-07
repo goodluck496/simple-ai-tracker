@@ -145,6 +145,8 @@ export class TaskDialogComponent {
   public readonly tagDraft = signal('');
   public readonly commentDraft = signal('');
   public readonly commentImages = signal<string[]>([]);
+  public readonly commentUploading = signal(false);
+  public readonly hasCommentDraft = computed(() => !!this.commentDraft().trim() || this.commentImages().length > 0);
   public readonly patchNotice = signal('');
   private readonly commentImagePattern = /^\[скриншот\] (\/api\/images\/[a-z0-9]{8,64}\.(?:png|jpg|webp|gif)(?:\?workspace=[\w%-]+)?)$/;
   public readonly clarificationDraft = signal('');
@@ -394,12 +396,15 @@ export class TaskDialogComponent {
   public async submitComment(returnToWork = false): Promise<void> {
     const card = this.task();
     const text = this.commentDraft().trim();
-    if (!card || !text || (returnToWork && card.status !== 'review')) return;
-    const message = [text, ...this.commentImages().map(url => `[скриншот] ${url}`)].join('\n');
+    if (!card || !this.hasCommentDraft() || this.commentUploading() || (returnToWork && card.status !== 'review')) return;
+    const message = [text || 'См. прикреплённые скриншоты.', ...this.commentImages().map(url => `[скриншот] ${url}`)].join('\n');
     const saved = returnToWork ? await this.store.reviewAutomation(card.id, 'rework', message)
       : await this.store.addComment(card.id, message);
     if (saved && this.task()?.id === card.id) {
-      if (returnToWork) this.status.set(this.task()!.status);
+      if (returnToWork) {
+        this.status.set(this.task()!.status);
+        this.patchNotice.set('Задача возвращена на доработку. Если приложение собрано с патчем, пересоберите его для возврата к основной версии.');
+      }
       this.commentDraft.set('');
       this.commentImages.set([]);
     }
@@ -419,7 +424,7 @@ export class TaskDialogComponent {
     this.patchNotice.set(rollback
       ? 'Патч снят. Пересоберите приложение, чтобы вернуть прежнюю сборку.'
       : 'Патч в базовой рабочей копии. Пересоберите приложение для проверки.');
-    if (rollback && this.commentDraft().trim()) await this.submitComment(true);
+    if (rollback && this.hasCommentDraft()) await this.submitComment(true);
   }
 
   public commentText(text: string): string {
@@ -531,7 +536,8 @@ export class TaskDialogComponent {
     if (files.length > 0) {
       const inComment = event.target instanceof HTMLElement && !!event.target.closest('.comment-form');
       if (inComment) event.preventDefault();
-      void this.processImageFiles(files, inComment ? this.commentImages : this.images);
+      if (inComment) void this.addCommentImages(files);
+      else void this.processImageFiles(files);
     }
   }
 
@@ -570,6 +576,19 @@ export class TaskDialogComponent {
       const url = await this.store.uploadImage(dataUrl);
       if (url) target.update((current) => [...current, url]);
     }
+  }
+  public async selectCommentImages(event: Event): Promise<void> {
+    const input = event.target as HTMLInputElement;
+    const files = Array.from(input.files ?? []);
+    input.value = '';
+    await this.addCommentImages(files);
+  }
+
+  private async addCommentImages(files: readonly File[]): Promise<void> {
+    if (this.commentUploading()) return;
+    this.commentUploading.set(true);
+    try { await this.processImageFiles(files, this.commentImages); }
+    finally { this.commentUploading.set(false); }
   }
 
   public removeImage(index: number, event?: Event): void {

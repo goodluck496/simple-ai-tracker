@@ -342,6 +342,8 @@
 .comment-actions {
   display: flex;
   justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
 }
 
 .comment-previews,
@@ -368,6 +370,10 @@
   margin: 0 0 10px;
   font-size: 0.8rem;
   color: var(--sat-text-muted);
+}
+
+.review-actions .subform-hint {
+  margin-top: 8px;
 }
 
 .review-action-row p-button {
