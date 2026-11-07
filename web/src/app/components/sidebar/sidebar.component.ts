@@ -1,17 +1,11 @@
+import { ChangeDetectionStrategy, Component, inject, model, output, signal } from '@angular/core';
 import { CommonModule } from '@angular/common';
-import { ChangeDetectionStrategy, Component, computed, inject, model, output } from '@angular/core';
-import { FormsModule } from '@angular/forms';
 import { ButtonModule } from 'primeng/button';
-import { SelectModule } from 'primeng/select';
 import { TooltipModule } from 'primeng/tooltip';
-import type { TaskType } from '../../models/tracker.models';
+import { DialogModule } from 'primeng/dialog';
 import { TrackerStore } from '../../services/tracker-store.service';
 import { WorkspaceSelectorComponent } from '../workspace-selector/workspace-selector.component';
-
-interface FilterOption<T> {
-  readonly label: string;
-  readonly value: T | null;
-}
+import { WorkspaceService } from '../../services/workspace.service';
 
 @Component({
   selector: 'sat-sidebar',
@@ -20,9 +14,8 @@ interface FilterOption<T> {
     CommonModule,
     ButtonModule,
     TooltipModule,
+    DialogModule,
     WorkspaceSelectorComponent,
-    SelectModule,
-    FormsModule,
   ],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './sidebar.component.html',
@@ -30,8 +23,10 @@ interface FilterOption<T> {
 })
 export class SidebarComponent {
   public readonly store = inject(TrackerStore);
+  public readonly ws = inject(WorkspaceService);
 
   public readonly isExpanded = model<boolean>(true);
+  public readonly showWorkspaceDialog = signal(false);
 
   public readonly openQueue = output<string | null>();
   public readonly openAutomation = output<void>();
@@ -39,35 +34,6 @@ export class SidebarComponent {
   public readonly showTags = output<boolean>();
   public readonly showBackups = output<boolean>();
   public readonly showInstructions = output<boolean>();
-
-  public readonly typeOptions: FilterOption<TaskType>[] = [
-    { label: 'Фичи', value: 'feature' },
-    { label: 'Задачи', value: 'task' },
-    { label: 'Баги', value: 'bug' },
-  ];
-
-  public readonly featureOptions = computed<FilterOption<string>[]>(() =>
-    this.store.features().map((feature) => ({ label: `${feature.id} — ${feature.title}`, value: feature.id })),
-  );
-
-  public readonly typeFilter = computed(() => this.store.typeFilter());
-  public readonly featureFilter = computed(() => this.store.featureFilter());
-
-  public onTypeChange(value: TaskType | null): void {
-    this.store.setTypeFilter(value);
-  }
-
-  public onFeatureChange(value: string | null): void {
-    if (value) this.store.toggleFeatureFilter(value);
-    else if (this.store.featureFilter()) this.store.toggleFeatureFilter(this.store.featureFilter()!);
-  }
-
-  public resetBoardFilters(): void {
-    this.store.setTypeFilter(null);
-    if (this.store.featureFilter()) {
-      this.store.toggleFeatureFilter(this.store.featureFilter()!);
-    }
-  }
 
   public onOpenQueue(): void {
     this.openQueue.emit(null);

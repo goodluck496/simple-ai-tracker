@@ -1,20 +1,5 @@
 <aside class="sat-sidebar" [class.is-expanded]="isExpanded()">
   <div class="sidebar-header">
-    <div class="sidebar-brand">
-      <span
-        class="sidebar-logo"
-        [pTooltip]="store.online() ? 'Сервер на связи' : 'Нет связи с сервером'"
-        tooltipPosition="bottom"
-        [attr.aria-label]="store.online() ? 'Сервер на связи' : 'Нет связи с сервером'"
-      >
-        <i class="pi pi-compass sidebar-brand-icon" aria-hidden="true"></i>
-        <span class="sidebar-brand-dot" [class.sidebar-brand-dot--offline]="!store.online()"></span>
-      </span>
-      <div class="sidebar-brand-text">
-        <span class="sidebar-title">Simple AI Tracker</span>
-        <span class="sidebar-subtitle">Kanban &amp; MCP hub</span>
-      </div>
-    </div>
     <button
       pButton
       icon="pi pi-bars"
@@ -28,9 +13,24 @@
     <!-- Рабочее пространство -->
     <div class="sidebar-section">
       <span class="sidebar-section-title">Рабочее пространство</span>
-      <div class="sidebar-workspace-container">
+      <button
+        pButton
+        class="sidebar-nav-btn workspace-trigger-btn"
+        (click)="showWorkspaceDialog.set(true)"
+        [attr.aria-label]="'Выбрать рабочее пространство'"
+      >
+        <i class="pi pi-briefcase"></i>
+        <span class="sidebar-text">{{ ws.currentLabel() }}</span>
+      </button>
+      <p-dialog
+        [(visible)]="showWorkspaceDialog"
+        header="Рабочее пространство"
+        [modal]="true"
+        [style]="{ width: '400px' }"
+        appendTo="body"
+      >
         <sat-workspace-selector />
-      </div>
+      </p-dialog>
     </div>
 
     <!-- Разделы и модули -->
@@ -108,57 +108,6 @@
           <i class="pi pi-question-circle"></i>
           <span class="sidebar-text">Инструкция для ИИ-агента</span>
         </button>
-      </div>
-    </div>
-
-    <!-- Фильтры доски -->
-    <div class="sidebar-section">
-      <div class="sidebar-section-header-row">
-        <span class="sidebar-section-title">Фильтры доски</span>
-        @if (typeFilter() || featureFilter()) {
-          <button
-            pButton
-            severity="secondary"
-            [text]="true"
-            size="small"
-            class="sidebar-reset-btn"
-            pTooltip="Сбросить фильтры типа и фичи"
-            (click)="resetBoardFilters()"
-          >
-            <i class="pi pi-filter-slash"></i>
-            <span class="sidebar-text">Сбросить</span>
-          </button>
-        }
-      </div>
-
-      <div class="sidebar-filters">
-        <label class="sidebar-field-label">Тип задачи</label>
-        <p-select
-          class="sidebar-select"
-          [options]="typeOptions"
-          optionLabel="label"
-          optionValue="value"
-          placeholder="Все типы"
-          [ngModel]="typeFilter()"
-          (ngModelChange)="onTypeChange($event)"
-          [showClear]="true"
-          appendTo="body"
-        ></p-select>
-
-        <label class="sidebar-field-label">Родительская фича</label>
-        <p-select
-          class="sidebar-select"
-          [options]="featureOptions()"
-          optionLabel="label"
-          optionValue="value"
-          placeholder="Все фичи"
-          [ngModel]="featureFilter()"
-          (ngModelChange)="onFeatureChange($event)"
-          [showClear]="true"
-          appendTo="body"
-          [filter]="true"
-          filterBy="label"
-        ></p-select>
       </div>
     </div>
   </div>

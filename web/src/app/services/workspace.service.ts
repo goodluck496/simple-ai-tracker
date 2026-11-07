@@ -31,6 +31,13 @@ export class WorkspaceService {
   public readonly current = this.currentSignal.asReadonly();
   public readonly loading = this.loadingSignal.asReadonly();
 
+  /** Текущий лейбл пространства. */
+  public readonly currentLabel = computed(() => {
+    const currentName = this.current();
+    const workspace = this.workspaces().find((ws) => ws.name === currentName);
+    return workspace ? workspace.label : currentName;
+  });
+
   /** Опции для p-select. */
   public readonly options = computed(() =>
     this.workspaces().map((ws) => ({ label: ws.label, value: ws.name })),

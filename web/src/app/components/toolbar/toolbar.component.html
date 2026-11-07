@@ -51,8 +51,9 @@
     </p-popover>
   </div>
 
-  <!-- Фильтры: тег и кнопка сброса (тип и фича перенесены в сайдбар) -->
+  <!-- Фильтры -->
   <div class="filters">
+    <!-- Тег -->
     <p-select
       class="filter-select"
       [options]="tagOptions()"
@@ -64,10 +65,35 @@
       [showClear]="true"
       [filter]="true"
       filterBy="label"
-      [pTooltip]="tagFilterLabel()"
-      tooltipPosition="bottom"
-      [tooltipDisabled]="!tagFilterLabel()"
       appendTo="body"
+    ></p-select>
+
+    <!-- Тип -->
+    <p-select
+      class="filter-select"
+      [options]="typeOptions"
+      optionLabel="label"
+      optionValue="value"
+      placeholder="Тип"
+      [ngModel]="typeFilter()"
+      (ngModelChange)="onTypeChange($event)"
+      [showClear]="true"
+      appendTo="body"
+    ></p-select>
+
+    <!-- Фича -->
+    <p-select
+      class="filter-select"
+      [options]="featureOptions()"
+      optionLabel="label"
+      optionValue="value"
+      placeholder="Фича"
+      [ngModel]="featureFilter()"
+      (ngModelChange)="onFeatureChange($event)"
+      [showClear]="true"
+      appendTo="body"
+      [filter]="true"
+      filterBy="label"
     ></p-select>
 
     @if (store.filtersActive()) {

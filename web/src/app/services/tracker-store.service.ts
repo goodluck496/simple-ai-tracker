@@ -187,7 +187,8 @@ export class TrackerStore {
       this.querySignal().trim().length > 0 ||
       this.statusFilterSignal() !== null ||
       this.typeFilterSignal() !== null ||
-      this.tagFilterSignal() !== null,
+      this.tagFilterSignal() !== null ||
+      this.featureFilterSignal() !== null,
   );
 
   public constructor() {
