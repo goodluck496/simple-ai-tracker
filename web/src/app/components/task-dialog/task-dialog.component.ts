@@ -396,8 +396,9 @@ export class TaskDialogComponent {
   public async submitComment(returnToWork = false): Promise<void> {
     const card = this.task();
     const text = this.commentDraft().trim();
-    if (!card || !this.hasCommentDraft() || this.commentUploading() || (returnToWork && card.status !== 'review')) return;
-    const message = [text || 'См. прикреплённые скриншоты.', ...this.commentImages().map(url => `[скриншот] ${url}`)].join('\n');
+    if (!card || this.commentUploading() || (returnToWork ? card.status !== 'review' : !this.hasCommentDraft())) return;
+    const fallback = this.commentImages().length ? 'См. прикреплённые скриншоты.' : 'Результат приёмки отклонён. Пользователь вернул задачу на доработку.';
+    const message = [text || fallback, ...this.commentImages().map(url => `[скриншот] ${url}`)].join('\n');
     const saved = returnToWork ? await this.store.reviewAutomation(card.id, 'rework', message)
       : await this.store.addComment(card.id, message);
     if (saved && this.task()?.id === card.id) {
@@ -534,7 +535,7 @@ export class TaskDialogComponent {
     }
     if (files.length === 0) files.push(...Array.from(clipboard.files ?? []));
     if (files.length > 0) {
-      const inComment = event.target instanceof HTMLElement && !!event.target.closest('.comment-form');
+      const inComment = !this.isCreate() && this.tab() === 'discussion';
       if (inComment) event.preventDefault();
       if (inComment) void this.addCommentImages(files);
       else void this.processImageFiles(files);

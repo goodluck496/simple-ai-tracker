@@ -295,6 +295,7 @@
                       [ngModel]="commentDraft()"
                       (ngModelChange)="commentDraft.set($event)"
                     ></textarea>
+                    <p class="subform-hint">Вставьте скриншот из буфера через Ctrl+V на этой вкладке или выберите файл.</p>
                     @if (commentImages().length) {
                       <div class="comment-previews">
                         @for (image of commentImages(); track $index) {
@@ -328,11 +329,10 @@
                           <p-button label="Откатить патч" icon="pi pi-undo" severity="secondary" size="small"
                             [disabled]="store.busy()" (onClick)="previewPatch(true)" />
                           <p-button label="Вернуть на доработку" icon="pi pi-replay" severity="secondary" size="small"
-                            [disabled]="!hasCommentDraft() || store.busy() || commentUploading()" (onClick)="submitComment(true)" />
+                            [disabled]="store.busy() || commentUploading()" (onClick)="submitComment(true)" />
                           <p-button label="Принять и слить" icon="pi pi-check" severity="success" size="small"
                             [disabled]="store.busy()" (onClick)="acceptAutomation()" />
                         </div>
-                        @if (!hasCommentDraft()) { <p class="subform-hint">Добавьте описание или скриншот, чтобы вернуть задачу на доработку.</p> }
                       </section>
                     }
                     @if (patchNotice()) { <p class="patch-notice" role="status">{{ patchNotice() }}</p> }
