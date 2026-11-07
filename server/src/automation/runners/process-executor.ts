@@ -2,6 +2,7 @@ import crossSpawn from 'cross-spawn';
 import { ExecutionScope } from './execution-scope.js';
 import { TaskEnvironment } from './task-environment.js';
 import { CompactProgress } from '../../../../shared/automation/compact-progress.js';
+import { runFailure } from '../../../../shared/automation/run-failure.js';
 
 export interface ProcessRequest {
   command: string; args: string[]; cwd: string; signal: AbortSignal;
@@ -75,7 +76,10 @@ export class ProcessExecutor {
         request.signal.removeEventListener('abort', abort);
         if (observerError) { reject(observerError); return; }
         if (request.signal.aborted) { reject(new Error('Execution cancelled or timed out.')); return; }
-        const diagnostic = request.compactProgress ? CompactProgress.diagnostics(stderr || stdout) : (stderr || stdout).slice(-6000);
+        const network = code !== 0 ? runFailure(stderr + '\n' + stdout) : undefined;
+        const diagnostic = request.compactProgress
+          ? network?.code ? `${network.title} (${network.code}).` : CompactProgress.diagnostics(stderr || stdout)
+          : (stderr || stdout).slice(-6000);
         if (request.compactProgress) request.onProgress?.(`Команда: ${CompactProgress.command(request.command, request.args)} → exit ${code}.\n${code !== 0 ? diagnostic + '\n' : CompactProgress.success(stdout).map(line => line + '\n').join('')}`);
         if (code !== 0) { reject(new ProcessExecutionError(`${request.command} failed (${code}): ${diagnostic}`, code, stdout, stderr)); return; }
         resolve(stdout);

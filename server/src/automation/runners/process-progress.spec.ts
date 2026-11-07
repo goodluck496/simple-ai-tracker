@@ -32,3 +32,14 @@ test('live output retains bounded npm status and excludes source bodies', () => 
   const output = CompactProgress.liveOutput('npm http fetch GET 200 https://user:pass@host/pkg?token=secret\nconst code=1;');
   assert.match(output, /npm http/); assert.ok(!output.includes('pass')); assert.ok(!output.includes('secret')); assert.ok(!output.includes('const code'));
 });
+
+test('compact failures retain the network code from JSON stdout even when stderr contains noise', async () => {
+  const messages: string[] = [];
+  await assert.rejects(new ProcessExecutor().run({ command: process.execPath,
+    args: ['-e', "console.error('warning');console.log(JSON.stringify({type:'error',error:{code:'ETIMEDOUT',message:'private endpoint'}}));process.exitCode=1"],
+    cwd: os.tmpdir(), signal: AbortSignal.timeout(5000), compactProgress: true,
+    onProgress: text => messages.push(text),
+  }), /Истекло время ожидания соединения \(ETIMEDOUT\)/);
+  assert.match(messages.join('\n'), /ETIMEDOUT/);
+  assert.doesNotMatch(messages.join('\n'), /private endpoint/);
+});

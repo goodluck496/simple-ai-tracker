@@ -151,9 +151,9 @@
               <button pButton severity="warn" size="small" class="doctor-fix-btn" icon="pi pi-wrench" (click)="openProposedFix(item)">
                 <strong>ПРОВЕРЬ ИЗМЕНЕНИЯ</strong>
               </button>
-            } @else if (item.status === runStatus.Failed) {
+            } @else if (item.status === runStatus.Failed || item.status === runStatus.Interrupted) {
               <button pButton severity="secondary" size="small" icon="pi pi-sparkles" [disabled]="busy()" (click)="diagnose(item)">
-                Анализ сбоя (Сабагент)
+                Анализ сбоя
               </button>
             }
             @if (item.canResume) {
@@ -254,15 +254,25 @@
           </section>
         }
       }
+      @if (connectionFailure(); as failure) {
+        <section class="run-stop-reason" role="status">
+          <strong>{{ item.status === runStatus.Running || item.status === runStatus.Queued ? 'Предыдущая попытка: ' : '' }}{{ failure.title }}
+            @if (failure.code) { <code>{{ failure.code }}</code> }
+          </strong>
+          <span>{{ failure.detail }}</span>
+          <button pButton severity="secondary" size="small" type="button"
+            (click)="runConsole.level.set('error'); runConsole.stage.set('all'); runConsole.follow.set(true); executionLog.scrollIntoView({ block: 'nearest' })">Показать ошибки в журнале</button>
+        </section>
+      }
       <!-- ЖУРНАЛ ВЫПОЛНЕНИЯ: занимает всё оставшееся пространство -->
-      <section class="run-console-section" aria-label="Консоль и журнал">
+      <section #executionLog class="run-console-section" aria-label="Консоль и журнал">
         <div class="console-section-header">
           <span class="console-title"><i class="pi pi-terminal"></i> Журнал выполнения</span>
           @if (item.tokenUsage; as usage) {
             <span class="console-tokens-badge">{{ tokenMeter.label(usage) }}</span>
           }
         </div>
-        <sat-run-console class="embedded-console" [runId]="item.id" [events]="detail()?.run?.id === item.id ? (detail()?.events ?? []) : []" />
+        <sat-run-console #runConsole class="embedded-console" [runId]="item.id" [events]="detail()?.run?.id === item.id ? (detail()?.events ?? []) : []" />
       </section>
     } @else {
       <div class="empty-selection-placeholder">

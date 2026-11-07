@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import type { AgentRun, ProposedFix, ModelConnection } from '../../../shared/automation/contracts.js';
 import { ProviderKind } from '../../../shared/automation/contracts.js';
 import { ProcessExecutor } from './runners/process-executor.js';
+import { runFailure } from '../../../shared/automation/run-failure.js';
 
 export class PipelineDoctor {
   public constructor(
@@ -63,7 +64,13 @@ export class PipelineDoctor {
     let files: string[] = [];
     let diff = '';
 
-    if (/opencode.*(?:Unexpected non-whitespace character after JSON|valid JSON verdict)/i.test(failureSummary)) {
+    const failure = runFailure(failureSummary)
+      ?? (/подробности доступны у исполнителя/i.test(failureSummary) ? runFailure(recentLogs) : undefined);
+    if (failure) {
+      title = failure.title;
+      explanation = `${failure.code ? `Код ошибки: ${failure.code}. ` : ''}${failure.detail}`;
+      action = 'retry_stage';
+    } else if (/opencode.*(?:Unexpected non-whitespace character after JSON|valid JSON verdict)/i.test(failureSummary)) {
       title = 'Повтор этапа после ошибки формата OpenCode';
       explanation = 'OpenCode завершил вызов, но воркер не смог прочитать вердикт. После обновления адаптера можно повторить текущий этап в прежней рабочей ветке.';
       action = 'retry_stage';

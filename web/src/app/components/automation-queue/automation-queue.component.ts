@@ -11,6 +11,7 @@ import type { ModelCatalogInput, ModelOption } from '../../../../../shared/autom
 import { CheckboxModule } from 'primeng/checkbox';
 import { TokenMeter } from '../../../../../shared/automation/token-usage';
 import { RunBudget } from '../../../../../shared/automation/budget';
+import { runFailure } from '../../../../../shared/automation/run-failure';
 import { RunConsoleComponent } from '../run-console/run-console.component';
 import { RunActivityComponent } from './run-activity.component';
 import { ACTIVITY_TIMING } from '../../../../../shared/automation/queue-activity';
@@ -89,6 +90,20 @@ export class AutomationQueueComponent {
   public readonly runAction = RunAction;
   public readonly tokenMeter = TokenMeter;
   public readonly runBudget = RunBudget;
+  public readonly connectionFailure = computed(() => {
+    const detail = this.detail();
+    if (!detail || ![RunStatus.Running, RunStatus.Failed, RunStatus.Interrupted, RunStatus.Queued].some(status => status === detail.run.status)) return undefined;
+    const direct = runFailure(detail.run.summary);
+    if (direct) return direct;
+    const events = detail.events;
+    for (let index = events.length - 1; index >= 0; index--) {
+      const event = events[index];
+      if (event.kind !== 'failed' && event.kind !== 'interrupted') continue;
+      return runFailure(event.text) ?? (/подробности доступны у исполнителя/i.test(event.text)
+        ? runFailure(events.slice(Math.max(0, index - 12), index).map(entry => entry.text).join('\n')) : undefined);
+    }
+    return undefined;
+  });
   public readonly snapshot = toSignal(combineLatest([toObservable(this.historyMode), toObservable(this.historyTask), merge(timer(0, AUTOMATION_TIMING.pollMs), this.refresh)]).pipe(
     switchMap(([history, task]) => this.http.get<QueueSnapshot>(history ? `/api/automation/history${task ? '?taskId=' + encodeURIComponent(task) : ''}` : '/api/automation/queue').pipe(
       tap(() => { this.receivedAt.set(performance.now()); this.queueConnected.set(true); this.pollError.set(''); }),
