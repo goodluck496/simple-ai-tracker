@@ -7,6 +7,8 @@ import { TASK_SELECTION_LIMIT } from '../../../../shared/automation/task-readine
 import { RunLogDownload } from '../../automation/run-log-download.js';
 
 export function registerAutomationRoutes(router: Router, app: AppContainer): void {
+  router.post('/api/automation/tasks/:id/preview-patch', ({ params, body, res }) =>
+    sendJson(res, 201, app.automationService.requestPreviewPatch(params.id, bodyField(body, 'rollback') === true)));
   router.post('/api/automation/runs/:id/diff', ({ params, body, res }) =>
     sendJson(res, 201, app.automationService.requestDiff(params.id, bodyField(body, 'wholeRun') === true)));
   router.post('/api/automation/tasks/:id/review/accept', ({ params, res }) =>

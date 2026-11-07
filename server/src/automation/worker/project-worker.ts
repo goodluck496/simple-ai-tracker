@@ -1,10 +1,10 @@
-import { readdir, readFile, stat, realpath } from 'node:fs/promises';
+import { readdir, readFile, stat, realpath, writeFile, unlink } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { ProcessExecutor } from '../runners/process-executor.js';
 import type { TrackerChannel } from './mcp-client.js';
 import { AutomationTool } from '../../../../shared/automation/protocol.js';
-import { ProjectAction, PROJECT_LIMITS, type ProjectInput, type ProjectRequest, type ProjectResult } from '../../../../shared/automation/project.js';
+import { ProjectAction, PROJECT_LIMITS, type PreviewPatch, type ProjectInput, type ProjectRequest, type ProjectResult } from '../../../../shared/automation/project.js';
 import { WindowsFolderPicker, type FolderPicker } from './folder-picker.js';
 import { WorkerModelCatalog } from './model-catalog.js';
 import { RunCleanup } from './run-cleanup.js';
@@ -41,6 +41,11 @@ export class ProjectWorker {
     const target = input.path || os.homedir();
     if (!path.isAbsolute(target)) throw new Error('Укажите абсолютную папку на машине worker.');
     const directory = await realpath(target);
+    if (input.action === ProjectAction.PreviewPatch) {
+      if (!input.previewPatch) throw new Error('Не указан патч запуска.');
+      await this.previewPatch(directory, input.previewPatch);
+      return { path: directory };
+    }
     if (input.action === ProjectAction.Diff) {
       const { head, base } = input.diff ?? {};
       const sha = /^[a-f0-9]{40}(?:[a-f0-9]{24})?$/;
@@ -76,6 +81,35 @@ export class ProjectWorker {
     } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw new Error('Не удалось прочитать package.json проекта.'); }
     try { await stat(path.join(root, 'package-lock.json')); hasLockfile = true; } catch { /* non-npm projects have no lockfile */ }
     return { path: root, branches, currentBranch: (await this.git(root, ['branch', '--show-current'])).trim(), scripts, hasLockfile };
+  }
+  private async previewPatch(cwd: string, patch: PreviewPatch): Promise<void> {
+    const git = async (...args: string[]) => (await this.git(cwd, args)).trimEnd();
+    const sha = /^[a-f0-9]{40}(?:[a-f0-9]{24})?$/;
+    if (!sha.test(patch.head) || !/^[\w-]+$/.test(patch.runId)) throw new Error('Некорректный патч.');
+    const file = path.join(await git('rev-parse', '--absolute-git-dir'), 'sat-preview-patch.json');
+    const base = await git('rev-parse', 'HEAD');
+    const status = await git('status', '--porcelain=v1', '--untracked-files=all');
+    if (patch.rollback) {
+      let receipt: { runId: string; base: string; tree: string; branch: string };
+      try { receipt = JSON.parse(await readFile(file, 'utf8')); }
+      catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return; throw error; }
+      if (receipt.runId !== patch.runId || receipt.base !== base || receipt.branch !== await git('branch', '--show-current')
+        || !sha.test(receipt.tree) || status.split('\n').some(line => line && line[1] !== ' ')) {
+        throw new Error('Рабочая копия изменилась после примерки. Сохраните правки перед откатом.');
+      }
+      const index = await git('write-tree');
+      if (index === receipt.tree) await git('read-tree', '-m', '-u', receipt.tree, base);
+      else if (status) throw new Error('Индекс изменился после примерки. Откат остановлен.');
+      await unlink(file);
+      return;
+    }
+    if (status || await git('branch', '--show-current') !== patch.branch) {
+      throw new Error('Перед примеркой закоммитьте локальные правки и откройте базовую ветку.');
+    }
+    const tree = await git('merge-tree', '--write-tree', base, patch.head);
+    if (!sha.test(tree)) throw new Error('Не удалось подготовить дерево патча.');
+    await writeFile(file, JSON.stringify({ runId: patch.runId, base, tree, branch: patch.branch }), { flag: 'wx' });
+    await git('read-tree', '-m', '-u', base, tree);
   }
   private async git(cwd: string, args: string[]): Promise<string> {
     return this.executor.run({ command: 'git', args, cwd, signal: AbortSignal.timeout(PROJECT_LIMITS.commandMs) });

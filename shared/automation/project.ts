@@ -1,13 +1,14 @@
 import type { CheckCommand } from './contracts.js';
 import type { ModelCatalogInput, ModelOption } from './model-catalog.js';
 
-export const ProjectAction = { Browse: 'browse', Inspect: 'inspect', CreateBranch: 'create-branch', PickFolder: 'pick-folder', Models: 'models', Diff: 'diff', Cleanup: 'cleanup', StartWorker: 'start-worker', StopWorker: 'stop-worker' } as const;
+export const ProjectAction = { Browse: 'browse', Inspect: 'inspect', CreateBranch: 'create-branch', PickFolder: 'pick-folder', Models: 'models', Diff: 'diff', PreviewPatch: 'preview-patch', Cleanup: 'cleanup', StartWorker: 'start-worker', StopWorker: 'stop-worker' } as const;
 export type ProjectAction = typeof ProjectAction[keyof typeof ProjectAction];
 export interface ExecutionStatus { state: 'starting' | 'running' | 'stopping' | 'stopped'; pid?: number; hostName?: string; error?: string; }
 export const ProjectRequestStatus = { Queued: 'queued', Running: 'running', Completed: 'completed', Failed: 'failed' } as const;
 export type ProjectRequestStatus = typeof ProjectRequestStatus[keyof typeof ProjectRequestStatus];
 export const PROJECT_LIMITS = { requestMs: 60000, cleanupMs: 300000, commandMs: 15000, pollMs: 1500, maxHistory: 20, maxEntries: 200, packageBytes: 1024 * 1024 } as const;
-export interface ProjectInput { action: ProjectAction; path: string; baseBranch?: string; newBranch?: string; catalog?: ModelCatalogInput; cleanup?: import('./cleanup.js').CleanupSpec; diff?: { head: string; base?: string }; }
+export interface ProjectInput { action: ProjectAction; path: string; baseBranch?: string; newBranch?: string; catalog?: ModelCatalogInput; cleanup?: import('./cleanup.js').CleanupSpec; diff?: { head: string; base?: string }; previewPatch?: PreviewPatch; }
+export interface PreviewPatch { runId: string; head: string; branch: string; rollback: boolean; }
 export interface ProjectDiff { text: string; truncated: boolean; }
 export interface ProjectResult { path: string; cleanup?: import('./cleanup.js').CleanupResult; cancelled?: boolean; parent?: string; directories?: { name: string; path: string }[];
   execution?: ExecutionStatus; diff?: ProjectDiff;

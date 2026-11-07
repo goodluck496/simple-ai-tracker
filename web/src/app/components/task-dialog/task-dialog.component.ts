@@ -145,6 +145,7 @@ export class TaskDialogComponent {
   public readonly tagDraft = signal('');
   public readonly commentDraft = signal('');
   public readonly commentImages = signal<string[]>([]);
+  public readonly patchNotice = signal('');
   private readonly commentImagePattern = /^\[скриншот\] (\/api\/images\/[a-z0-9]{8,64}\.(?:png|jpg|webp|gif)(?:\?workspace=[\w%-]+)?)$/;
   public readonly clarificationDraft = signal('');
   public readonly clarificationReason = signal('');
@@ -409,6 +410,16 @@ export class TaskDialogComponent {
     if (card?.status === 'review' && await this.store.reviewAutomation(card.id, 'accept') && this.task()?.id === card.id) {
       this.status.set(this.task()!.status);
     }
+  }
+  public async previewPatch(rollback: boolean): Promise<void> {
+    const card = this.task();
+    if (card?.status !== 'review') return;
+    this.patchNotice.set('');
+    if (!await this.store.previewPatch(card.id, rollback) || this.task()?.id !== card.id) return;
+    this.patchNotice.set(rollback
+      ? 'Патч снят. Пересоберите приложение, чтобы вернуть прежнюю сборку.'
+      : 'Патч в базовой рабочей копии. Пересоберите приложение для проверки.');
+    if (rollback && this.commentDraft().trim()) await this.submitComment(true);
   }
 
   public commentText(text: string): string {
@@ -692,6 +703,7 @@ export class TaskDialogComponent {
     this.attachments.set(card.attachments);
     this.commentDraft.set('');
     this.commentImages.set([]);
+    this.patchNotice.set('');
     this.tab.set(card.openQuestionsCount > 0 ? 'questions' : 'overview');
   }
 

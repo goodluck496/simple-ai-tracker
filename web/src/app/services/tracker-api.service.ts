@@ -1,7 +1,8 @@
 import { publicUrl } from './public-url';
 import { HttpClient, HttpParams } from '@angular/common/http';
 import { Injectable, inject } from '@angular/core';
-import { Observable, catchError, of, throwError } from 'rxjs';
+import { Observable, catchError, exhaustMap, filter, of, switchMap, take, throwError, timeout, timer } from 'rxjs';
+import { PROJECT_LIMITS, ProjectRequestStatus, type ProjectRequest } from '../../../../shared/automation/project';
 import type {
   BackupListResponse,
   BackupRecord,
@@ -74,6 +75,18 @@ export class TrackerApiService {
   }
   public reviewAutomation(id: string, decision: 'accept' | 'rework', feedback?: string): Observable<unknown> {
     return this.http.post(`/api/automation/tasks/${encodeURIComponent(id)}/review/${decision}`, { feedback });
+  }
+  public previewPatch(id: string, rollback: boolean): Observable<ProjectRequest> {
+    return this.http.post<ProjectRequest>(`/api/automation/tasks/${encodeURIComponent(id)}/preview-patch`, { rollback }).pipe(
+      switchMap(created => timer(0, PROJECT_LIMITS.pollMs).pipe(
+        exhaustMap(() => this.http.get<ProjectRequest>(`/api/automation/project-requests/${created.id}`)),
+        filter(request => request.status === ProjectRequestStatus.Completed || request.status === ProjectRequestStatus.Failed),
+        take(1),
+      )),
+      timeout(PROJECT_LIMITS.requestMs + PROJECT_LIMITS.pollMs),
+      switchMap(request => request.status === ProjectRequestStatus.Completed ? of(request)
+        : throwError(() => new Error(request.error ?? 'Операция с патчем не завершена.'))),
+    );
   }
 
   public moveTask(

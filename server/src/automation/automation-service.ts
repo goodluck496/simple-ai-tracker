@@ -530,6 +530,7 @@ export class AutomationService {
     return this.runs.db.transaction(() => {
       const task = this.tasks.getTaskCard(taskId);
       const run = this.runs.list(taskId)[0];
+      if (run && this.projects.hasPreviewPatch(run.id)) throw new TrackerError('CONFLICT', 'Сначала откатите патч проверки.');
       if (task.status === TaskStatus.Review && run?.status === RunStatus.Merged && !task.openQuestionsCount
         && !this.runs.hasActive(taskId)) {
         if (decision === 'accept') {
@@ -592,6 +593,19 @@ export class AutomationService {
     const base = wholeRun ? run.checkout?.baseSha : undefined;
     if (!head || (wholeRun && !base)) throw new TrackerError('CONFLICT', 'Для этого сравнения пока нет сохранённых коммитов.');
     return this.projects.enqueue({ action: ProjectAction.Diff, path: run.checkout?.repositoryRoot ?? run.settings.repositoryPath, diff: { head, base } }, true);
+  }
+
+  public requestPreviewPatch(taskId: string, rollback: boolean) {
+    return this.runs.db.transaction(() => {
+      const run = this.runs.list(taskId)[0];
+      if (!run?.commitSha || !run.checkout || run.status !== RunStatus.Review || run.stage < run.settings.pipeline.length
+        || this.tasks.getTaskCard(taskId).status !== TaskStatus.Review || this.runs.hasActive(taskId)) {
+        throw new TrackerError('CONFLICT', 'Для патча нужен завершённый запуск до слияния.');
+      }
+      if (!rollback && this.projects.hasPreviewPatch(run.id)) throw new TrackerError('CONFLICT', 'Патч уже примеряется или накатан.');
+      return this.projects.enqueue({ action: ProjectAction.PreviewPatch, path: run.checkout.repositoryRoot,
+        previewPatch: { runId: run.id, head: run.commitSha, branch: run.settings.baseBranch, rollback } }, true);
+    });
   }
   /** Explicit UI action only: no MCP tool allows agents to raise their budget. */
   public extendBudget(id: string, input: unknown): AgentRun {

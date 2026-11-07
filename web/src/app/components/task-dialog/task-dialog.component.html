@@ -308,11 +308,16 @@
                       (onClick)="submitComment()"
                     ></p-button>
                     @if (card.status === 'review') {
+                      <p-button label="Накатить патч" icon="pi pi-file-edit" severity="secondary" size="small"
+                        [disabled]="store.busy()" (onClick)="previewPatch(false)" />
+                      <p-button label="Откатить патч" icon="pi pi-undo" severity="secondary" size="small"
+                        [disabled]="store.busy()" (onClick)="previewPatch(true)" />
                       <p-button label="Вернуть на доработку" icon="pi pi-replay" severity="secondary" size="small"
                         [disabled]="!commentDraft().trim() || store.busy()" (onClick)="submitComment(true)" />
                       <p-button label="Принять и слить" icon="pi pi-check" severity="success" size="small"
                         [disabled]="store.busy()" (onClick)="acceptAutomation()" />
                     }
+                    @if (patchNotice()) { <p role="status">{{ patchNotice() }}</p> }
                   </div>
 
                   <sat-decision-log [events]="card.events" />

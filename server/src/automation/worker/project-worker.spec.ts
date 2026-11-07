@@ -10,6 +10,29 @@ import { ProjectWorker } from './project-worker.js';
 import { ProcessExecutor } from '../runners/process-executor.js';
 import { ProjectAction, ProjectRequestStatus, PROJECT_LIMITS, type ProjectRequest } from '../../../../shared/automation/project.js';
 import { ProjectRequests } from '../project-requests.js';
+import { gitFixture } from './testing/git-fixture.js';
+
+test('preview patch applies over the current base without moving HEAD and rolls back only its own changes', async () => {
+  const fixture = await gitFixture();
+  try {
+    const source = await fixture.branch('sat-fixture', 'a.txt', ['1\n']);
+    await writeFile(path.join(fixture.repository, 'b.txt'), '2\n');
+    await fixture.git(['commit', '-am', 'base moved']);
+    const head = (await fixture.git(['rev-parse', 'HEAD'])).trim();
+    const worker = new ProjectWorker({ async call() { throw new Error('Unexpected RPC'); } }, 'preview-fixture');
+    const execute = (rollback: boolean) => worker.execute({ action: ProjectAction.PreviewPatch, path: fixture.repository,
+      previewPatch: { runId: 'fixture', head: source.sourceSha, branch: 'master', rollback } });
+    await execute(false);
+    assert.equal((await fixture.git(['rev-parse', 'HEAD'])).trim(), head);
+    assert.match(await fixture.git(['diff', '--cached', '--name-only']), /^a\.txt\s*$/);
+    await writeFile(path.join(fixture.repository, 'a.txt'), 'user edit\n');
+    await assert.rejects(execute(true), /изменилась/);
+    await fixture.git(['restore', '--worktree', '--', 'a.txt']);
+    await execute(true);
+    assert.equal((await fixture.git(['status', '--porcelain'])).trim(), '');
+    assert.equal((await fixture.git(['rev-parse', 'HEAD'])).trim(), head);
+  } finally { await fixture.dispose(); }
+});
 
 test('host mailbox fences ownership and expires offline requests', async () => {
   const app = createContainer({ config: { dbPath: ':memory:' }, logger: new SilentLogger() });
