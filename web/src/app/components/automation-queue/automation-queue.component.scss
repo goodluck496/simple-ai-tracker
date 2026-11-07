@@ -1434,9 +1434,27 @@
   width: 100%;
 }
 .run-diff-view {
-  max-height: 18rem;
+  max-height: 65vh;
   max-width: 100%;
   overflow: auto;
-  padding: 0.75rem;
   border: 1px solid var(--p-content-border-color);
+  border-radius: 6px;
+  font: 0.8rem/1.55 ui-monospace, Consolas, monospace;
+}
+
+.diff-row {
+  display: grid;
+  grid-template-columns: 3.2rem 3.2rem 1.25rem minmax(max-content, 1fr);
+  min-width: max-content;
+  white-space: pre;
+}
+
+.diff-row code { padding-inline: 0.35rem; }
+.diff-number { text-align: right; padding-inline-end: 0.5rem; opacity: 0.7; user-select: none; }
+.diff-added { background: color-mix(in srgb, #22c55e 18%, transparent); }
+.diff-removed { background: color-mix(in srgb, #ef4444 18%, transparent); }
+.diff-file { background: var(--p-content-hover-background); font-weight: 700; }
+.diff-hunk { background: color-mix(in srgb, #38bdf8 14%, transparent); }
+.diff-heading {
+  grid-column: 1 / -1;
 }

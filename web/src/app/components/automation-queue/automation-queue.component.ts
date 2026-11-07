@@ -189,6 +189,32 @@ export class AutomationQueueComponent {
     )), timeout(PROJECT_LIMITS.requestMs + PROJECT_LIMITS.pollMs));
   }
   public readonly runDiff = signal<{ id: string; wholeRun: boolean; loading?: boolean; result?: ProjectDiff; error?: string } | null>(null);
+  public readonly diffRows = computed(() => {
+    const text = this.runDiff()?.result?.text;
+    if (!text) return [];
+    let oldLine: number | undefined;
+    let newLine: number | undefined;
+    return text.replace(/\r?\n$/, '').split(/\r?\n/).flatMap<{ kind: string; text: string; old?: number; next?: number }>(line => {
+      if (line.startsWith('diff --git ')) {
+        oldLine = newLine = undefined;
+        return [{ kind: 'file', text: line.slice(11).replace(/^a\/(.*?) b\/(.*)$/, '$2'), old: undefined, next: undefined }];
+      }
+      const hunk = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/.exec(line);
+      if (hunk) {
+        oldLine = Number(hunk[1]);
+        newLine = Number(hunk[2]);
+        return [{ kind: 'hunk', text: line, old: undefined, next: undefined }];
+      }
+      if (oldLine === undefined || newLine === undefined) {
+        if (/^(?:index |--- |\+\+\+ )/.test(line)) return [];
+        return [{ kind: 'meta', text: line, old: undefined, next: undefined }];
+      }
+      if (line.startsWith('+')) return [{ kind: 'added', text: line.slice(1), old: undefined, next: newLine++ }];
+      if (line.startsWith('-')) return [{ kind: 'removed', text: line.slice(1), old: oldLine++, next: undefined }];
+      if (line.startsWith(' ')) return [{ kind: 'context', text: line.slice(1), old: oldLine++, next: newLine++ }];
+      return [{ kind: 'meta', text: line, old: undefined, next: undefined }];
+    });
+  });
   public loadRunDiff(id: string, wholeRun: boolean): void {
     const pending = { id, wholeRun, loading: true };
     this.runDiff.set(pending);

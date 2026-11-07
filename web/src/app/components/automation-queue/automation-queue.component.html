@@ -251,19 +251,6 @@
             @if (run.checkout?.baseSha) {
               <button pButton severity="secondary" size="small" (click)="loadRunDiff(run.id, true)">Diff всей ветки задачи</button>
             }
-            @if (runDiff(); as diff) {
-              @if (diff.id === run.id) {
-                @if (diff.loading) { <p role="status">Загрузка Git diff…</p> }
-                @if (diff.error) { <p role="alert">{{ diff.error }}</p> }
-                @if (diff.result; as result) {
-                  <details open>
-                    <summary>{{ diff.wholeRun ? 'Ветка задачи относительно базы' : 'Последний коммит' }}</summary>
-                    @if (result.truncated) { <p>Показан конец большого diff.</p> }
-                    <pre class="run-diff-view"><code>{{ result.text || 'Изменений нет.' }}</code></pre>
-                  </details>
-                }
-              }
-            }
           </section>
         }
       }
@@ -576,4 +563,31 @@
       </button>
     </div>
   </ng-template>
+</p-dialog>
+
+<p-dialog [visible]="runDiff() !== null" (visibleChange)="$event || runDiff.set(null)"
+  [header]="runDiff()?.wholeRun ? 'Изменения ветки задачи' : 'Изменения последнего коммита'"
+  [modal]="true" appendTo="body" [style]="{ width: 'min(68rem, 96vw)' }">
+  @if (runDiff(); as diff) {
+    @if (diff.loading) { <p role="status">Загрузка Git diff…</p> }
+    @if (diff.error) { <p role="alert">{{ diff.error }}</p> }
+    @if (diff.result; as result) {
+      @if (result.truncated) { <p>Показан конец большого diff.</p> }
+      @if (diffRows().length) {
+        <div class="run-diff-view" role="region" aria-label="Изменения по строкам" tabindex="0">
+          @for (row of diffRows(); track $index) {
+            <div class="diff-row" [class]="'diff-' + row.kind">
+              @if (row.kind === 'added' || row.kind === 'removed' || row.kind === 'context') {
+                <span class="diff-number">{{ row.old }}</span><span class="diff-number">{{ row.next }}</span>
+                <span aria-hidden="true">{{ row.kind === 'added' ? '+' : row.kind === 'removed' ? '−' : '' }}</span>
+                <code>{{ row.text }}</code>
+              } @else {
+                <code class="diff-heading">{{ row.text }}</code>
+              }
+            </div>
+          }
+        </div>
+      } @else { <p>Изменений нет.</p> }
+    }
+  }
 </p-dialog>
