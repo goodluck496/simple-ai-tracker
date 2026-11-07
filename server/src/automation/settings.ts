@@ -67,6 +67,8 @@ export class AutomationSettingsValidator {
     if (!settings.pipeline.every((id) => text(id) && profiles.has(id))) return fail('Pipeline references an unknown agent.');
     if (!settings.checks.every((check) => check && text(check.command) && check.command && Array.isArray(check.args) && check.args.every(text))) return fail('Invalid check command.');
     if (!settings.setup.every((check) => check && text(check.command) && check.command && Array.isArray(check.args) && check.args.every(text))) return fail('Invalid setup command.');
+    const postOperations = Array.isArray(settings.postOperations) ? settings.postOperations : [];
+    if (!postOperations.every((op) => op && text(op.command) && op.command && Array.isArray(op.args) && op.args.every(text))) return fail('Invalid post-operation command.');
     if (!settings.artifactPaths.every((entry) => text(entry) && !entry.includes('..') && !/^(?:[a-z]:|[\/\\])/i.test(entry))) return fail('Artifacts must be relative paths inside the worktree.');
     if (!Number.isInteger(settings.timeoutMinutes) || settings.timeoutMinutes < AUTOMATION_LIMITS.timeoutMinutes.min || settings.timeoutMinutes > AUTOMATION_LIMITS.timeoutMinutes.max
       || !Number.isInteger(settings.maxRevisions) || settings.maxRevisions < AUTOMATION_LIMITS.revisions.min || settings.maxRevisions > AUTOMATION_LIMITS.revisions.max) return fail('Invalid run limits.');
@@ -93,7 +95,7 @@ export class AutomationSettingsValidator {
       repositoryPath: settings.repositoryPath, baseBranch: settings.baseBranch,
       connections: settings.connections.map(({ id, label, kind, baseUrl, credentialEnv, supportsImages, reasoningEffort, nativeRunner, isLocal }) => ({ id, label, kind, baseUrl, credentialEnv, supportsImages, reasoningEffort, ...(isLocal !== undefined ? { isLocal } : (kind === ProviderKind.Ollama ? { isLocal: true } : {})), ...(kind === ProviderKind.Native && nativeRunner ? { nativeRunner } : {}) })),
       agents: settings.agents.map(({ id, role, runner, connectionId, model, instructions, nativeProfile, command, args }) => ({ id, role, runner, connectionId, model, instructions, nativeProfile, command, args })),
-      pipeline: settings.pipeline, checks: settings.checks.map(({ command, args }) => ({ command, args })), setup: settings.setup.map(({ command, args }) => ({ command, args })), artifactPaths: settings.artifactPaths,
+      pipeline: settings.pipeline, checks: settings.checks.map(({ command, args }) => ({ command, args })), setup: settings.setup.map(({ command, args }) => ({ command, args })), postOperations: postOperations.map(({ command, args }) => ({ command, args })), artifactPaths: settings.artifactPaths,
       timeoutMinutes: settings.timeoutMinutes, maxRevisions: settings.maxRevisions, mergePolicy: settings.mergePolicy,
       maxAgentCalls, maxStageToolCalls, maxInputTokens, maxRunMinutes,
       ...(doctorAgent ? { doctorAgent } : {}),

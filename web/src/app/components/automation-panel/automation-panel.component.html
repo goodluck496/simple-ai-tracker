@@ -636,8 +636,8 @@
             <div class="card-body">
               <div class="folder-input-row">
                 <label class="grow-field">
-                  <span>Папка Git-проекта на worker</span>
-                  <input pInputText [disabled]="projectBusy" [ngModel]="settings.repositoryPath" (ngModelChange)="setProjectPath($event)" (blur)="readProjectIfNeeded($event)" (keydown.enter)="readProjectIfNeeded()" placeholder="E:\projects\my-app" />
+                  <span>Папка Git-проекта на worker <i class="pi pi-info-circle help-icon" [pTooltip]="fieldTooltips['repositoryPath']"></i></span>
+                  <input pInputText [disabled]="projectBusy" [ngModel]="settings.repositoryPath" (ngModelChange)="setProjectPath($event)" (blur)="readProjectIfNeeded($event)" (keydown.enter)="readProjectIfNeeded()" placeholder="E:\projects\my-app" [pTooltip]="fieldTooltips['repositoryPath']" />
                 </label>
                 <p-button data-project-picker [label]="host.online ? 'Выбрать папку' : 'Подключить и выбрать'" severity="secondary" size="small" icon="pi pi-folder-open" [disabled]="projectBusy || !launchCommand" (onClick)="pickFolder()" />
                 <p-button data-project-picker label="Обзор каталогов" severity="secondary" size="small" icon="pi pi-search" [disabled]="projectBusy || !host.online" (onClick)="browse(settings.repositoryPath)" />
@@ -672,14 +672,14 @@
               <!-- Ветка и создание новой ветки -->
               <div class="branch-settings-grid">
                 <label>
-                  <span>Базовая ветка</span>
-                  @if (branchOptions.length) { <p-select [options]="branchOptions" [(ngModel)]="settings.baseBranch" [filter]="true" appendTo="body" /> }
-                  @else { <input pInputText [(ngModel)]="settings.baseBranch" placeholder="main или master" /> }
+                  <span>Базовая ветка <i class="pi pi-info-circle help-icon" [pTooltip]="fieldTooltips['baseBranch']"></i></span>
+                  @if (branchOptions.length) { <p-select [options]="branchOptions" [(ngModel)]="settings.baseBranch" [filter]="true" appendTo="body" [pTooltip]="fieldTooltips['baseBranch']" /> }
+                  @else { <input pInputText [(ngModel)]="settings.baseBranch" placeholder="main или master" [pTooltip]="fieldTooltips['baseBranch']" /> }
                 </label>
                 <label class="grow-field">
-                  <span>Создать новую ветку от базовой</span>
+                  <span>Создать новую ветку от базовой <i class="pi pi-info-circle help-icon" [pTooltip]="fieldTooltips['newBranch']"></i></span>
                   <div class="create-branch-wrap">
-                    <input pInputText [(ngModel)]="newBranch" placeholder="feature/my-task" />
+                    <input pInputText [(ngModel)]="newBranch" placeholder="feature/my-task" [pTooltip]="fieldTooltips['newBranch']" />
                     <p-button label="Создать ветку" severity="secondary" size="small" [disabled]="projectBusy || !host.online || !branchOptions.length || !newBranch" (onClick)="createBranch()" />
                   </div>
                 </label>
@@ -741,28 +741,28 @@
 
               <!-- Лимиты и слияние -->
               <div class="limits-grid">
-                <label><span>Лимит одного вызова агента (мин)</span><input pInputText type="number" [(ngModel)]="settings.timeoutMinutes" [min]="limits.timeoutMinutes.min" [max]="limits.timeoutMinutes.max" /></label>
-                <label><span>Доработок</span><input pInputText type="number" [(ngModel)]="settings.maxRevisions" [min]="limits.revisions.min" [max]="limits.revisions.max" /></label>
-                <label><span>Всего минут работы агентов</span><input pInputText type="number" [(ngModel)]="settings.maxRunMinutes" min="1" max="240" /></label>
-                <label><span>Вызовов агентов</span><input pInputText type="number" [(ngModel)]="settings.maxAgentCalls" min="1" max="100" /></label>
-                <label><span>Операций инструментами</span><input pInputText type="number" [(ngModel)]="settings.maxStageToolCalls" min="1" max="80" /></label>
-                <label><span>Лимит входных токенов</span><input pInputText type="number" [(ngModel)]="settings.maxInputTokens" min="1" max="100000000" /></label>
-                <label><span>Слияние</span><p-select [options]="mergePolicies" [(ngModel)]="settings.mergePolicy" appendTo="body" /></label>
-                <label><span>Параллельных слотов</span><input pInputText type="number" [(ngModel)]="settings.maxParallelRuns" min="1" max="8" /></label>
-                <label><span>Зависимости</span><p-select [options]="dependencyModes" [(ngModel)]="settings.dependencyMode" appendTo="body" /></label>
+                <label><span>Лимит одного вызова агента (мин) <i class="pi pi-info-circle help-icon" [pTooltip]="fieldTooltips['timeoutMinutes']"></i></span><input pInputText type="number" [(ngModel)]="settings.timeoutMinutes" [min]="limits.timeoutMinutes.min" [max]="limits.timeoutMinutes.max" [pTooltip]="fieldTooltips['timeoutMinutes']" /></label>
+                <label><span>Доработок <i class="pi pi-info-circle help-icon" [pTooltip]="fieldTooltips['maxRevisions']"></i></span><input pInputText type="number" [(ngModel)]="settings.maxRevisions" [min]="limits.revisions.min" [max]="limits.revisions.max" [pTooltip]="fieldTooltips['maxRevisions']" /></label>
+                <label><span>Всего минут работы агентов <i class="pi pi-info-circle help-icon" [pTooltip]="fieldTooltips['maxRunMinutes']"></i></span><input pInputText type="number" [(ngModel)]="settings.maxRunMinutes" min="1" max="240" [pTooltip]="fieldTooltips['maxRunMinutes']" /></label>
+                <label><span>Вызовов агентов <i class="pi pi-info-circle help-icon" [pTooltip]="fieldTooltips['maxAgentCalls']"></i></span><input pInputText type="number" [(ngModel)]="settings.maxAgentCalls" min="1" max="100" [pTooltip]="fieldTooltips['maxAgentCalls']" /></label>
+                <label><span>Операций инструментами <i class="pi pi-info-circle help-icon" [pTooltip]="fieldTooltips['maxStageToolCalls']"></i></span><input pInputText type="number" [(ngModel)]="settings.maxStageToolCalls" min="1" max="80" [pTooltip]="fieldTooltips['maxStageToolCalls']" /></label>
+                <label><span>Лимит входных токенов <i class="pi pi-info-circle help-icon" [pTooltip]="fieldTooltips['maxInputTokens']"></i></span><input pInputText type="number" [(ngModel)]="settings.maxInputTokens" min="1" max="100000000" [pTooltip]="fieldTooltips['maxInputTokens']" /></label>
+                <label><span>Слияние <i class="pi pi-info-circle help-icon" [pTooltip]="fieldTooltips['mergePolicy']"></i></span><p-select [options]="mergePolicies" [(ngModel)]="settings.mergePolicy" appendTo="body" [pTooltip]="fieldTooltips['mergePolicy']" /></label>
+                <label><span>Параллельных слотов <i class="pi pi-info-circle help-icon" [pTooltip]="fieldTooltips['maxParallelRuns']"></i></span><input pInputText type="number" [(ngModel)]="settings.maxParallelRuns" min="1" max="8" [pTooltip]="fieldTooltips['maxParallelRuns']" /></label>
+                <label><span>Зависимости <i class="pi pi-info-circle help-icon" [pTooltip]="fieldTooltips['dependencyMode']"></i></span><p-select [options]="dependencyModes" [(ngModel)]="settings.dependencyMode" appendTo="body" [pTooltip]="fieldTooltips['dependencyMode']" /></label>
               </div>
 
               @if (settings.mergePolicy === 'local') {
                 <div class="merge-options-box">
                   <label class="checkbox-inline">
                     <p-checkbox [binary]="true" [(ngModel)]="settings.resolveConflicts" ariaLabel="Автоматически разрешать конфликты" />
-                    <span>Автоматически разрешать конфликты</span>
+                    <span>Автоматически разрешать конфликты <i class="pi pi-info-circle help-icon" [pTooltip]="fieldTooltips['resolveConflicts']"></i></span>
                   </label>
                   <div class="resolver-grid">
-                    <label><span>Попыток интеграции</span><input pInputText type="number" [(ngModel)]="settings.maxMergeAttempts" min="1" max="3" /></label>
-                    <label><span>Вызовов resolver</span><input pInputText type="number" [(ngModel)]="settings.maxResolverCalls" min="0" max="3" /></label>
-                    <label><span>Минут на resolver</span><input pInputText type="number" [(ngModel)]="settings.resolverTimeoutMinutes" min="1" max="10" /></label>
-                    <label><span>Инструментов resolver</span><input pInputText type="number" [(ngModel)]="settings.maxResolverToolCalls" min="1" max="40" /></label>
+                    <label><span>Попыток интеграции <i class="pi pi-info-circle help-icon" [pTooltip]="fieldTooltips['maxMergeAttempts']"></i></span><input pInputText type="number" [(ngModel)]="settings.maxMergeAttempts" min="1" max="3" [pTooltip]="fieldTooltips['maxMergeAttempts']" /></label>
+                    <label><span>Вызовов resolver <i class="pi pi-info-circle help-icon" [pTooltip]="fieldTooltips['resolveConflicts']"></i></span><input pInputText type="number" [(ngModel)]="settings.maxResolverCalls" min="0" max="3" /></label>
+                    <label><span>Минут на resolver <i class="pi pi-info-circle help-icon" [pTooltip]="fieldTooltips['timeoutMinutes']"></i></span><input pInputText type="number" [(ngModel)]="settings.resolverTimeoutMinutes" min="1" max="10" /></label>
+                    <label><span>Инструментов resolver <i class="pi pi-info-circle help-icon" [pTooltip]="fieldTooltips['maxStageToolCalls']"></i></span><input pInputText type="number" [(ngModel)]="settings.maxResolverToolCalls" min="1" max="40" /></label>
                   </div>
                 </div>
               }
@@ -772,43 +772,57 @@
           <!-- Подготовка и проверки -->
           <div class="panel-card">
             <div class="panel-card-header">
-              <h4>3. Автопроверки и подготовка (CI/CD)</h4>
-              <p class="card-hint">Worker автоматически выполняет эти команды после разработчика. Ошибка возвращает задачу на доработку.</p>
+              <h4>3. Автопроверки, подготовка и пост-операции (CI/CD)</h4>
+              <p class="card-hint">Worker автоматически выполняет эти команды по фазам: подготовка до агентов, проверки после разработки, пост-операции после завершения конвейера.</p>
             </div>
             <div class="card-body">
               <div class="commands-section">
-                <h5>Подготовка рабочей папки (npm ci)</h5>
+                <h5><span class="phase-badge setup-badge">[Setup]</span> Подготовка рабочей папки (npm ci) <i class="pi pi-info-circle help-icon" [pTooltip]="fieldTooltips['setupCommands']"></i></h5>
                 <div class="chips-row">
                   @for (preset of setupPresets; track preset.id) {
-                    <button type="button" class="command-chip" [class.selected]="commandSelected(preset.value, true)" (click)="toggleCommand(preset.value, true)">
-                      {{ preset.label }}
+                    <button type="button" class="command-chip" [class.selected]="commandSelected(preset.value, 'setup')" (click)="toggleCommand(preset.value, 'setup')" [pTooltip]="preset.description || preset.label">
+                      [Setup] {{ preset.label }}
                     </button>
                   }
                 </div>
 
-                <h5>Обязательные проверки (тесты, линтер, сборка)</h5>
+                <h5><span class="phase-badge check-badge">[Check]</span> Обязательные проверки (тесты, линтер, сборка) <i class="pi pi-info-circle help-icon" [pTooltip]="fieldTooltips['checkCommands']"></i></h5>
                 <div class="chips-row">
                   @for (preset of checkPresets; track preset.id) {
-                    <button type="button" class="command-chip" [class.selected]="commandSelected(preset.value, false)" (click)="toggleCommand(preset.value, false)">
-                      {{ preset.label }}
+                    <button type="button" class="command-chip" [class.selected]="commandSelected(preset.value, 'checks')" (click)="toggleCommand(preset.value, 'checks')" [pTooltip]="preset.description || preset.label">
+                      [Check] {{ preset.label }}
+                    </button>
+                  }
+                </div>
+
+                <h5><span class="phase-badge postop-badge">[Post-op]</span> Пост-операции (после завершения основного конвейера) <i class="pi pi-info-circle help-icon" [pTooltip]="fieldTooltips['postOperations']"></i></h5>
+                <div class="chips-row">
+                  @for (preset of checkPresets; track preset.id) {
+                    <button type="button" class="command-chip" [class.selected]="commandSelected(preset.value, 'postOp')" (click)="toggleCommand(preset.value, 'postOp')" [pTooltip]="preset.description || preset.label">
+                      [Post-op] {{ preset.label }}
                     </button>
                   }
                 </div>
 
                 <div class="selected-commands-list">
-                  <strong>Выбранные команды:</strong>
+                  <strong>Выбранные команды по фазам:</strong>
                   <div class="chips-row">
                     @for (command of settings.setup; track $index; let i = $index) {
                       <span class="active-command-tag setup-tag" (click)="settings.setup.splice(i, 1)">
-                        Подготовка: {{ commandLabel(command) }} <button type="button">×</button>
+                        <span class="phase-label">[Setup]</span> Подготовка: {{ commandLabel(command) }} <button type="button">×</button>
                       </span>
                     }
                     @for (command of settings.checks; track $index; let i = $index) {
                       <span class="active-command-tag check-tag" (click)="settings.checks.splice(i, 1)">
-                        Проверка: {{ commandLabel(command) }} <button type="button">×</button>
+                        <span class="phase-label">[Check]</span> Проверка: {{ commandLabel(command) }} <button type="button">×</button>
                       </span>
                     }
-                    @if (!settings.setup.length && !settings.checks.length) {
+                    @for (command of (settings.postOperations ?? []); track $index; let i = $index) {
+                      <span class="active-command-tag postop-tag" (click)="settings.postOperations?.splice(i, 1)">
+                        <span class="phase-label">[Post-op]</span> Пост-оп: {{ commandLabel(command) }} <button type="button">×</button>
+                      </span>
+                    }
+                    @if (!settings.setup.length && !settings.checks.length && !(settings.postOperations?.length)) {
                       <span class="hint">Для запуска нужна хотя бы одна проверка (например npm test).</span>
                     }
                   </div>
@@ -821,25 +835,35 @@
 
                 @if (advancedCommands) {
                   <div class="custom-commands-box">
-                    <h6>Команды подготовки</h6>
+                    <h6><span class="phase-label">[Setup]</span> Команды подготовки</h6>
                     @for (check of settings.setup; track $index; let i = $index) {
                       <div class="custom-cmd-row">
-                        <input pInputText [(ngModel)]="check.command" placeholder="npm" />
-                        <input pInputText class="grow-field" [ngModel]="json(check.args)" (ngModelChange)="setArgs(i, $event, false, true)" placeholder='["ci"]' />
+                        <input pInputText [(ngModel)]="check.command" placeholder="npm" [pTooltip]="'Исполняемая команда подготовки'" />
+                        <input pInputText class="grow-field" [ngModel]="json(check.args)" (ngModelChange)="setArgs(i, $event, false, 'setup')" placeholder='["ci"]' [pTooltip]="'Аргументы в формате JSON-массива строк'" />
                         <button pButton severity="secondary" size="small" type="button" icon="pi pi-times" (click)="settings.setup.splice(i, 1)"></button>
                       </div>
                     }
                     <p-button label="Добавить подготовку" severity="secondary" size="small" icon="pi pi-plus" (onClick)="addSetup()" />
 
-                    <h6>Команды проверки</h6>
+                    <h6><span class="phase-label">[Check]</span> Команды проверки</h6>
                     @for (check of settings.checks; track $index; let i = $index) {
                       <div class="custom-cmd-row">
-                        <input pInputText [(ngModel)]="check.command" placeholder="npm" />
-                        <input pInputText class="grow-field" [ngModel]="json(check.args)" (ngModelChange)="setArgs(i, $event)" placeholder='["test"]' />
+                        <input pInputText [(ngModel)]="check.command" placeholder="npm" [pTooltip]="'Исполняемая команда проверки'" />
+                        <input pInputText class="grow-field" [ngModel]="json(check.args)" (ngModelChange)="setArgs(i, $event, false, 'checks')" placeholder='["test"]' [pTooltip]="'Аргументы в формате JSON-массива строк'" />
                         <button pButton severity="secondary" size="small" type="button" icon="pi pi-times" (click)="settings.checks.splice(i, 1)"></button>
                       </div>
                     }
                     <p-button label="Добавить проверку" severity="secondary" size="small" icon="pi pi-plus" (onClick)="addCheck()" />
+
+                    <h6><span class="phase-label">[Post-op]</span> Команды пост-операций</h6>
+                    @for (check of (settings.postOperations ?? []); track $index; let i = $index) {
+                      <div class="custom-cmd-row">
+                        <input pInputText [(ngModel)]="check.command" placeholder="npm" [pTooltip]="'Исполняемая команда пост-операции'" />
+                        <input pInputText class="grow-field" [ngModel]="json(check.args)" (ngModelChange)="setArgs(i, $event, false, 'postOp')" placeholder='["run", "build"]' [pTooltip]="'Аргументы в формате JSON-массива строк'" />
+                        <button pButton severity="secondary" size="small" type="button" icon="pi pi-times" (click)="settings.postOperations?.splice(i, 1)"></button>
+                      </div>
+                    }
+                    <p-button label="Добавить пост-операцию" severity="secondary" size="small" icon="pi pi-plus" (onClick)="addPostOp()" />
                   </div>
                 }
 

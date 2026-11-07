@@ -4,10 +4,10 @@ import type { HostStatus } from './project.js';
 import type { UsageSummary } from './token-usage.js';
 import { RunConsoleDecoder } from './console.js';
 
-export const RunPhase = { Preparing: 'preparing', WaitingSlot: 'waiting-slot', Setup: 'setup', Agent: 'agent', Checks: 'checks', Merge: 'merge' } as const;
+export const RunPhase = { Preparing: 'preparing', WaitingSlot: 'waiting-slot', Setup: 'setup', Agent: 'agent', Checks: 'checks', Merge: 'merge', PostOp: 'post-op' } as const;
 export type RunPhase = typeof RunPhase[keyof typeof RunPhase];
 export const RUN_PHASES = Object.values(RunPhase);
-export const RUN_PHASE_TITLES: Record<RunPhase, string> = { preparing: 'Подготовка рабочей ветки', 'waiting-slot': 'Ожидание слота проекта', setup: 'Установка зависимостей', agent: 'Работа агента', checks: 'Проверки worker', merge: 'Squash-интеграция' };
+export const RUN_PHASE_TITLES: Record<RunPhase, string> = { preparing: 'Подготовка рабочей ветки', 'waiting-slot': 'Ожидание слота проекта', setup: 'Установка зависимостей', agent: 'Работа агента', checks: 'Проверки worker', merge: 'Squash-интеграция', 'post-op': 'Пост-операции' };
 export const RUN_STATUS_TITLES: Record<RunStatus, string> = { queued: 'В очереди', running: 'Выполняется', integrating: 'Squash-интеграция', merge_blocked: 'Слияние заблокировано', waiting: 'Ждёт ответа', review: 'Готов к проверке', failed: 'Ошибка', cancelled: 'Остановлен', interrupted: 'Связь потеряна', merged: 'Слит локально' };
 export const QUEUE_LIMITS = { recent: 100, quietMs: 120000, previewChars: 1200 } as const;
 export const INTEGRATION_STATE_TITLES = { preparing: 'Подготовка squash', resolving: 'Разрешение конфликтов', checking: 'Проверка объединённого результата',

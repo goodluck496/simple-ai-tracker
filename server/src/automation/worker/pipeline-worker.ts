@@ -477,6 +477,13 @@ export class PipelineWorker {
           sha = delivered.candidateSha ?? delivered.baseSha;
           outcome = { ...outcome, delivery: { childKey: child.key, sourceSha, mergedSha: sha } };
         }
+        const isPipelineComplete = run.stage === run.settings.pipeline.length - 1 && outcome.verdict === AgentVerdict.Pass && !outcome.questions?.length;
+        if (isPipelineComplete && run.settings.postOperations?.length) {
+          for (const op of run.settings.postOperations) {
+            await phase(RunPhase.PostOp, `Пост-операция: ${op.command} ${op.args.join(' ')}`);
+            await this.executor.run({ ...op, cwd, env: TaskEnvironment.create(), signal: controller.signal, compactProgress: true, onProgress: progress });
+          }
+        }
         run = await this.channel.call<AgentRun>(AutomationTool.CompleteStage, { id: run.id, leaseToken: token, outcome, branch, commitSha: sha,
           result: { screenshots, checkFailed } });
         recovery = undefined;

@@ -32,6 +32,20 @@ test('automation settings validate image capabilities, provider compatibility an
   assert.throws(() => validator.validate(config), /credentials/);
 });
 
+test('automation settings validate and preserve postOperations', () => {
+  const validator = new AutomationSettingsValidator();
+  const config = exampleSettings();
+  config.postOperations = [{ command: 'npm', args: ['run', 'lint'] }];
+  const validated = validator.validate(config);
+  assert.equal(validated.postOperations?.length, 1);
+  assert.equal(validated.postOperations[0].command, 'npm');
+  assert.deepEqual(validated.postOperations[0].args, ['run', 'lint']);
+
+  // Invalid post-operation command
+  config.postOperations = [{ command: '', args: [] }];
+  assert.throws(() => validator.validate(config), /Invalid post-operation command/);
+});
+
 test('queued runs snapshot settings, fence workers, survive service access and require answers before resume', () => {
   let now = '2026-10-25T00:00:00.000Z';
   const app = createContainer({ config: { dbPath: ':memory:' }, clock: { now: () => now }, logger: new SilentLogger() });

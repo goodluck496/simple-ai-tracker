@@ -71,6 +71,7 @@ export interface AutomationSettings {
   pipeline: string[];
   checks: CheckCommand[];
   setup: CheckCommand[];
+  postOperations?: CheckCommand[];
   artifactPaths: string[];
   timeoutMinutes: number;
   maxRevisions: number;
@@ -93,13 +94,14 @@ export interface AutomationSettings {
 }
 
 export const DEFAULT_AUTOMATION_SETTINGS: AutomationSettings = {
-  repositoryPath: '', baseBranch: 'main', connections: [], agents: [], pipeline: [], checks: [], setup: [],
+  repositoryPath: '', baseBranch: 'main', connections: [], agents: [], pipeline: [], checks: [], setup: [], postOperations: [],
   artifactPaths: [], timeoutMinutes: AUTOMATION_LIMITS.timeoutMinutes.default, maxRevisions: 1, maxAgentCalls: 6, maxInputTokens: 500000, maxRunMinutes: 20, mergePolicy: MergePolicy.Manual,
   maxStageToolCalls: 24, maxParallelRuns: 2, dependencyMode: 'isolated', maxMergeAttempts: 2, resolveConflicts: true,
   maxResolverCalls: 1, resolverTimeoutMinutes: 3, maxResolverToolCalls: 16,
 };
 export const DEFAULT_CHECK_COMMAND: CheckCommand = { command: 'npm', args: ['test'] };
 export const DEFAULT_SETUP_COMMAND: CheckCommand = { command: 'npm', args: ['ci'] };
+export const DEFAULT_POST_OPERATION: CheckCommand = { command: 'npm', args: ['run', 'build'] };
 
 export interface ProposedFix {
   id: string;

@@ -11,12 +11,13 @@ import { TabsModule } from 'primeng/tabs';
 import { AccordionModule } from 'primeng/accordion';
 import { DialogModule } from 'primeng/dialog';
 import { MultiSelectModule } from 'primeng/multiselect';
+import { TooltipModule } from 'primeng/tooltip';
 import { BATCH_TASK_LIMIT } from '../../../../../shared/automation/batch';
 import { PipelinePolicy } from '../../../../../shared/automation/pipeline-policy';
 import { AUTOMATION_TABS, AutomationTab } from './automation-panel.types';
 import { AGENT_ROLES, RUNNER_IDS, DEFAULT_AUTOMATION_SETTINGS, PROVIDER_KINDS, REASONING_EFFORTS, MERGE_POLICIES,
   AUTOMATION_LIMITS, AUTOMATION_TIMING,
-  DEFAULT_CHECK_COMMAND, DEFAULT_SETUP_COMMAND, ProviderKind, RunnerId, AgentRole,
+  DEFAULT_CHECK_COMMAND, DEFAULT_SETUP_COMMAND, DEFAULT_POST_OPERATION, ProviderKind, RunnerId, AgentRole,
   type AgentRun, type AutomationSettings, type CheckCommand, type AgentProfile, type ModelConnection } from '../../../../../shared/automation/contracts';
 import { ProjectAction, ProjectRequestStatus, PROJECT_LIMITS, SETUP_PRESETS, CHECK_PRESETS, WorkerPlatform,
   type ProjectPassport, type ProjectInput, type ProjectRequest, type ProjectResult, type HostStatus, type CommandPreset } from '../../../../../shared/automation/project';
@@ -29,7 +30,7 @@ import { TaskAutomationReadiness, TASK_STATUS_TITLES, TASK_SELECTION_LIMIT, type
 import { ModelCatalogKey, type ModelOption } from '../../../../../shared/automation/model-catalog';
 
 @Component({ selector: 'sat-automation-panel', standalone: true,
-  imports: [FormsModule, ReactiveFormsModule, SelectModule, ButtonModule, CheckboxModule, InputTextModule, TabsModule, AccordionModule, DialogModule, MultiSelectModule],
+  imports: [FormsModule, ReactiveFormsModule, SelectModule, ButtonModule, CheckboxModule, InputTextModule, TabsModule, AccordionModule, DialogModule, MultiSelectModule, TooltipModule],
   templateUrl: './automation-panel.component.html', styleUrl: './automation-panel.component.scss' })
 export class AutomationPanelComponent implements OnInit {
   @Output() public readonly openQueue = new EventEmitter<string | null>();
@@ -367,11 +368,50 @@ export class AutomationPanelComponent implements OnInit {
     this.notice = `Подключение «${preset.label}» добавлено. Выберите его у нужных агентов.`;
     return connectionId;
   }
-  public commandSelected(value: CheckCommand, setup: boolean): boolean {
-    return (setup ? this.settings.setup : this.settings.checks).some((entry) => entry.command === value.command && this.json(entry.args) === this.json(value.args));
+  public readonly fieldTooltips: Record<string, string> = {
+    repositoryPath: 'Путь к папке git-репозитория на компьютере worker для сборки и проверок.',
+    baseBranch: 'Базовая ветка репозитория, от которой создаются задачи и куда сливаются изменения.',
+    newBranch: 'Имя новой ветки для создания от базовой без смены рабочей папки.',
+    setupCommands: 'Команды подготовки окружения (npm ci) перед запуском агентов.',
+    checkCommands: 'Обязательные автопроверки (тесты, линтер, сборка) после работы разработчика.',
+    postOperations: 'Команды, выполняемые автоматически после завершения основного конвейера агентов.',
+    artifactPaths: 'Относительные пути к артефактам и отчетам для сохранения в результатах.',
+    connectionLabel: 'Понятное название подключения для выбора у агентов.',
+    connectionKind: 'Тип провайдера: нативный CLI (Codex, Claude Code) или API эндпоинт.',
+    baseUrl: 'URL эндпоинта API для обращений к модели.',
+    credentialEnv: 'Имя переменной окружения на worker, где хранится API-ключ.',
+    reasoningEffort: 'Уровень глубины рассуждения для поддерживающих моделей.',
+    nativeRunner: 'Утилита командной строки на worker, выполняющая роль агента.',
+    agentRole: 'Роль агента в пайплайне: планирование, разработка, тесты или ревью.',
+    agentConnection: 'Подключение модели или CLI, используемое этим агентом.',
+    agentModel: 'Имя или идентификатор используемой модели нейросети.',
+    agentInstructions: 'Специальные системные инструкции для этого агента.',
+    timeoutMinutes: 'Максимальное время работы одного шага агента в минутах.',
+    maxRevisions: 'Максимум циклов исправлений замечаний тестировщика или ревьюера.',
+    maxAgentCalls: 'Общий лимит вызовов агентов на весь запуск задачи.',
+    maxStageToolCalls: 'Максимум вызовов инструментов агента за один шаг.',
+    maxInputTokens: 'Лимит входных токенов контекста для контроля расхода бюджета.',
+    maxRunMinutes: 'Предельное общее время выполнения задачи в минутах.',
+    maxParallelRuns: 'Максимальное число одновременно выполняемых задач.',
+    dependencyMode: 'Режим зависимостей: isolated (отдельные) или linked (общие node_modules).',
+    mergePolicy: 'Политика слияния: manual (вручную) или local (автоматический squash-merge).',
+    maxMergeAttempts: 'Число попыток разрешения конфликтов при автоматическом слиянии.',
+    resolveConflicts: 'Автоматически разрешать конфликты слияния с помощью агента.',
+  };
+  private getCommandList(phase: 'setup' | 'checks' | 'postOp' | boolean): CheckCommand[] {
+    if (phase === true || phase === 'setup') return this.settings.setup;
+    if (phase === 'postOp') {
+      if (!this.settings.postOperations) this.settings.postOperations = [];
+      return this.settings.postOperations;
+    }
+    return this.settings.checks;
   }
-  public toggleCommand(value: CheckCommand, setup: boolean): void {
-    const list = setup ? this.settings.setup : this.settings.checks;
+  public commandSelected(value: CheckCommand, phase: 'setup' | 'checks' | 'postOp' | boolean): boolean {
+    const list = this.getCommandList(phase);
+    return list.some((entry) => entry.command === value.command && this.json(entry.args) === this.json(value.args));
+  }
+  public toggleCommand(value: CheckCommand, phase: 'setup' | 'checks' | 'postOp' | boolean): void {
+    const list = this.getCommandList(phase);
     const index = list.findIndex((entry) => entry.command === value.command && this.json(entry.args) === this.json(value.args));
     if (index >= 0) list.splice(index, 1); else list.push(structuredClone(value));
   }
@@ -544,9 +584,20 @@ export class AutomationPanelComponent implements OnInit {
   }
   public addCheck(): void { this.settings.checks.push(structuredClone(DEFAULT_CHECK_COMMAND)); }
   public addSetup(): void { this.settings.setup.push(structuredClone(DEFAULT_SETUP_COMMAND)); }
-  public setArgs(index: number, value: string, custom = false, setup = false): void {
-    try { const args: unknown = JSON.parse(value); if (!Array.isArray(args) || !args.every((entry) => typeof entry === 'string')) throw new Error(); if (custom) this.settings.agents[index].args = args; else (setup ? this.settings.setup : this.settings.checks)[index].args = args; this.error = ''; }
-    catch { this.error = 'Аргументы: нужен JSON-массив строк.'; }
+  public addPostOp(): void {
+    if (!this.settings.postOperations) this.settings.postOperations = [];
+    this.settings.postOperations.push(structuredClone(DEFAULT_POST_OPERATION));
+  }
+  public setArgs(index: number, value: string, custom = false, phase: 'setup' | 'checks' | 'postOp' | boolean = false): void {
+    try {
+      const args: unknown = JSON.parse(value);
+      if (!Array.isArray(args) || !args.every((entry) => typeof entry === 'string')) throw new Error();
+      if (custom) this.settings.agents[index].args = args;
+      else this.getCommandList(phase)[index].args = args;
+      this.error = '';
+    } catch {
+      this.error = 'Аргументы: нужен JSON-массив строк.';
+    }
   }
   public json(value: unknown): string { return JSON.stringify(value); }
   public setArtifacts(value: string): void { this.settings.artifactPaths = value.split('\n').map((entry) => entry.trim()).filter(Boolean); }
