@@ -31,6 +31,8 @@
   right: 0;
   bottom: 0;
   height: 100vh;
+  max-width: 100vw;
+  box-sizing: border-box;
   z-index: 1100;
   background: var(--sat-bg-elevated);
   border-left: 1px solid var(--sat-border);
@@ -325,13 +327,60 @@
 }
 
 .comment-form {
-  display: flex;
-  gap: 8px;
-  align-items: flex-end;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 10px;
+  margin-bottom: 16px;
 }
 
 .comment-form textarea {
-  flex: 1 1 auto;
+  width: 100%;
+  box-sizing: border-box;
+  resize: vertical;
+}
+
+.comment-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.comment-previews,
+.review-action-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.comment-preview {
+  display: flex;
+  align-items: flex-start;
+  gap: 4px;
+}
+
+.review-actions {
+  padding: 12px;
+  border: 1px solid var(--sat-border-strong);
+  border-radius: var(--sat-radius-sm);
+}
+
+.review-actions h4 {
+  margin: 0 0 10px;
+  font-size: 0.8rem;
+  color: var(--sat-text-muted);
+}
+
+.review-action-row p-button {
+  flex: 0 0 auto;
+  max-width: 100%;
+}
+
+.patch-notice {
+  margin: 0;
+  padding: 8px 12px;
+  border-inline-start: 2px solid var(--p-primary-color);
+  color: var(--sat-text-muted);
+  overflow-wrap: anywhere;
 }
 
 /* Комментарии и вложения */
@@ -494,6 +543,7 @@
 
   .p-tablist {
     flex: 0 0 auto;
+    min-width: 0;
     background: var(--sat-bg-elevated);
     border-bottom: 1px solid var(--sat-border);
   }

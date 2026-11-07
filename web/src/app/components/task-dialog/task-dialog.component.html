@@ -295,29 +295,42 @@
                       [ngModel]="commentDraft()"
                       (ngModelChange)="commentDraft.set($event)"
                     ></textarea>
-                    @for (image of commentImages(); track $index) {
-                      <p-image [src]="imageUrl(image)" [preview]="true" alt="Скриншот комментария" width="80"></p-image>
-                      <p-button icon="pi pi-times" ariaLabel="Удалить скриншот из комментария" size="small" [text]="true"
-                        (onClick)="removeCommentImage($index)" />
+                    @if (commentImages().length) {
+                      <div class="comment-previews">
+                        @for (image of commentImages(); track $index) {
+                          <div class="comment-preview">
+                            <p-image [src]="imageUrl(image)" [preview]="true" alt="Скриншот комментария" width="80"></p-image>
+                            <p-button icon="pi pi-times" ariaLabel="Удалить скриншот из комментария" size="small" [text]="true"
+                              (onClick)="removeCommentImage($index)" />
+                          </div>
+                        }
+                      </div>
                     }
-                    <p-button
-                      label="Отправить"
-                      icon="pi pi-send"
-                      size="small"
-                      [disabled]="!commentDraft().trim() || store.busy()"
-                      (onClick)="submitComment()"
-                    ></p-button>
+                    <div class="comment-actions">
+                      <p-button
+                        label="Отправить"
+                        icon="pi pi-send"
+                        size="small"
+                        [disabled]="!commentDraft().trim() || store.busy()"
+                        (onClick)="submitComment()"
+                      ></p-button>
+                    </div>
                     @if (card.status === 'review') {
-                      <p-button label="Накатить патч" icon="pi pi-file-edit" severity="secondary" size="small"
-                        [disabled]="store.busy()" (onClick)="previewPatch(false)" />
-                      <p-button label="Откатить патч" icon="pi pi-undo" severity="secondary" size="small"
-                        [disabled]="store.busy()" (onClick)="previewPatch(true)" />
-                      <p-button label="Вернуть на доработку" icon="pi pi-replay" severity="secondary" size="small"
-                        [disabled]="!commentDraft().trim() || store.busy()" (onClick)="submitComment(true)" />
-                      <p-button label="Принять и слить" icon="pi pi-check" severity="success" size="small"
-                        [disabled]="store.busy()" (onClick)="acceptAutomation()" />
+                      <section class="review-actions" aria-label="Приёмка задачи">
+                        <h4>Приёмка задачи</h4>
+                        <div class="review-action-row">
+                          <p-button label="Накатить патч" icon="pi pi-file-edit" severity="secondary" size="small"
+                            [disabled]="store.busy()" (onClick)="previewPatch(false)" />
+                          <p-button label="Откатить патч" icon="pi pi-undo" severity="secondary" size="small"
+                            [disabled]="store.busy()" (onClick)="previewPatch(true)" />
+                          <p-button label="Вернуть на доработку" icon="pi pi-replay" severity="secondary" size="small"
+                            [disabled]="!commentDraft().trim() || store.busy()" (onClick)="submitComment(true)" />
+                          <p-button label="Принять и слить" icon="pi pi-check" severity="success" size="small"
+                            [disabled]="store.busy()" (onClick)="acceptAutomation()" />
+                        </div>
+                      </section>
                     }
-                    @if (patchNotice()) { <p role="status">{{ patchNotice() }}</p> }
+                    @if (patchNotice()) { <p class="patch-notice" role="status">{{ patchNotice() }}</p> }
                   </div>
 
                   <sat-decision-log [events]="card.events" />
