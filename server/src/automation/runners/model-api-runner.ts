@@ -8,6 +8,7 @@ import { CompactProgress } from '../../../../shared/automation/compact-progress.
 import { ProjectMcpTools } from './project-mcp-tools.js';
 import { AGENT_OUTCOME_SCHEMA } from '../../../../shared/automation/outcome-schema.js';
 import { PipelineHelper } from '../pipeline-helper.js';
+import { StageAudit } from './stage-audit.js';
 
 interface ToolCall { id: string; function: { name: string; arguments: string }; }
 interface Message { role: string; content: unknown; tool_calls?: ToolCall[]; tool_call_id?: string; }
@@ -83,9 +84,12 @@ export class ModelApiRunner implements AgentRunner {
     let formatting = false; let formattingAttempts = 0;
     let finalFormat: 'json_schema' | 'json_object' | 'prompt' = 'json_schema';
     const project = new ProjectMcpTools(job);
+    const auditDirectory = process.env.SAT_STAGE_AUDIT_DIR?.trim() || (job.settings.auditAgent?.connectionId ? path.resolve('data', 'stage-audit') : undefined);
+    const audit = auditDirectory && job.auditAttempt ? new StageAudit(job, auditDirectory) : undefined;
     try {
     for (let turn = 0; job.trustedExecution || formatting || turn < Math.min(MAX_TURNS, (job.maxToolCalls ?? MAX_TURNS) + 1); turn += 1) {
       job.signal.throwIfAborted();
+      audit?.request();
       const response = await this.request(url, { method: 'POST', signal: job.signal,
         headers: { 'Content-Type': 'application/json', ...(secret ? { Authorization: `Bearer ${secret}` } : {}) },
         body: JSON.stringify({ model: job.profile.model, messages,
@@ -105,6 +109,7 @@ export class ModelApiRunner implements AgentRunner {
       }
       const payload = await response.json() as { usage?: unknown; choices?: { message: Message; finish_reason?: string }[] };
       const reported = UsageParser.compatible(payload.usage);
+      audit?.sample(reported);
       if (reported) usage = TokenMeter.add(usage, reported); else missingRequests++;
       if (usage) { usage = { ...usage, missingRequests }; job.onUsage?.(usage); }
       const message = payload.choices?.[0]?.message;
@@ -128,6 +133,7 @@ export class ModelApiRunner implements AgentRunner {
         }
         await job.waitForPreparation?.();
         job.signal.throwIfAborted();
+        audit?.finish(JSON.parse(finalText).verdict);
         return { text: finalText, usage };
       }
       for (const call of message.tool_calls) {
@@ -162,6 +168,7 @@ export class ModelApiRunner implements AgentRunner {
             if (message.tool_calls.length !== 1) throw new Error('Call finish_task alone after all other operations complete.');
             if (!AGENT_VERDICTS.some(verdict => verdict === args.verdict) || typeof args.summary !== 'string') throw new Error('finish_task requires an actual verdict and summary.');
             onProgress('Итог этапа принят через finish_task; worker проверяет и сохраняет результат.\n');
+            audit?.finish(String(args.verdict));
             return { text: JSON.stringify(args), usage };
           }
           result = call.function.name === ModelTool.Project
@@ -175,11 +182,16 @@ export class ModelApiRunner implements AgentRunner {
         const completedLabel = read ? CompactProgress.apiTool(call.function.name, read) : label;
         onProgress(`Инструмент ${completedLabel}: ${error ? 'ошибка' : 'завершён'}${read?.limited ? ' (диапазон ограничен 40 строками)' : ''}.\n`);
         if (error) onProgress(CompactProgress.diagnostics(`Error: ${String(error)}`) + '\n');
-        messages.push({ role: 'tool', tool_call_id: call.id, content: JSON.stringify(result) });
+        const content = JSON.stringify(result);
+        audit?.tool(call.function.name, read ?? args, content, Boolean(error));
+        messages.push({ role: 'tool', tool_call_id: call.id, content });
       }
     }
     throw new Error('Model tool-call limit reached.');
-    } finally { await project.close(); }
+    } finally {
+      audit?.save(usage);
+      await project.close();
+    }
   }
 
   private async tool(job: AgentJob, name: string, args: Record<string, unknown>): Promise<unknown> {

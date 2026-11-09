@@ -15,6 +15,7 @@ import { DialogModule } from 'primeng/dialog';
 import { MultiSelectModule } from 'primeng/multiselect';
 import { TooltipModule } from 'primeng/tooltip';
 import { BATCH_TASK_LIMIT } from '../../../../../shared/automation/batch';
+import { MCP_CATALOG } from '../../../../../shared/automation/mcp-catalog';
 import { PipelinePolicy } from '../../../../../shared/automation/pipeline-policy';
 import { AUTOMATION_TABS, AutomationTab } from './automation-panel.types';
 import { AGENT_ROLES, RUNNER_IDS, DEFAULT_AUTOMATION_SETTINGS, PROVIDER_KINDS, REASONING_EFFORTS, MERGE_POLICIES,
@@ -36,6 +37,7 @@ import { ModelCatalogKey, type ModelOption } from '../../../../../shared/automat
   imports: [TreeModule, FormsModule, ReactiveFormsModule, SelectModule, ButtonModule, CheckboxModule, InputTextModule, TabsModule, AccordionModule, DialogModule, MultiSelectModule, TooltipModule],
   templateUrl: './automation-panel.component.html', styleUrl: './automation-panel.component.scss' })
 export class AutomationPanelComponent implements OnInit {
+  public readonly mcpCatalog = MCP_CATALOG;
   @Output() public readonly openQueue = new EventEmitter<string | null>();
   public readonly tabs = AUTOMATION_TABS;
   public readonly tab = AutomationTab;
@@ -193,11 +195,11 @@ export class AutomationPanelComponent implements OnInit {
     if (control.value !== agent.model) control.setValue(agent.model, { emitEvent: false });
     return control;
   }
-  private modelKey(agent: AgentProfile): string {
+  private modelKey(agent: Pick<AgentProfile, 'connectionId' | 'runner'>): string {
     const connection = this.settings.connections.find((entry) => entry.id === agent.connectionId);
     return connection ? ModelCatalogKey.create({ runner: agent.runner, connection }) : '';
   }
-  public modelOptions(agent: AgentProfile): ModelOption[] {
+  public modelOptions(agent: Pick<AgentProfile, 'id' | 'runner' | 'connectionId' | 'model'>): ModelOption[] {
     const key = this.modelKey(agent); const models = this.modelCatalogs.get(key) ?? [];
     const signature = JSON.stringify([key, models, agent.model]);
     let cached = this.modelOptionsCache.get(agent.id);
@@ -208,7 +210,7 @@ export class AutomationPanelComponent implements OnInit {
     }
     return cached.options;
   }
-  public modelMessage(agent: AgentProfile): string {
+  public modelMessage(agent: Pick<AgentProfile, 'runner' | 'connectionId'>): string {
     if (!this.host.online) return 'Worker не подключён. Запустите воркер: npm run worker';
     if (!agent.connectionId) return 'Сначала выберите подключение в списке выше.';
     return this.modelMessages.get(this.modelKey(agent)) ?? 'Нажмите «Обновить модели»: список придёт с компьютера worker.';
@@ -232,7 +234,7 @@ export class AutomationPanelComponent implements OnInit {
       this.notice = `Ollama подтвердила выгрузку ${model}.`;
     });
   }
-  public async loadModels(agent: AgentProfile): Promise<void> {
+  public async loadModels(agent: Pick<AgentProfile, 'runner' | 'connectionId'>): Promise<void> {
     const connection = this.settings.connections.find((entry) => entry.id === agent.connectionId);
     if (!connection || this.projectBusy) return;
     const key = this.modelKey(agent);
@@ -246,7 +248,7 @@ export class AutomationPanelComponent implements OnInit {
     if (!result) this.modelMessages.set(key, this.error || 'Не удалось получить модели. Повторите запрос или укажите ID вручную.');
     this.changeDetector.markForCheck();
   }
-  public toggleManualModel(agent: AgentProfile): void {
+  public toggleManualModel(agent: Pick<AgentProfile, 'id'>): void {
     if (this.manualModels.has(agent.id)) this.manualModels.delete(agent.id); else this.manualModels.add(agent.id);
   }
   public runs: AgentRun[] = [];
@@ -272,7 +274,11 @@ export class AutomationPanelComponent implements OnInit {
   public readonly limits = AUTOMATION_LIMITS;
   public readonly providerOptions = PROVIDER_OPTIONS;
   public readonly roleOptions = ROLE_OPTIONS.filter((option) => option.value !== AgentRole.Doctor);
-  public readonly doctorRoleOptions = [{ label: 'Системный доктор — диагностика сбоев', value: AgentRole.Doctor }];
+  private readonly systemRoles = [
+    { value: 'doctorAgent', label: 'Pipeline Doctor' },
+    { value: 'auditAgent', label: 'Аудитор этапов' },
+  ] as const;
+  public selectedSystemRole: 'doctorAgent' | 'auditAgent' | null = null;
   public readonly connectionPresets = CONNECTION_PRESETS;
   public readonly nativeRunnerOptions = RUNNER_OPTIONS.filter(option => option.value !== RunnerId.ModelApi);
   public readonly apiRunnerOptions = RUNNER_OPTIONS.filter(option => option.value === RunnerId.ModelApi);
@@ -599,8 +605,19 @@ export class AutomationPanelComponent implements OnInit {
     }
     return this.connectionOptionsCache;
   }
-  public get doctorAgent(): AgentProfile {
-    if (!this.settings.doctorAgent) {
+  public get availableSystemRoles() {
+    return this.systemRoles.filter(role => !this.settings[role.value] &&
+      (role.value !== 'doctorAgent' || !(this.settings.doctorConnectionId || this.settings.doctorModel)));
+  }
+  public get doctorAgent(): AgentProfile | undefined {
+    if (!this.settings.doctorAgent && (this.settings.doctorConnectionId || this.settings.doctorModel)) {
+      this.addSystemRole('doctorAgent');
+    }
+    return this.settings.doctorAgent;
+  }
+  public addSystemRole(role = this.selectedSystemRole): void {
+    if (!role || this.settings[role]) return;
+    if (role === 'doctorAgent') {
       const fallbackConn = this.settings.connections.find(c => c.isLocal || c.kind === ProviderKind.Ollama)?.id || this.settings.connections[0]?.id || '';
       this.settings.doctorAgent = {
         id: 'pipeline-doctor',
@@ -610,14 +627,29 @@ export class AutomationPanelComponent implements OnInit {
         model: this.settings.doctorModel || '',
         instructions: DEFAULT_ROLE_INSTRUCTIONS[AgentRole.Doctor] ?? '',
       };
+    } else {
+      this.settings.auditAgent = { id: 'stage-audit', role: 'stage-audit', runner: RunnerId.ModelApi,
+        connectionId: '', model: '', instructions: '' };
     }
-    return this.settings.doctorAgent;
+    this.selectedSystemRole = null;
+  }
+  public removeSystemRole(role: 'doctorAgent' | 'auditAgent'): void {
+    delete this.settings[role];
+    if (role === 'doctorAgent') {
+      delete this.settings.doctorConnectionId;
+      delete this.settings.doctorModel;
+    }
+  }
+  public get auditConnectionOptions() {
+    return [{ label: 'Выключено', value: '' }, ...this.settings.connections
+      .filter(connection => connection.kind !== ProviderKind.Native && (connection.isLocal ?? connection.kind === ProviderKind.Ollama))
+      .map(connection => ({ label: connection.label || connection.id, value: connection.id }))];
   }
   public setDoctorArgs(value: string): void {
     try {
       const parsed = JSON.parse(value);
       if (Array.isArray(parsed) && parsed.every(item => typeof item === 'string')) {
-        this.doctorAgent.args = parsed;
+        if (this.settings.doctorAgent) this.settings.doctorAgent.args = parsed;
       }
     } catch {
       // ignore

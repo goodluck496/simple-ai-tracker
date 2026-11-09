@@ -67,6 +67,40 @@ test('local connection preset automatically sets trustedExecution on new runs', 
   }
 });
 
+test('doctor queues a fresh repair in the saved worktree with the existing budget', async () => {
+  const app = createContainer({ config: { dbPath: ':memory:' }, logger: new SilentLogger() });
+  try {
+    const task = app.taskService.createTask({ title: 'Repair fixture' });
+    const service = app.automationService;
+    service.configure({
+      ...structuredClone(DEFAULT_AUTOMATION_SETTINGS), repositoryPath: '/fixture', maxRevisions: 1,
+      connections: [{ id: 'n', label: 'Native', kind: 'native', supportsImages: false }],
+      agents: [{ id: 'dev', role: 'developer', runner: 'codex', connectionId: 'n', model: 'fixture', instructions: '' }],
+      pipeline: ['dev'], checks: [{ command: 'node', args: ['--version'] }],
+    });
+    const run = service.enqueue(task.id);
+    const owned = service.claim('fixture-worker')!;
+    const checkout = { repositoryRoot: '/fixture', worktreePath: '/fixture-worktree', baseSha: 'b'.repeat(40), dependencyMode: 'isolated' };
+    service.checkout(run.id, owned.leaseToken!, checkout);
+    service.beginStage(run.id, owned.leaseToken!);
+    service.fail(run.id, owned.leaseToken!, 'TypeScript build failed: ts(2304) Cannot find name AuthOptions');
+    assert.equal((await service.diagnoseFix(run.id)).action, 'repair_stage');
+    const queued = await service.applyFix(run.id);
+    assert.equal(queued.status, 'queued');
+    assert.equal(queued.revision, 1);
+    assert.deepEqual(queued.checkout, checkout);
+    assert.equal(queued.usageAttempts?.length, 1);
+    assert.match(queued.doctorRepair?.diagnostic ?? '', /AuthOptions/);
+    await assert.rejects(service.applyFix(run.id), /Нет предложенного исправления/);
+    const repair = service.claim('fixture-worker')!;
+    const failed = service.completeStage(run.id, repair.leaseToken!, { verdict: 'changes_requested', summary: 'Check still fails' }, 'sat/fixture', 'c'.repeat(40), undefined, true);
+    assert.equal(failed.status, 'failed');
+    assert.equal(failed.doctorRepair, undefined);
+  } finally {
+    app.close();
+  }
+});
+
 
 test('doctor consults model and uses its recommendations', async () => {
   const mockFetch = async () => ({

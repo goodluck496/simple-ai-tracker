@@ -419,77 +419,125 @@
           </div>
 
 
-          <!-- Системный агент: Pipeline Doctor -->
-          <div class="panel-card doctor-system-card">
-            <div class="panel-card-header">
-              <div class="card-title-row">
-                <h4>Системный агент — Pipeline Doctor</h4>
-                <span class="doctor-system-tag"><i class="pi pi-shield"></i> Системная роль</span>
+          @if (settingsScope === 'project') {
+            <div class="panel-card doctor-system-card">
+              <div class="panel-card-header">
+                <h4>Системные роли</h4>
+                <p class="card-hint">Настраиваются для проекта и работают отдельно от этапов конвейера.</p>
               </div>
-              <p class="card-hint">
-                Автономный системный агент для диагностики сбоев этапов, ошибок компиляции, интеграции Git и формирования авто-исправлений. Не входит в линейный конвейер.
-              </p>
-            </div>
-            <div class="card-body">
-              <div class="agent-config-card doctor-agent-card" [attr.aria-label]="'Системный агент: ' + roleLabel(doctorAgent.role)">
-                <div class="agent-card-header">
-                  <div class="agent-role-badge">
-                    <i class="pi pi-wrench"></i>
-                    <strong>{{ roleLabel(doctorAgent.role) }}</strong>
-                  </div>
-                </div>
-
-                <div class="agent-fields-grid">
-                  <label>
-                    <span>Роль</span>
-                    <p-select [options]="doctorRoleOptions" optionLabel="label" optionValue="value" [ngModel]="doctorAgent.role" [disabled]="true" appendTo="body" />
-                  </label>
-                  <label>
-                    <span>Исполнитель</span>
-                    <p-select [options]="runnerOptions(doctorAgent)" optionLabel="label" optionValue="value" [(ngModel)]="doctorAgent.runner" ariaLabel="Исполнитель агента Doctor" appendTo="body" />
-                  </label>
-                  <label>
-                    <span>Подключение</span>
-                    <p-select [options]="connectionOptions" optionLabel="label" optionValue="value" [(ngModel)]="doctorAgent.connectionId" (onChange)="selectConnection(doctorAgent)" [filter]="true" filterPlaceholder="Поиск подключения" ariaLabel="Подключение агента Doctor" appendTo="body" />
-                  </label>
-                  <label class="grow-field">
-                    <span>Модель</span>
-                    @if (manualModels.has(doctorAgent.id)) {
-                      <input pInputText [formControl]="modelControl(doctorAgent)" placeholder="ID модели" />
-                    } @else {
-                      <p-select [options]="modelOptions(doctorAgent)" optionLabel="label" optionValue="id" [formControl]="modelControl(doctorAgent)"
-                        [filter]="true" filterBy="label,id" filterPlaceholder="Поиск модели" placeholder="Выберите модель" ariaLabel="Модель агента Doctor" appendTo="body" />
-                    }
-                  </label>
-                </div>
-
-                <div class="agent-model-tools">
-                  <button pButton severity="secondary" size="small" type="button" icon="pi pi-refresh" (click)="loadModels(doctorAgent)" [disabled]="!host.online || projectBusy || !doctorAgent.connectionId" [title]="modelButtonTitle(doctorAgent)">Обновить модели</button>
-                  <button pButton severity="secondary" [text]="true" size="small" type="button" (click)="toggleManualModel(doctorAgent)">{{ manualModels.has(doctorAgent.id) ? 'Выбрать из списка' : 'Указать ID вручную' }}</button>
-                  <span class="model-status-text">{{ modelMessage(doctorAgent) }}</span>
-                </div>
-
-                <p-accordion>
-                  <p-accordion-panel value="instructions">
-                    <p-accordion-header>Инструкции роли</p-accordion-header>
-                    <p-accordion-content>
-                      <textarea rows="4" [(ngModel)]="doctorAgent.instructions" class="instructions-textarea" placeholder="Правила и системный промпт роли..."></textarea>
-                      <div class="instructions-actions">
-                        <button pButton severity="secondary" size="small" type="button" (click)="resetInstructions(doctorAgent)">Вставить базовую инструкцию</button>
+              <div class="card-body system-role-list">
+                @if (doctorAgent; as doctorAgent) {
+                  <div class="agent-config-card doctor-agent-card" [attr.aria-label]="'Системный агент: ' + roleLabel(doctorAgent.role)">
+                    <div class="agent-card-header">
+                      <div class="agent-role-badge">
+                        <i class="pi pi-wrench"></i>
+                        <strong>{{ roleLabel(doctorAgent.role) }}</strong>
                       </div>
-                    </p-accordion-content>
-                  </p-accordion-panel>
-                </p-accordion>
+                      <button pButton severity="secondary" [text]="true" type="button" icon="pi pi-times"
+                        aria-label="Убрать настройки Pipeline Doctor" (click)="removeSystemRole('doctorAgent')"></button>
+                    </div>
 
-                @if (doctorAgent.runner === runnerId.Custom) {
-                  <div class="custom-runner-fields">
-                    <label><span>Исполняемый файл</span><input pInputText [(ngModel)]="doctorAgent.command" /></label>
-                    <label><span>Аргументы JSON: &#123;promptFile&#125;, &#123;model&#125;, &#123;cwd&#125;, &#123;role&#125;</span><input pInputText [ngModel]="json(doctorAgent.args || [])" (ngModelChange)="setDoctorArgs($event)" /></label>
+                    <div class="agent-fields-grid">
+                      <label>
+                        <span>Исполнитель</span>
+                        <p-select [options]="runnerOptions(doctorAgent)" optionLabel="label" optionValue="value" [(ngModel)]="doctorAgent.runner" ariaLabel="Исполнитель агента Doctor" appendTo="body" />
+                      </label>
+                      <label>
+                        <span>Подключение</span>
+                        <p-select [options]="connectionOptions" optionLabel="label" optionValue="value" [(ngModel)]="doctorAgent.connectionId" (onChange)="selectConnection(doctorAgent)" [filter]="true" filterPlaceholder="Поиск подключения" ariaLabel="Подключение агента Doctor" appendTo="body" />
+                      </label>
+                      <label class="grow-field">
+                        <span>Модель</span>
+                        @if (manualModels.has(doctorAgent.id)) {
+                          <input pInputText [(ngModel)]="doctorAgent.model" placeholder="ID модели" />
+                        } @else {
+                          <p-select [options]="modelOptions(doctorAgent)" optionLabel="label" optionValue="id" [(ngModel)]="doctorAgent.model"
+                            [filter]="true" filterBy="label,id" filterPlaceholder="Поиск модели" placeholder="Выберите модель" ariaLabel="Модель агента Doctor" appendTo="body" />
+                        }
+                      </label>
+                    </div>
+
+                    <div class="agent-model-tools">
+                      <button pButton severity="secondary" size="small" type="button" icon="pi pi-refresh" (click)="loadModels(doctorAgent)" [disabled]="!host.online || projectBusy || !doctorAgent.connectionId" [title]="modelButtonTitle(doctorAgent)">Обновить модели</button>
+                      <button pButton severity="secondary" [text]="true" size="small" type="button" (click)="toggleManualModel(doctorAgent)">{{ manualModels.has(doctorAgent.id) ? 'Выбрать из списка' : 'Указать ID вручную' }}</button>
+                      <span class="model-status-text">{{ modelMessage(doctorAgent) }}</span>
+                    </div>
+
+                    <p-accordion>
+                      <p-accordion-panel value="instructions">
+                        <p-accordion-header>Инструкции роли</p-accordion-header>
+                        <p-accordion-content>
+                          <textarea rows="4" [(ngModel)]="doctorAgent.instructions" class="instructions-textarea" placeholder="Правила и системный промпт роли..."></textarea>
+                          <div class="instructions-actions">
+                            <button pButton severity="secondary" size="small" type="button" (click)="resetInstructions(doctorAgent)">Вставить базовую инструкцию</button>
+                          </div>
+                        </p-accordion-content>
+                      </p-accordion-panel>
+                    </p-accordion>
+
+                    @if (doctorAgent.runner === runnerId.Custom) {
+                      <div class="custom-runner-fields">
+                        <label><span>Исполняемый файл</span><input pInputText [(ngModel)]="doctorAgent.command" /></label>
+                        <label><span>Аргументы JSON: &#123;promptFile&#125;, &#123;model&#125;, &#123;cwd&#125;, &#123;role&#125;</span><input pInputText [ngModel]="json(doctorAgent.args || [])" (ngModelChange)="setDoctorArgs($event)" /></label>
+                      </div>
+                    }
+                  </div>
+                }
+                @if (settings.auditAgent; as auditAgent) {
+                  <div class="agent-config-card doctor-agent-card">
+                    <div class="agent-card-header">
+                      <div class="agent-role-badge"><i class="pi pi-chart-bar"></i><strong>Аудитор этапов</strong></div>
+                      <button pButton severity="secondary" [text]="true" type="button" icon="pi pi-times"
+                        aria-label="Убрать аудитора этапов" (click)="removeSystemRole('auditAgent')"></button>
+                    </div>
+                    <div class="agent-fields-grid">
+                      <label>
+                        <span>Подключение</span>
+                        <p-select [options]="auditConnectionOptions" optionLabel="label" optionValue="value"
+                          [(ngModel)]="auditAgent.connectionId" (onChange)="auditAgent.model = ''"
+                          ariaLabel="Подключение аудитора" appendTo="body" />
+                      </label>
+                      <label class="grow-field">
+                        <span>Модель</span>
+                        @if (manualModels.has(auditAgent.id)) {
+                          <input pInputText [(ngModel)]="auditAgent.model" [disabled]="!auditAgent.connectionId" placeholder="ID модели" />
+                        } @else {
+                          <p-select [options]="modelOptions(auditAgent)" optionLabel="label" optionValue="id"
+                            [(ngModel)]="auditAgent.model" [disabled]="!auditAgent.connectionId" [filter]="true"
+                            filterBy="label,id" placeholder="Выберите модель" ariaLabel="Модель аудитора" appendTo="body" />
+                        }
+                      </label>
+                    </div>
+                    <div class="agent-model-tools">
+                      <button pButton severity="secondary" size="small" type="button" icon="pi pi-refresh"
+                        (click)="loadModels(auditAgent)" [disabled]="!host.online || projectBusy || !auditAgent.connectionId">Обновить модели</button>
+                      <button pButton severity="secondary" [text]="true" size="small" type="button"
+                        (click)="toggleManualModel(auditAgent)">{{ manualModels.has(auditAgent.id) ? 'Выбрать из списка' : 'Указать ID вручную' }}</button>
+                      <span class="model-status-text">{{ modelMessage(auditAgent) }}</span>
+                    </div>
+                    <p-accordion>
+                      <p-accordion-panel value="audit-instructions">
+                        <p-accordion-header>Инструкции роли аудитора</p-accordion-header>
+                        <p-accordion-content>
+                          <textarea rows="4" maxlength="1500" [(ngModel)]="auditAgent.instructions"
+                            class="instructions-textarea" placeholder="На что обращать внимание при оценке этапов"></textarea>
+                        </p-accordion-content>
+                      </p-accordion-panel>
+                    </p-accordion>
+                  </div>
+                }
+                @if (availableSystemRoles.length) {
+                  <div class="agent-model-tools">
+                    <p-select [options]="availableSystemRoles" optionLabel="label" optionValue="value"
+                      [(ngModel)]="selectedSystemRole" placeholder="Выберите системную роль"
+                      ariaLabel="Системная роль" appendTo="body" />
+                    <button pButton severity="secondary" type="button" icon="pi pi-plus"
+                      [disabled]="!selectedSystemRole" (click)="addSystemRole()">Добавить роль</button>
                   </div>
                 }
               </div>
             </div>
-          </div>
+          }
 
           <!-- Порядок этапов -->
           <div class="panel-card">
@@ -741,6 +789,20 @@
                   }
                 }
               </section>
+
+              <p-accordion>
+                <p-accordion-panel value="mcp-catalog">
+                  <p-accordion-header>Каталог MCP</p-accordion-header>
+                  <p-accordion-content>
+                    <p>Проектные MCP для Codex CLI и Model API задаются в <code>docs/agent-environment.json</code>. OpenCode использует собственный конфиг на воркере.</p>
+                    <ul>
+                      @for (server of mcpCatalog; track server.name) {
+                        <li><strong>{{ server.name }}</strong> · {{ server.purpose }}. {{ server.setup }}</li>
+                      }
+                    </ul>
+                  </p-accordion-content>
+                </p-accordion-panel>
+              </p-accordion>
 
               <!-- Лимиты и слияние -->
               <div class="limits-grid">

@@ -378,7 +378,10 @@ export class AutomationService {
       }
       const budgetReason = RunBudget.reason(run, Date.parse(now));
       const retryWriterCheck = checkFailed && WRITABLE_AGENT_ROLES.includes(profile.role) && PipelinePolicy.checkAt(run.settings, run.stage);
+      const doctorRepair = run.doctorRepair?.revision === run.revision ? run.doctorRepair : undefined;
+      if (doctorRepair && (outcome.verdict !== AgentVerdict.Pass || run.stage >= doctorRepair.failedStage)) updated.doctorRepair = undefined;
       if ((budgetReason && outcome.verdict !== AgentVerdict.Questions) || outcome.verdict === AgentVerdict.Blocked
+        || (doctorRepair && outcome.verdict === AgentVerdict.ChangesRequested)
         || (outcome.verdict === AgentVerdict.ChangesRequested && WRITABLE_AGENT_ROLES.includes(profile.role) && !retryWriterCheck)) {
         updated = { ...updated, status: RunStatus.Failed, leaseToken: null,
           summary: budgetReason ?? `Execution blocked; no automatic retry: ${outcome.summary}` };
@@ -487,7 +490,7 @@ export class AutomationService {
       this.runs.event(id, RunStatus.Cancelled, 'Убрано из очереди пользователем. Задача и журнал сохранены.', now);
     });
   }
-  public resume(id: string, replacementProfileId?: unknown, replacementModel?: unknown): AgentRun {
+  public resume(id: string, replacementProfileId?: unknown, replacementModel?: unknown, repair = false): AgentRun {
     return this.runs.db.transaction(() => {
     const run = this.requireRun(id);
     if (run.cleanup) throw new TrackerError('CONFLICT', 'Рабочая копия очищается или уже очищена. Создайте новый запуск.');
@@ -502,8 +505,14 @@ export class AutomationService {
     if (this.runs.hasActive(run.taskId) && run.status !== RunStatus.Waiting) throw new TrackerError('CONFLICT', 'Task already has another active run.');
     if (run.feature?.children.some(c => this.runs.hasActive(c.taskId))) throw new TrackerError('CONFLICT', 'A child has an independent active run; stop it before resuming the feature.');
     const role = run.settings.agents.find((agent) => agent.id === run.settings.pipeline[run.stage])?.role;
-    const stage = run.status === RunStatus.Waiting && role && EVIDENCE_AGENT_ROLES.includes(role)
-      ? Decomposition.child(run)?.developerStage ?? run.feature?.finalDeveloperStage ?? run.settings.pipeline.findIndex((id) => run.settings.agents.find((agent) => agent.id === id)?.role === AgentRole.Developer) : run.stage;
+    const repairStage = repair ? this.doctorRepairStage(run) : undefined;
+    if (repair && (repairStage === undefined || run.proposedFix?.action !== 'repair_stage')) throw new TrackerError('CONFLICT', 'Нет доступного этапа для исправления.');
+    if (repair) {
+      const reason = RunBudget.reason(run, Date.parse(this.clock.now()), true);
+      if (reason) throw new TrackerError('CONFLICT', reason);
+    }
+    const stage = repairStage ?? (run.status === RunStatus.Waiting && role && EVIDENCE_AGENT_ROLES.includes(role)
+      ? Decomposition.child(run)?.developerStage ?? run.feature?.finalDeveloperStage ?? run.settings.pipeline.findIndex((id) => run.settings.agents.find((agent) => agent.id === id)?.role === AgentRole.Developer) : run.stage);
     let settings = run.settings;
     if (replacementProfileId !== undefined || replacementModel !== undefined) {
       if (run.status !== RunStatus.Failed || mergeOnly || !role) throw new TrackerError('CONFLICT', 'Only a failed agent stage can switch profiles.');
@@ -524,9 +533,14 @@ export class AutomationService {
       });
     }
     const updated: AgentRun = { ...run, settings, stage, status: RunStatus.Queued, proposedFix: null, leaseToken: null, workerId: null, leaseUntil: null, updatedAt: this.clock.now(), finishedAt: undefined };
+    if (repairStage !== undefined) {
+      updated.revision++;
+      updated.doctorRepair = { stage, failedStage: run.stage, revision: updated.revision,
+        diagnostic: [run.proposedFix!.title, run.summary.slice(-2400), run.proposedFix!.explanation.slice(0, 1800)].join('\n').slice(0, 4500) };
+    }
     this.runs.restore(id);
     this.runs.save(updated);
-    this.runs.event(id, 'resumed', replacementProfileId === undefined
+    this.runs.event(id, 'resumed', repair ? 'Исправление по диагнозу Pipeline Doctor поставлено в очередь.' : replacementProfileId === undefined
       ? 'Продолжение с сохранёнными настройками и checkpoint. Ожидает worker.'
       : 'Текущий этап поставлен в очередь с другим профилем агента. Рабочая ветка сохранена.', this.clock.now());
     return this.publicRun(updated);
@@ -791,16 +805,30 @@ export class AutomationService {
     if (!RESUMABLE_RUN_STATUSES.includes(run.status)) throw new TrackerError('CONFLICT', 'Анализ доступен после остановки запуска.');
     const events = this.runs.events(id).map(e => e.text);
     const fix = await this.doctor.diagnose(run, events);
+    if ((fix.action === 'advice_only' || fix.action === 'retry_stage') && this.doctorRepairStage(run) !== undefined) fix.action = 'repair_stage';
     const current = this.requireRun(id);
     if (current.status !== run.status || current.updatedAt !== run.updatedAt) throw new TrackerError('CONFLICT', 'Запуск изменился во время диагностики.');
     this.runs.save({ ...current, proposedFix: fix });
     return fix;
   }
 
+  private doctorRepairStage(run: AgentRun): number | undefined {
+    if (run.status !== RunStatus.Failed || !run.checkout || run.feature || run.cleanup ||
+      run.stage >= run.settings.pipeline.length || run.revision >= run.settings.maxRevisions) return undefined;
+    const failedRole = run.settings.agents.find(agent => agent.id === run.settings.pipeline[run.stage])?.role;
+    if (!failedRole || (!WRITABLE_AGENT_ROLES.includes(failedRole) && !EVIDENCE_AGENT_ROLES.includes(failedRole))) return undefined;
+    for (let stage = run.stage; stage >= 0; stage--) {
+      const role = run.settings.agents.find(agent => agent.id === run.settings.pipeline[stage])?.role;
+      if (role && WRITABLE_AGENT_ROLES.includes(role)) return stage;
+    }
+    return undefined;
+  }
+
   public async applyFix(id: string): Promise<AgentRun> {
     const run = this.requireRun(id);
     if (!run.proposedFix) throw new TrackerError('CONFLICT', 'Нет предложенного исправления.');
     if (!RESUMABLE_RUN_STATUSES.includes(run.status)) throw new TrackerError('CONFLICT', 'Сначала остановите запуск.');
+    if (run.proposedFix.action === 'repair_stage') return this.resume(id, undefined, undefined, true);
     if (run.proposedFix.action === 'retry_stage') return this.resume(id);
     await this.doctor.apply(run, run.proposedFix);
     const now = this.clock.now();

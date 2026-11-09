@@ -560,9 +560,9 @@
   <ng-template pTemplate="footer">
     <div class="fix-dialog-footer">
       @if (error()) { <p role="alert">{{ error() }}</p> }
-      @if (currentFix()?.action === 'retry_stage' || currentFix()?.action === 'commit_dirty_repo' || currentFix()?.action === 'switch_branch') {
+      @if (currentFix()?.action === 'repair_stage' || currentFix()?.action === 'retry_stage' || currentFix()?.action === 'commit_dirty_repo' || currentFix()?.action === 'switch_branch') {
         <button pButton severity="success" icon="pi pi-check" [disabled]="busy()" (click)="applyFix()">
-          {{ currentFix()?.action === 'retry_stage' ? 'Повторить этап' : 'Применить и продолжить' }}
+          {{ currentFix()?.action === 'repair_stage' ? 'Запустить исправление' : currentFix()?.action === 'retry_stage' ? 'Повторить этап' : 'Применить и продолжить' }}
         </button>
       }
       <button pButton severity="danger" [text]="true" icon="pi pi-trash" [disabled]="busy()" (click)="discardFix()">

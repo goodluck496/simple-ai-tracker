@@ -90,6 +90,11 @@ export class AutomationSettingsValidator {
       || !Number.isSafeInteger(maxAgentCalls) || maxAgentCalls < 1 || maxAgentCalls > 100
       || !Number.isSafeInteger(maxInputTokens) || maxInputTokens < 1 || maxInputTokens > 100000000
       || !Number.isSafeInteger(maxRunMinutes) || maxRunMinutes < 1 || maxRunMinutes > 240) return fail('Invalid run budget.');
+    const audit = settings.auditAgent;
+    const auditConnection = audit && settings.connections.find(connection => connection.id === audit.connectionId);
+    if (audit?.connectionId && (!auditConnection?.baseUrl || auditConnection.kind === ProviderKind.Native ||
+      !(auditConnection.isLocal ?? auditConnection.kind === ProviderKind.Ollama) ||
+      typeof audit.model !== 'string' || !audit.model.trim())) return fail('Stage audit requires a local API connection and model.');
     // Reconstruct persisted objects so unknown fields cannot carry credentials.
     return {
       repositoryPath: settings.repositoryPath, baseBranch: settings.baseBranch,
@@ -99,6 +104,9 @@ export class AutomationSettingsValidator {
       timeoutMinutes: settings.timeoutMinutes, maxRevisions: settings.maxRevisions, mergePolicy: settings.mergePolicy,
       maxAgentCalls, maxStageToolCalls, maxInputTokens, maxRunMinutes,
       ...(doctorAgent ? { doctorAgent } : {}),
+      ...(auditConnection && audit ? { auditAgent: { id: 'stage-audit', role: 'stage-audit', runner: RunnerId.ModelApi,
+        connectionId: auditConnection.id, model: audit.model.trim(),
+        instructions: typeof audit.instructions === 'string' ? audit.instructions.trim().slice(0, 1500) : '' } } : {}),
       ...(typeof settings.doctorConnectionId === 'string' ? { doctorConnectionId: settings.doctorConnectionId } : {}),
       ...(typeof settings.doctorModel === 'string' ? { doctorModel: settings.doctorModel } : {}),
       ...execution,

@@ -1241,17 +1241,9 @@ code {
   border: 1px solid rgba(245, 158, 11, 0.35);
   background: rgba(245, 158, 11, 0.02);
 
-  .doctor-system-tag {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.35rem;
-    font-size: 0.75rem;
-    font-weight: 600;
-    padding: 0.2rem 0.65rem;
-    border-radius: 999px;
-    background: rgba(245, 158, 11, 0.15);
-    color: #f59e0b;
-    border: 1px solid rgba(245, 158, 11, 0.35);
+  .system-role-list {
+    display: grid;
+    gap: 0.75rem;
   }
 
   .doctor-agent-card {

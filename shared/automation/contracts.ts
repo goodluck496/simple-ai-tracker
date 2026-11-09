@@ -92,6 +92,7 @@ export interface AutomationSettings {
   doctorConnectionId?: string;
   doctorModel?: string;
   doctorAgent?: AgentProfile;
+  auditAgent?: Pick<AgentProfile, 'id' | 'runner' | 'connectionId' | 'model' | 'instructions'> & { role: 'stage-audit' };
 }
 
 export const DEFAULT_AUTOMATION_SETTINGS: AutomationSettings = {
@@ -112,12 +113,13 @@ export interface ProposedFix {
   files: string[];
   createdAt: string;
   scope?: 'worktree' | 'repository';
-  action?: 'commit_dirty_repo' | 'patch_code' | 'switch_branch' | 'retry_stage' | 'advice_only';
+  action?: 'commit_dirty_repo' | 'patch_code' | 'switch_branch' | 'retry_stage' | 'advice_only' | 'repair_stage';
   model?: string;
 }
 
 export interface AgentRun {
   proposedFix?: ProposedFix | null;
+  doctorRepair?: { stage: number; failedStage: number; revision: number; diagnostic: string };
   trustedExecution?: boolean;
   workPlan?: { taskId: string; version: number; contentHash: string; stage: number; revision: number };
   stageMemory?: import('./stage-note.js').StageMemory;
@@ -178,6 +180,7 @@ export interface AgentOutcome {
 }
 
 export interface AgentJob {
+  auditAttempt?: { id: string; workspace: string; taskId: string; stage: number; revision: number; handoffBytes: number };
   reviewImageData?: string[];
   /** Worker barrier: source reads/planning may run while dependencies are prepared. */
   waitForPreparation?: () => Promise<void>;
