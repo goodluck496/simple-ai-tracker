@@ -153,6 +153,7 @@ export class TaskDialogComponent {
   public readonly stoppedRework = signal(false);
   public readonly acceptance = signal<{ status: RunStatus; summary: string } | null>(null);
   private readonly api = inject(TrackerApiService);
+  public deployPreviewPatch = false;
   public readonly patchNotice = signal('');
   private readonly commentImagePattern = /^\[скриншот\] (\/api\/images\/[a-z0-9]{8,64}\.(?:png|jpg|webp|gif)(?:\?workspace=[\w%-]+)?)$/;
   public readonly clarificationDraft = signal('');
@@ -457,14 +458,25 @@ export class TaskDialogComponent {
       if (this.task()!.status === 'review' && !this.acceptance()) this.acceptance.set({ status: 'queued', summary: 'Слияние поставлено в очередь.' });
     }
   }
-  public async previewPatch(rollback: boolean): Promise<void> {
+  public async previewPatch(rollback: boolean, deploy = false): Promise<void> {
     const card = this.task();
     if (card?.status !== 'review') return;
     this.patchNotice.set('');
-    if (!await this.store.previewPatch(card.id, rollback) || this.task()?.id !== card.id) return;
-    this.patchNotice.set(rollback
-      ? 'Патч снят. Пересоберите приложение, чтобы вернуть прежнюю сборку.'
-      : 'Патч в базовой рабочей копии. Пересоберите приложение для проверки.');
+    if (deploy) this.patchNotice.set('Воркер выполнит операцию с патчем и запустит пост-операции…');
+    const request = await this.store.previewPatch(card.id, rollback, deploy);
+    if (this.task()?.id !== card.id) return;
+    if (!request) { this.patchNotice.set(''); return; }
+    if (deploy) {
+      const state = rollback ? 'Патч снят.' : 'Патч накатан.';
+      this.patchNotice.set(request.result?.deploymentError
+        ? state + ' Развёртывание не завершилось. ' + request.result.deploymentError
+        : state + ' Пост-операции выполнены.');
+      if (request.result?.deploymentError) return;
+    } else {
+      this.patchNotice.set(rollback
+        ? 'Патч снят. Пересоберите приложение, чтобы вернуть прежнюю сборку.'
+        : 'Патч в базовой рабочей копии. Пересоберите приложение для проверки.');
+    }
     if (rollback && this.hasCommentDraft()) await this.submitComment(true);
   }
 
@@ -764,6 +776,7 @@ export class TaskDialogComponent {
     this.attachments.set(card.attachments);
     this.commentDraft.set('');
     this.commentImages.set([]);
+    this.deployPreviewPatch = false;
     this.patchNotice.set('');
     this.tab.set(card.openQuestionsCount > 0 ? 'questions' : 'overview');
   }

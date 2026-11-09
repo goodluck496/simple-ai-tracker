@@ -11,7 +11,7 @@ export function registerAutomationRoutes(router: Router, app: AppContainer): voi
     sendJson(res, 200, { active: app.automationService.previewPatchActive(params.id), canResumeRework: app.automationService.canResumeRework(params.id),
       acceptance: app.automationService.acceptanceState(params.id) }));
   router.post('/api/automation/tasks/:id/preview-patch', ({ params, body, res }) =>
-    sendJson(res, 201, app.automationService.requestPreviewPatch(params.id, bodyField(body, 'rollback') === true)));
+    sendJson(res, 201, app.automationService.requestPreviewPatch(params.id, bodyField(body, 'rollback') === true, bodyField(body, 'deploy') === true)));
   router.post('/api/automation/runs/:id/diff', ({ params, body, res }) =>
     sendJson(res, 201, app.automationService.requestDiff(params.id, bodyField(body, 'wholeRun') === true)));
   router.post('/api/automation/tasks/:id/review/accept', ({ params, res }) =>

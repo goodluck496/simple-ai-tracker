@@ -10,7 +10,7 @@ import { PipelineWorker } from './pipeline-worker.js';
 import { AgentRunnerRegistry } from '../runners/registry.js';
 import { DEFAULT_AUTOMATION_SETTINGS, type AgentJob } from '../../../../shared/automation/contracts.js';
 
-test('worker publishes partial notes before crash, resumes same stage conversation and isolates later roles', async () => {
+test('worker publishes partial notes before automatic recovery, resumes same stage conversation and isolates later roles', async () => {
   const fixture = await gitFixture();
   const app = createContainer({ config: { dbPath: ':memory:' }, logger: new SilentLogger() });
   const tools = new TrackerToolRegistry(app); let calls = 0;
@@ -50,11 +50,6 @@ test('worker publishes partial notes before crash, resumes same stage conversati
       if (result.isError) throw new Error(text); return JSON.parse(text) as T;
     } }, 'resume-fixture', fixture.executor, new Runners());
     await worker().tick();
-    assert.equal(app.automationService.detail(run.id).run.status, 'failed');
-    const memory = app.automationService.detail(run.id).run.stageMemory!;
-    assert.equal(memory.conversationId, 'analyst-session'); assert.ok(memory.note);
-    assert.equal(app.automationService.detail(run.id).events.filter(e => e.kind === 'checkpoint').length, 1);
-    app.automationService.resume(run.id); await worker().tick();
     assert.equal(app.automationService.detail(run.id).run.status, 'review');
     assert.equal(calls, 4);
     assert.equal(app.automationService.detail(run.id).events.filter(e => e.kind === 'checkpoint').length, 1, 'No replay duplicates');

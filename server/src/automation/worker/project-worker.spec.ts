@@ -21,14 +21,17 @@ test('preview patch applies over the current base without moving HEAD and rolls 
     const head = (await fixture.git(['rev-parse', 'HEAD'])).trim();
     const worker = new ProjectWorker({ async call() { throw new Error('Unexpected RPC'); } }, 'preview-fixture');
     const execute = (rollback: boolean) => worker.execute({ action: ProjectAction.PreviewPatch, path: fixture.repository,
-      previewPatch: { runId: 'fixture', head: source.sourceSha, branch: 'master', rollback } });
-    await execute(false);
+      previewPatch: { runId: 'fixture', head: source.sourceSha, branch: 'master', rollback,
+        deployment: [{ command: process.execPath, args: ['-e',
+          "const patched = require('node:fs').readFileSync('a.txt','utf8').trim() === '1'; require('node:assert').equal(patched, " + !rollback + ")"] }],
+      } });
+    assert.equal((await execute(false)).deploymentError, undefined);
     assert.equal((await fixture.git(['rev-parse', 'HEAD'])).trim(), head);
     assert.match(await fixture.git(['diff', '--cached', '--name-only']), /^a\.txt\s*$/);
     await writeFile(path.join(fixture.repository, 'a.txt'), 'user edit\n');
     await assert.rejects(execute(true), /изменилась/);
     await fixture.git(['restore', '--worktree', '--', 'a.txt']);
-    await execute(true);
+    assert.equal((await execute(true)).deploymentError, undefined);
     assert.equal((await fixture.git(['status', '--porcelain'])).trim(), '');
     assert.equal((await fixture.git(['rev-parse', 'HEAD'])).trim(), head);
   } finally { await fixture.dispose(); }
@@ -81,6 +84,7 @@ test('host worker browses folders, reads branches/scripts and creates branch wit
     assert.ok(app.automationService.projects.get(request.id).result!.directories!.some((entry) => entry.name === 'project with spaces'));
     const inspected = await worker.execute({ action: ProjectAction.Inspect, path: repo });
     assert.deepEqual(inspected.branches, ['main']); assert.deepEqual(inspected.scripts, ['test', 'build:web']);
+    assert.deepEqual(inspected.scriptBodies, { test: 'node --test', 'build:web': 'echo build' });
     const create = app.automationService.projects.enqueue({ action: ProjectAction.CreateBranch, path: repo, baseBranch: 'main', newBranch: 'feature/selected' });
     await worker.tick();
     const result = app.automationService.projects.get(create.id);

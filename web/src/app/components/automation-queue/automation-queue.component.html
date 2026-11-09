@@ -407,7 +407,7 @@
                     </div>
                   }
                 }
-                <p>Накопленный вход: {{ budget.input | number }} / {{ budget.limit | number }} ({{ budget.percent }}%).</p>
+                <p>Вход в бюджете: {{ budget.input | number }} / {{ budget.limit | number }} ({{ budget.percent }}%). Полный вход: {{ budget.totalInput | number }}.</p>
                 @if (budget.cached !== undefined) {
                   <p>Чтение кеша: {{ budget.cached | number }} · без чтения кеша: {{ budget.nonCached | number }}.</p>
                 } @else { <p>Разделение входа по кешу: нет полных данных.</p> }

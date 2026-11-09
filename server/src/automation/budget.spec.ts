@@ -36,7 +36,7 @@ test('resume can replace only the failed stage using a configured profile for th
   } finally { app.close(); }
 });
 
-test('run budgets survive resume, include cached input once, and fence new agent calls', () => {
+test('run budgets survive resume, exclude cache reads, and fence new agent calls', () => {
   let now = '2026-10-25T00:00:00.000Z';
   const app = createContainer({ config: { dbPath: ':memory:' }, clock: { now: () => now }, logger: new SilentLogger() });
   try {
@@ -117,7 +117,7 @@ test('token budget blocks new calls at exact boundary and blocked verdict never 
       const run = service.claim('fixture')!; const token = run.leaseToken!;
       const attempt = service.beginStage(run.id, token);
       if (verdict === 'blocked') {
-        service.usage(run.id, token, attempt, { inputTokens: 100, cachedInputTokens: 100, outputTokens: 0,
+        service.usage(run.id, token, attempt, { inputTokens: 200, cachedInputTokens: 100, outputTokens: 0,
           source: 'codex-json', reportedRequests: 1, missingRequests: 0 }, true);
         assert.throws(() => service.beginStage(run.id, token), /input token limit/);
       }

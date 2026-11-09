@@ -579,7 +579,24 @@
               </div>
             </div>
           </div>
+          <section aria-label="Ресурсы Ollama">
+            <h4>Ресурсы Ollama</h4>
+            @if (ollamaConnections.length) {
+              <label for="ollama-server">Сервер Ollama
+                <p-select [options]="ollamaConnections" optionLabel="label" optionValue="id" [(ngModel)]="ollamaConnectionId" inputId="ollama-server" placeholder="Выберите подключение" appendTo="body">
+                  <ng-template pTemplate="item" let-connection>{{ connection.label }} · {{ connection.baseUrl }}</ng-template>
+                </p-select>
+              </label>
+              <label>Имя модели <input pInputText [(ngModel)]="ollamaModel" placeholder="gemma4:26b" /></label>
+              <p-button label="Выгрузить модель" severity="warn" size="small"
+                [disabled]="!host.online || projectBusy || !ollamaConnectionId || !ollamaModel.trim()" (onClick)="unloadOllama()" />
+            } @else {
+              <p>Добавьте подключение Ollama в настройках моделей, указав адрес нужного сервера.</p>
+            }
+          </section>
         </div>
+
+
       }
 
       <!-- ================================================================= -->
@@ -639,8 +656,7 @@
                   <span>Папка Git-проекта на worker <i class="pi pi-info-circle help-icon" [pTooltip]="fieldTooltips['repositoryPath']"></i></span>
                   <input pInputText [disabled]="projectBusy" [ngModel]="settings.repositoryPath" (ngModelChange)="setProjectPath($event)" (blur)="readProjectIfNeeded($event)" (keydown.enter)="readProjectIfNeeded()" placeholder="E:\projects\my-app" [pTooltip]="fieldTooltips['repositoryPath']" />
                 </label>
-                <p-button data-project-picker [label]="host.online ? 'Выбрать папку' : 'Подключить и выбрать'" severity="secondary" size="small" icon="pi pi-folder-open" [disabled]="projectBusy || !launchCommand" (onClick)="pickFolder()" />
-                <p-button data-project-picker label="Обзор каталогов" severity="secondary" size="small" icon="pi pi-search" [disabled]="projectBusy || !host.online" (onClick)="browse(settings.repositoryPath)" />
+                <p-button data-project-picker [label]="host.online ? 'Выбрать папку' : 'Подключить и выбрать'" severity="secondary" size="small" icon="pi pi-folder-open" [disabled]="projectBusy || (!host.online && !launchCommand)" (onClick)="pickFolder()" />
                 <p-button data-project-picker label="Прочитать проект" severity="secondary" size="small" icon="pi pi-refresh" [disabled]="projectBusy || !host.online || !settings.repositoryPath" (onClick)="inspect()" />
               </div>
 
@@ -651,21 +667,19 @@
                 </div>
               }
 
-              @if (browserOpen && directory) {
-                <fieldset class="directory-browser" aria-label="Папки на worker">
+              @if (browserOpen) {
+                <fieldset class="directory-browser" aria-label="Папки на компьютере воркера">
                   <div class="browser-header">
-                    <strong>📁 {{ directory.path }}</strong>
+                    <strong>{{ selectedFolder?.data }}</strong>
                     <div class="browser-actions">
-                      <button pButton severity="secondary" size="small" [disabled]="projectBusy || directory.parent === directory.path" (click)="browse(directory.parent)">↑ Выше</button>
-                      <button pButton severity="primary" size="small" [disabled]="projectBusy" (click)="chooseDirectory()">Выбрать эту папку</button>
-                      <button pButton severity="secondary" [text]="true" size="small" (click)="browserOpen = false">Закрыть</button>
+                      <p-button label="На уровень выше" severity="secondary" size="small" [disabled]="projectBusy || !parentFolder" (onClick)="browse(parentFolder)" />
+                      <p-button label="Домашняя папка" severity="secondary" size="small" [disabled]="projectBusy" (onClick)="browse()" />
+                      <p-button label="Выбрать эту папку" size="small" [disabled]="projectBusy || !selectedFolder" (onClick)="chooseDirectory()" />
+                      <p-button label="Закрыть" severity="secondary" size="small" [text]="true" (onClick)="browserOpen = false" />
                     </div>
                   </div>
-                  <div class="directories-grid">
-                    @for (entry of directory.directories; track entry.path) {
-                      <button type="button" class="dir-btn" [disabled]="projectBusy" (click)="browse(entry.path)">📁 {{ entry.name }}</button>
-                    }
-                  </div>
+                  <p-tree class="directory-tree" [value]="folderNodes" selectionMode="single" [(selection)]="selectedFolder"
+                    [loading]="projectBusy" (onNodeExpand)="expandFolder($event.node)" />
                 </fieldset>
               }
 
@@ -685,29 +699,18 @@
                 </label>
               </div>
 
-              <section aria-label="Ресурсы Ollama">
-                <h4>Ресурсы Ollama</h4>
-                @if (ollamaConnections.length) {
-                  <label>Сервер Ollama
-                    <select [(ngModel)]="ollamaConnectionId">
-                      <option value="">Выберите подключение</option>
-                      @for (connection of ollamaConnections; track connection.id) {
-                        <option [value]="connection.id">{{ connection.label }} · {{ connection.baseUrl }}</option>
-                      }
-                    </select>
-                  </label>
-                  <label>Имя модели <input pInputText [(ngModel)]="ollamaModel" placeholder="gemma4:26b" /></label>
-                  <p-button label="Выгрузить модель" severity="warn" size="small"
-                    [disabled]="!host.online || projectBusy || !ollamaConnectionId || !ollamaModel.trim()" (onClick)="unloadOllama()" />
-                } @else {
-                  <p>Добавьте подключение Ollama в настройках моделей, указав адрес нужного сервера.</p>
-                }
-              </section>
-
               <section aria-label="Паспорт проекта">
+                <h4>Паспорт проекта</h4>
+                <p>Воркер исследует выбранную ветку Git без подключения модели.</p>
                 <p-button label="Исследовать проект" severity="secondary" size="small" icon="pi pi-search"
                   [disabled]="projectBusy || !host.online || !settings.repositoryPath.trim() || !settings.baseBranch.trim()"
                   (onClick)="researchProject()" />
+                <p-button label="Создать задачу на документацию" icon="pi pi-file-edit" severity="secondary" size="small"
+                  [disabled]="busy || !settings.repositoryPath.trim()" (onClick)="createDocumentationTask()" />
+                <p role="status">{{ researchStatus }}</p>
+                @if (researchError) {
+                  <p role="alert">Исследование завершилось ошибкой. {{ researchError }}</p>
+                }
                 @if (projectPassport; as passport) {
                   <h4>Паспорт проекта · черновик</h4>
                   <p>{{ passport.branch }} · <code>{{ passport.commit }}</code></p>
@@ -777,6 +780,41 @@
             </div>
             <div class="card-body">
               <div class="commands-section">
+                <h5>Скрипты из package.json</h5>
+                <p-button label="Перечитать package.json" icon="pi pi-refresh" severity="secondary" size="small"
+                  [disabled]="projectBusy || !host.online || !settings.repositoryPath.trim()" (onClick)="refreshNpmScripts()" />
+                @if (npmScriptPath === settings.repositoryPath && npmScriptPath) {
+                  @if (npmScripts.length) {
+                    <label for="npm-script">Скрипт
+                      <p-select [options]="npmScripts" optionLabel="description" optionValue="id" [(ngModel)]="npmScriptId" inputId="npm-script" placeholder="Выберите скрипт" [filter]="true" appendTo="body">
+                        <ng-template pTemplate="item" let-script>
+                          <div>
+                            <strong>{{ script.description }}</strong>
+                            @if (script.body) { <div class="card-hint">{{ script.body }}</div> }
+                          </div>
+                        </ng-template>
+                      </p-select>
+                    </label>
+                    <label for="npm-phase">Фаза
+                      <p-select [options]="npmScriptPhases" optionLabel="label" optionValue="value" [(ngModel)]="npmScriptPhase" inputId="npm-phase" appendTo="body">
+                        <ng-template pTemplate="item" let-phase>
+                          <div>
+                            <strong>{{ phase.label }}</strong>
+                            <div class="card-hint">{{ phase.description }}</div>
+                          </div>
+                        </ng-template>
+                      </p-select>
+                    </label>
+                    @if (selectedNpmScript?.body; as body) {
+                      <p class="card-hint">Выполняет <code>{{ body }}</code></p>
+                    }
+                    <p-button label="Добавить в выбранную фазу" size="small" (onClick)="addNpmScript()"
+                      [disabled]="!selectedNpmScript || commandSelected(selectedNpmScript.value, npmScriptPhase)" />
+                  } @else {
+                    <p>В package.json рабочей копии скрипты не найдены.</p>
+                  }
+                }
+                <p class="card-hint">Перечитывание обновляет список скриптов. Уже выбранные команды можно убрать ниже.</p>
                 <h5><span class="phase-badge setup-badge">[Setup]</span> Подготовка рабочей папки (npm ci) <i class="pi pi-info-circle help-icon" [pTooltip]="fieldTooltips['setupCommands']"></i></h5>
                 <div class="chips-row">
                   @for (preset of setupPresets; track preset.id) {
@@ -860,6 +898,10 @@
                       <div class="custom-cmd-row">
                         <input pInputText [(ngModel)]="check.command" placeholder="npm" [pTooltip]="'Исполняемая команда пост-операции'" />
                         <input pInputText class="grow-field" [ngModel]="json(check.args)" (ngModelChange)="setArgs(i, $event, false, 'postOp')" placeholder='["run", "build"]' [pTooltip]="'Аргументы в формате JSON-массива строк'" />
+                        <label [for]="'post-op-background-' + i" pTooltip="При повторном запуске этой команды SAT заменит предыдущий процесс">
+                          <p-checkbox [inputId]="'post-op-background-' + i" [binary]="true" [(ngModel)]="check.background" />
+                          Фоновый процесс
+                        </label>
                         <button pButton severity="secondary" size="small" type="button" icon="pi pi-times" (click)="settings.postOperations?.splice(i, 1)"></button>
                       </div>
                     }
@@ -890,12 +932,12 @@
 <!-- Модалка ожидания подключения компьютера для выбора папки -->
 <p-dialog header="Подключить компьютер для выбора папки" [visible]="folderConnectOpen" (visibleChange)="!$event && cancelFolderConnection()"
   [modal]="true" appendTo="body" [style]="{width: '44rem', maxWidth: 'calc(100vw - 2rem)'}">
-  <p>Системное окно выбора открывается на компьютере с подключённым host. Браузер сам не может запустить локальный процесс.</p>
+  <p>После подключения SAT покажет каталоги компьютера воркера прямо в этой панели.</p>
   <p class="hint">На компьютере нужны Node.js 22+, Docker CLI, Git и CodeGraph. Docker должен быть запущен.</p>
   <ol class="folder-connect-steps">
     <li>Скопируйте команду ниже.</li>
     <li>Выполните её в PowerShell на компьютере с проектом.</li>
-    <li>После подключения окно выбора папки откроется автоматически.</li>
+    <li>После подключения список каталогов откроется автоматически.</li>
   </ol>
   <label class="field-label-block">
     <span>Команда подключения</span>

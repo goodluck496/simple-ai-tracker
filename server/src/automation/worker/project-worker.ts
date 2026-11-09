@@ -1,6 +1,7 @@
 import { readdir, readFile, stat, realpath, writeFile, unlink } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { PostOperationRunner } from './post-operation-runner.js';
 import { ProcessExecutor } from '../runners/process-executor.js';
 import type { TrackerChannel } from './mcp-client.js';
 import { AutomationTool } from '../../../../shared/automation/protocol.js';
@@ -50,6 +51,20 @@ export class ProjectWorker {
     if (input.action === ProjectAction.PreviewPatch) {
       if (!input.previewPatch) throw new Error('Не указан патч запуска.');
       await this.previewPatch(directory, input.previewPatch);
+      const deployment = input.previewPatch.deployment;
+      if (deployment?.length) {
+        const signal = AbortSignal.timeout(PROJECT_LIMITS.deploymentMs - PROJECT_LIMITS.requestMs);
+        const common = (await this.git(directory, ['rev-parse', '--path-format=absolute', '--git-common-dir'])).trim();
+        const operations = new PostOperationRunner(this.executor);
+        for (const [index, command] of deployment.entries()) {
+          try {
+            await operations.run(command, directory, common, signal);
+          } catch (cause) {
+            const diagnostic = cause instanceof Error ? cause.message : String(cause);
+            return { path: directory, deploymentError: `Пост-операция ${index + 1} из ${deployment.length}: ${diagnostic.slice(0, 2000)}` };
+          }
+        }
+      }
       return { path: directory };
     }
     if (input.action === ProjectAction.Diff) {
@@ -64,7 +79,11 @@ export class ProjectWorker {
     }
     if (input.action === ProjectAction.Browse) {
       const entries = (await readdir(directory, { withFileTypes: true })).filter((entry) => entry.isDirectory() && !entry.name.startsWith('.')).sort((a, b) => a.name.localeCompare(b.name));
-      return { path: directory, parent: path.dirname(directory), truncated: entries.length > PROJECT_LIMITS.maxEntries,
+      const drives = process.platform === 'win32' ? (await Promise.all(Array.from('ABCDEFGHIJKLMNOPQRSTUVWXYZ', async letter => {
+        const root = letter + ':/';
+        try { return (await stat(root)).isDirectory() ? root : undefined; } catch { return undefined; }
+      }))).filter((root): root is string => root !== undefined) : undefined;
+      return { path: directory, parent: path.dirname(directory), drives, truncated: entries.length > PROJECT_LIMITS.maxEntries,
         directories: entries.slice(0, PROJECT_LIMITS.maxEntries).map((entry) => ({ name: entry.name, path: path.join(directory, entry.name) })) };
     }
     const root = (await this.git(directory, ['rev-parse', '--show-toplevel'])).trim();
@@ -80,16 +99,19 @@ export class ProjectWorker {
     }
     const branches = (await this.git(root, ['for-each-ref', '--format=%(refname:short)', 'refs/heads/'])).trim().split('\n').map((v) => v.trim()).filter(Boolean);
     if (branches.length > PROJECT_LIMITS.maxEntries) throw new Error('Слишком много веток для выбора.');
-    let scripts: string[] = []; let hasLockfile = false;
+    let scriptBodies: Record<string, string> = {}; let hasLockfile = false;
     try {
       const file = path.join(root, 'package.json');
       if ((await stat(file)).size <= PROJECT_LIMITS.packageBytes) {
         const json = JSON.parse(await readFile(file, 'utf8')) as { scripts?: Record<string, unknown> };
-        scripts = Object.entries(json.scripts ?? {}).filter(([, value]) => typeof value === 'string').map(([key]) => key).slice(0, PROJECT_LIMITS.maxEntries);
+        scriptBodies = Object.fromEntries(Object.entries(json.scripts ?? {})
+          .filter((entry): entry is [string, string] => entry[0].length <= 200 && typeof entry[1] === 'string')
+          .slice(0, PROJECT_LIMITS.maxEntries)
+          .map(([name, value]) => [name, value.length > 300 ? value.slice(0, 300) + '…' : value]));
       }
     } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw new Error('Не удалось прочитать package.json проекта.'); }
     try { await stat(path.join(root, 'package-lock.json')); hasLockfile = true; } catch { /* non-npm projects have no lockfile */ }
-    return { path: root, branches, currentBranch: (await this.git(root, ['branch', '--show-current'])).trim(), scripts, hasLockfile };
+    return { path: root, branches, currentBranch: (await this.git(root, ['branch', '--show-current'])).trim(), scripts: Object.keys(scriptBodies), scriptBodies, hasLockfile };
   }
   private async previewPatch(cwd: string, patch: PreviewPatch): Promise<void> {
     const git = async (...args: string[]) => (await this.git(cwd, args)).trimEnd();
@@ -101,7 +123,11 @@ export class ProjectWorker {
     if (patch.rollback) {
       let receipt: { runId: string; base: string; tree: string; branch: string };
       try { receipt = JSON.parse(await readFile(file, 'utf8')); }
-      catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return; throw error; }
+      catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+        if (patch.deployment?.length && (status || await git('branch', '--show-current') !== patch.branch)) {
+          throw new Error('Для развёртывания после отката нужна чистая базовая ветка.');
+        }
+        return; }
       if (receipt.runId !== patch.runId || receipt.base !== base || receipt.branch !== await git('branch', '--show-current')
         || !sha.test(receipt.tree) || status.split('\n').some(line => line && line[1] !== ' ')) {
         throw new Error('Рабочая копия изменилась после примерки. Сохраните правки перед откатом.');

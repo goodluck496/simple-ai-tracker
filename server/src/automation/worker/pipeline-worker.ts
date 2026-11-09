@@ -2,6 +2,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { AgentRole, RunStatus, AgentVerdict, MergePolicy, READ_ONLY_AGENT_ROLES, AGENT_VERDICTS, AUTOMATION_TIMING, AUTOMATION_LIMITS, type AgentOutcome, type AgentRun } from '../../../../shared/automation/contracts.js';
 import type { TrackerChannel } from './mcp-client.js';
+import { PostOperationRunner } from './post-operation-runner.js';
 import { ProcessExecutor, ProcessExecutionError } from '../runners/process-executor.js';
 import { AgentRunnerRegistry } from '../runners/registry.js';
 import { AutomationTool } from '../../../../shared/automation/protocol.js';
@@ -182,6 +183,8 @@ export class PipelineWorker {
       const featureCwd = cwd;
       while (run.status === RunStatus.Running && run.stage < run.settings.pipeline.length) {
         controller.signal.throwIfAborted();
+        // The previous attempt can publish its native conversation while closing the journal.
+        if (recovery) run = await this.channel.call<AgentRun>(AutomationTool.Heartbeat, { id: run.id, leaseToken: token });
         const child = Decomposition.child(run);
         cwd = child ? `${featureCwd}-child-${child.key}` : featureCwd;
         if (child) {
@@ -356,9 +359,9 @@ export class PipelineWorker {
               if (metering) {
                 metering = { ...metering, usage, terminal: state?.terminal };
                 const previous = (run!.usageAttempts ?? []).filter(a => a.id !== metering!.attemptId);
-                const total = previous.reduce((sum, a) => sum + (a.usage?.inputTokens ?? 0), 0) + usage.inputTokens;
+                const total = RunBudget.usedInput(previous) + RunBudget.chargeableInput(usage);
                 if (!run!.trustedExecution && total >= RunBudget.limits(run!).input && !state?.terminal) {
-                  budgetError = `Run stopped: input token budget exhausted (${total}; cached included).`;
+                  budgetError = `Run stopped: input token budget exhausted (${total}; reported cache reads excluded).`;
                   controller.abort();
                 }
               }
@@ -481,7 +484,7 @@ export class PipelineWorker {
         if (isPipelineComplete && run.settings.postOperations?.length) {
           for (const op of run.settings.postOperations) {
             await phase(RunPhase.PostOp, `Пост-операция: ${op.command} ${op.args.join(' ')}`);
-            await this.executor.run({ ...op, cwd, env: TaskEnvironment.create(), signal: controller.signal, compactProgress: true, onProgress: progress });
+            await new PostOperationRunner(this.executor).run(op, cwd, common, controller.signal, progress);
           }
         }
         run = await this.channel.call<AgentRun>(AutomationTool.CompleteStage, { id: run.id, leaseToken: token, outcome, branch, commitSha: sha,

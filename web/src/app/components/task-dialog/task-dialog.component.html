@@ -329,11 +329,15 @@
                     @if (card.status === 'review') {
                       <section class="review-actions" aria-label="Приёмка задачи">
                         <h4>Приёмка задачи</h4>
+                        <label for="deploy-preview-patch">
+                          <p-checkbox inputId="deploy-preview-patch" [binary]="true" [(ngModel)]="deployPreviewPatch" [disabled]="store.busy() || !!acceptance()" />
+                          Выполнить пост-операции развёртывания после накатки или отката
+                        </label>
                         <div class="review-action-row">
                           <p-button label="Накатить патч" icon="pi pi-file-edit" severity="secondary" size="small"
-                            [disabled]="store.busy() || !!acceptance()" (onClick)="previewPatch(false)" />
+                            [disabled]="store.busy() || !!acceptance()" (onClick)="previewPatch(false, deployPreviewPatch)" />
                           <p-button label="Откатить патч" icon="pi pi-undo" severity="secondary" size="small"
-                            [disabled]="store.busy() || !!acceptance()" (onClick)="previewPatch(true)" />
+                            [disabled]="store.busy() || !!acceptance()" (onClick)="previewPatch(true, deployPreviewPatch)" />
                           <p-button label="Отправить замечание и вернуть" icon="pi pi-replay" severity="secondary" size="small"
                             [disabled]="store.busy() || commentUploading() || !!acceptance()" (onClick)="returnWithFeedback(reviewFeedbackInput)" />
                           <p-button [label]="acceptance()?.status === 'queued' ? 'Слияние в очереди' : acceptance()?.status === 'integrating' ? 'Выполняется слияние' : 'Принять и слить'"

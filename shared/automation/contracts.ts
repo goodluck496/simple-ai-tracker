@@ -62,6 +62,7 @@ export interface AgentProfile {
 }
 
 export interface CheckCommand { command: string; args: string[]; }
+export interface PostOperation extends CheckCommand { background?: boolean; }
 
 export interface AutomationSettings {
   repositoryPath: string;
@@ -71,7 +72,7 @@ export interface AutomationSettings {
   pipeline: string[];
   checks: CheckCommand[];
   setup: CheckCommand[];
-  postOperations?: CheckCommand[];
+  postOperations?: PostOperation[];
   artifactPaths: string[];
   timeoutMinutes: number;
   maxRevisions: number;

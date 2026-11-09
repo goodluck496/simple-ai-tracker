@@ -1006,6 +1006,7 @@
 
   .browser-header {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
     justify-content: space-between;
     gap: 0.5rem;
@@ -1014,34 +1015,14 @@
 
   .browser-actions {
     display: flex;
+    flex-wrap: wrap;
     gap: 0.35rem;
   }
 
-  .directories-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(11rem, 1fr));
-    gap: 0.35rem;
-    max-height: 12rem;
-    overflow-y: auto;
-
-    .dir-btn {
-      text-align: left;
-      padding: 0.4rem 0.6rem;
-      border-radius: 0.3rem;
-      background: rgba(255, 255, 255, 0.04);
-      border: 1px solid var(--p-content-border-color, #334155);
-      color: inherit;
-      font-size: 0.75rem;
-      cursor: pointer;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-
-      &:hover:not(:disabled) {
-        background: rgba(56, 189, 248, 0.12);
-        border-color: #38bdf8;
-      }
-    }
+  .directory-tree {
+    display: block;
+    max-height: 18rem;
+    overflow: auto;
   }
 }
 

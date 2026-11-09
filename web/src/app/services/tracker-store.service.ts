@@ -495,11 +495,8 @@ export class TrackerStore {
       return true;
     })) === true;
   }
-  public async previewPatch(id: string, rollback: boolean): Promise<boolean> {
-    return (await this.run(async () => {
-      await firstValueFrom(this.api.previewPatch(id, rollback));
-      return true;
-    })) === true;
+  public async previewPatch(id: string, rollback: boolean, deploy: boolean) {
+    return this.run(() => firstValueFrom(this.api.previewPatch(id, rollback, deploy)));
   }
 
   public async moveTask(

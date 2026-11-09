@@ -80,14 +80,14 @@ export class TrackerApiService {
   public previewPatchActive(id: string): Observable<{ active: boolean; canResumeRework: boolean; acceptance: { status: RunStatus; summary: string } | null }> {
     return this.http.get<{ active: boolean; canResumeRework: boolean; acceptance: { status: RunStatus; summary: string } | null }>(`/api/automation/tasks/${encodeURIComponent(id)}/preview-patch`);
   }
-  public previewPatch(id: string, rollback: boolean): Observable<ProjectRequest> {
-    return this.http.post<ProjectRequest>(`/api/automation/tasks/${encodeURIComponent(id)}/preview-patch`, { rollback }).pipe(
+  public previewPatch(id: string, rollback: boolean, deploy = false): Observable<ProjectRequest> {
+    return this.http.post<ProjectRequest>(`/api/automation/tasks/${encodeURIComponent(id)}/preview-patch`, { rollback, deploy }).pipe(
       switchMap(created => timer(0, PROJECT_LIMITS.pollMs).pipe(
         exhaustMap(() => this.http.get<ProjectRequest>(`/api/automation/project-requests/${created.id}`)),
         filter(request => request.status === ProjectRequestStatus.Completed || request.status === ProjectRequestStatus.Failed),
         take(1),
       )),
-      timeout(PROJECT_LIMITS.requestMs + PROJECT_LIMITS.pollMs),
+      timeout((deploy ? PROJECT_LIMITS.deploymentMs : PROJECT_LIMITS.requestMs) + 10000),
       switchMap(request => request.status === ProjectRequestStatus.Completed ? of(request)
         : throwError(() => new Error(request.error ?? 'Операция с патчем не завершена.'))),
     );

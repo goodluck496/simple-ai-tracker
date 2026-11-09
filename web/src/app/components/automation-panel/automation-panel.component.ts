@@ -2,7 +2,9 @@ import { ChangeDetectorRef, Component, DestroyRef, ElementRef, EventEmitter, Inp
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { FormsModule, ReactiveFormsModule, FormControl } from '@angular/forms';
 import { HttpClient } from '@angular/common/http';
-import { exhaustMap, filter, firstValueFrom, last, lastValueFrom, switchMap, takeWhile, timeout, timer } from 'rxjs';
+import { exhaustMap, filter, firstValueFrom, last, lastValueFrom, switchMap, takeWhile, tap, timeout, timer, TimeoutError } from 'rxjs';
+import type { TreeNode } from 'primeng/api';
+import { TreeModule } from 'primeng/tree';
 import { SelectModule } from 'primeng/select';
 import { ButtonModule } from 'primeng/button';
 import { CheckboxModule } from 'primeng/checkbox';
@@ -23,6 +25,7 @@ import { ProjectAction, ProjectRequestStatus, PROJECT_LIMITS, SETUP_PRESETS, CHE
   type ProjectPassport, type ProjectInput, type ProjectRequest, type ProjectResult, type HostStatus, type CommandPreset } from '../../../../../shared/automation/project';
 import { CONNECTION_PRESETS, PROVIDER_OPTIONS, RUNNER_OPTIONS, ROLE_OPTIONS, STANDARD_TEAM_ROLES, type ConnectionPreset } from '../../../../../shared/automation/presets';
 import type { TaskSummary } from '../../models/tracker.models';
+import { TrackerApiService } from '../../services/tracker-api.service';
 import { WorkspaceService } from '../../services/workspace.service';
 import { WorkerLaunchCommand, DEFAULT_TRACKER_CONTAINER } from '../../../../../shared/automation/launch-command';
 import { AgentTeamProfiles, DEFAULT_ROLE_INSTRUCTIONS } from '../../../../../shared/automation/team-profiles';
@@ -30,7 +33,7 @@ import { TaskAutomationReadiness, TASK_STATUS_TITLES, TASK_SELECTION_LIMIT, type
 import { ModelCatalogKey, type ModelOption } from '../../../../../shared/automation/model-catalog';
 
 @Component({ selector: 'sat-automation-panel', standalone: true,
-  imports: [FormsModule, ReactiveFormsModule, SelectModule, ButtonModule, CheckboxModule, InputTextModule, TabsModule, AccordionModule, DialogModule, MultiSelectModule, TooltipModule],
+  imports: [TreeModule, FormsModule, ReactiveFormsModule, SelectModule, ButtonModule, CheckboxModule, InputTextModule, TabsModule, AccordionModule, DialogModule, MultiSelectModule, TooltipModule],
   templateUrl: './automation-panel.component.html', styleUrl: './automation-panel.component.scss' })
 export class AutomationPanelComponent implements OnInit {
   @Output() public readonly openQueue = new EventEmitter<string | null>();
@@ -162,6 +165,7 @@ export class AutomationPanelComponent implements OnInit {
   }
   public get selectedEligibility(): TaskReadiness | undefined { return this.taskOptions.find((option) => option.value === this.selectedTask)?.readiness; }
   private readonly http = inject(HttpClient);
+  private readonly trackerApi = inject(TrackerApiService);
   private readonly destroyRef = inject(DestroyRef);
   private readonly changeDetector = inject(ChangeDetectorRef);
   private readonly workspace = inject(WorkspaceService);
@@ -283,7 +287,23 @@ export class AutomationPanelComponent implements OnInit {
     for (const agent of this.settings.agents.filter(agent => agent.connectionId === connection.id)) this.selectConnection(agent);
   }
   public readonly setupPresets = SETUP_PRESETS;
-  public checkPresets: readonly CommandPreset[] = CHECK_PRESETS;
+  public readonly checkPresets = CHECK_PRESETS;
+  public npmScripts: (CommandPreset & { body?: string })[] = [];
+  public npmScriptPath = '';
+  public npmScriptId = '';
+  public readonly npmScriptPhases = [
+    { label: 'Подготовка', value: 'setup', description: 'Подготовить рабочую копию перед разработкой' },
+    { label: 'Проверки', value: 'checks', description: 'Проверить изменения, например собрать проект или запустить тесты' },
+    { label: 'Пост-операции', value: 'postOp', description: 'Выполнить действие после конвейера, например развернуть сборку' },
+  ];
+  public npmScriptPhase: 'setup' | 'checks' | 'postOp' = 'postOp';
+  public get selectedNpmScript() {
+    return this.npmScriptPath === this.settings.repositoryPath ? this.npmScripts.find(script => script.id === this.npmScriptId) : undefined;
+  }
+  public addNpmScript(): void {
+    const script = this.selectedNpmScript;
+    if (script && !this.commandSelected(script.value, this.npmScriptPhase)) this.toggleCommand(script.value, this.npmScriptPhase);
+  }
   public host: HostStatus = { online: false };
   public get executorReady(): boolean { return this.host.online && (!this.host.execution || this.host.execution.state === 'running'); }
   public get executorTitle(): string {
@@ -302,7 +322,9 @@ export class AutomationPanelComponent implements OnInit {
     return this.passport?.path === this.settings.repositoryPath && this.passport.branch === this.settings.baseBranch ? this.passport : null;
   }
   public browserOpen = false;
-  public directory: ProjectResult | null = null;
+  public parentFolder = '';
+  public folderNodes: TreeNode<string>[] = [];
+  public selectedFolder: TreeNode<string> | null = null;
   public branchOptions: string[] = [];
   public newBranch = '';
   public advancedCommands = false;
@@ -424,30 +446,76 @@ export class AutomationPanelComponent implements OnInit {
       await this.copyLaunchCommand();
       return;
     }
-    if (this.host.platform !== WorkerPlatform.Windows) { this.browse(''); return; }
-    this.notice = 'Выберите папку в системном окне на компьютере worker (ожидание до минуты).';
-    const result = await this.project({ action: ProjectAction.PickFolder, path: this.settings.repositoryPath }, (result) => {
-      if (result.cancelled) { this.notice = 'Выбор папки отменён. Путь не изменён.'; return; }
-      this.setProjectPath(result.path);
-    });
-    if (result && !result.cancelled && !this.destroyed) this.inspect();
+    this.browse(this.settings.repositoryPath.trim());
   }
   public readProjectIfNeeded(event?: FocusEvent): void {
     if (event?.relatedTarget instanceof Element && event.relatedTarget.closest('[data-project-picker]')) return;
     if (this.host.online && !this.projectBusy && this.settings.repositoryPath.trim() && this.inspectedPath !== this.settings.repositoryPath) this.inspect();
   }
-  public browse(path = ''): void { void this.project({ action: ProjectAction.Browse, path }, (result) => { this.directory = result; this.browserOpen = true; }); }
+  public browse(path = ''): void {
+    if (this.projectBusy) return;
+    this.notice = 'Читаем каталоги на компьютере воркера…';
+    void this.project({ action: ProjectAction.Browse, path }, result => {
+      this.parentFolder = result.parent !== result.path ? result.parent ?? '' : '';
+      const root = this.folderNode(result.path, result.path);
+      root.children = (result.directories ?? []).map(entry => this.folderNode(entry.name, entry.path));
+      root.expanded = true;
+      root.leaf = !root.children.length;
+      this.selectedFolder = root;
+      this.folderNodes = [root, ...(result.drives ?? []).filter(drive => drive.slice(0, 2).toLowerCase() !== result.path.toLowerCase().replace(/[\\/]$/, ''))
+        .map(drive => this.folderNode(drive, drive))];
+      this.browserOpen = true;
+    }).finally(() => {
+      if (this.notice === 'Читаем каталоги на компьютере воркера…') this.notice = '';
+      if (!this.destroyed) this.changeDetector.markForCheck();
+    });
+  }
   public inspect(): void { void this.project({ action: ProjectAction.Inspect, path: this.settings.repositoryPath }, (result) => this.applyProject(result)); }
+  public async createDocumentationTask(): Promise<void> {
+    await this.act(async () => {
+      const response = await firstValueFrom(this.trackerApi.createTask({
+        title: 'Исследовать проект и предложить документацию', type: 'task',
+        description: [
+          'Проверь существующие AGENTS.md, README, архитектурные документы, SKILL.md, конфиги запуска и CI.',
+          'Найди пробелы в описании архитектуры, запуска и отладки, принципов разработки и полезных референсов.',
+          'Подготовь в плане SAT полные черновики предлагаемых файлов или правок, укажи пути и источники в репозитории.',
+          'На первом этапе работай в режиме чтения. Верни вопрос о согласовании черновика. Дождись подтверждения пользователя и используй отредактированный им план перед записью файлов и коммитом.',
+        ].join('\n\n'),
+      }));
+      this.notice = `Создана задача ${response.task.id}. Откройте её и запустите этап аналитика для подготовки черновика.`;
+      await this.refresh();
+    });
+  }
+  public researchStatus = '';
+  public researchError = '';
   public researchProject(): void {
     const path = this.settings.repositoryPath;
     void this.project({ action: ProjectAction.Research, path, baseBranch: this.settings.baseBranch }, result => {
       if (!result.passport) throw new Error('Worker не вернул паспорт. Проверьте его версию.');
       if (this.settings.repositoryPath === path) this.settings.repositoryPath = result.path;
       this.passport = result.passport;
-      this.notice = 'Черновик паспорта сохранён в пространстве.';
+      this.researchStatus = 'Исследование завершено. Черновик паспорта сохранён.';
     });
   }
-  public chooseDirectory(): void { if (this.directory) { this.setProjectPath(this.directory.path); this.browserOpen = false; this.inspect(); } }
+  private folderNode(label: string, folder: string): TreeNode<string> {
+    return { label, data: folder, leaf: false, icon: 'pi pi-folder' };
+  }
+  public async expandFolder(node: TreeNode<string>): Promise<void> {
+    if (node.children || !node.data) return;
+    const result = await this.project({ action: ProjectAction.Browse, path: node.data }, result => {
+      node.children = (result.directories ?? []).map(entry => this.folderNode(entry.name, entry.path));
+      node.leaf = !node.children.length;
+    });
+    if (!result) node.expanded = false;
+    this.folderNodes = [...this.folderNodes];
+    if (!this.destroyed) this.changeDetector.markForCheck();
+  }
+  public chooseDirectory(): void {
+    if (!this.selectedFolder?.data) return;
+    this.setProjectPath(this.selectedFolder.data);
+    this.browserOpen = false;
+    this.inspect();
+  }
   public createBranch(): void {
     void this.project({ action: ProjectAction.CreateBranch, path: this.settings.repositoryPath, baseBranch: this.settings.baseBranch, newBranch: this.newBranch }, (result) => {
       this.applyProject(result); this.settings.baseBranch = this.newBranch; this.newBranch = ''; this.notice = 'Ветка создана без переключения рабочей папки. Сохраните настройки.';
@@ -457,26 +525,67 @@ export class AutomationPanelComponent implements OnInit {
     this.inspectedPath = result.path;
     this.settings.repositoryPath = result.path; this.branchOptions = result.branches ?? [];
     if (!this.branchOptions.includes(this.settings.baseBranch)) this.settings.baseBranch = result.currentBranch || this.branchOptions[0] || '';
-    this.checkPresets = (result.scripts ?? []).map((script) => ({ id: script, label: script,
-      description: `npm run ${script}`, value: { command: 'npm', args: script === 'test' ? ['test'] : ['run', script] } }));
+    this.applyNpmScripts(result);
     this.notice = 'Проект прочитан на worker. Выберите ветку и команды из package.json.';
+  }
+  public refreshNpmScripts(): void {
+    const path = this.settings.repositoryPath;
+    void this.project({ action: ProjectAction.Inspect, path }, result => {
+      if (this.settings.repositoryPath !== path) return;
+      this.applyNpmScripts(result, path);
+    });
+  }
+  private applyNpmScripts(result: ProjectResult, path = result.path): void {
+    this.npmScriptPath = path;
+    this.npmScripts = (result.scripts ?? []).map((script) => ({ id: script, label: script,
+      body: result.scriptBodies && Object.hasOwn(result.scriptBodies, script) ? result.scriptBodies[script] : undefined,
+      description: script === 'test' ? 'npm test' : `npm run ${script}`, value: { command: 'npm', args: script === 'test' ? ['test'] : ['run', script] } }));
+    if (!this.npmScripts.some(script => script.id === this.npmScriptId)) this.npmScriptId = '';
   }
   private async project(input: ProjectInput, apply: (result: ProjectResult) => void): Promise<ProjectResult | undefined> {
     if (this.projectBusy) return;
+    const research = input.action === ProjectAction.Research;
+    if (research) {
+      this.researchStatus = 'Отправляем запрос на исследование…';
+      this.researchError = '';
+    }
     this.projectBusy = true; this.error = ''; this.changeDetector.markForCheck();
     try {
       const request = await lastValueFrom(this.http.post<ProjectRequest>('/api/automation/project-requests', input).pipe(
+        tap(() => {
+          if (research) {
+            this.researchStatus = 'Запрос в очереди. Ожидаем воркер…';
+            this.changeDetector.markForCheck();
+          }
+        }),
         switchMap((created) => timer(PROJECT_LIMITS.pollMs, PROJECT_LIMITS.pollMs).pipe(
           exhaustMap(() => this.http.get<ProjectRequest>(`/api/automation/project-requests/${created.id}`)),
         )),
+        tap(value => {
+          if (research && value.status === ProjectRequestStatus.Running) {
+            this.researchStatus = `Воркер исследует ветку «${input.baseBranch}» и собирает паспорт…`;
+            this.changeDetector.markForCheck();
+          }
+        }),
         takeWhile((value) => value.status === ProjectRequestStatus.Queued || value.status === ProjectRequestStatus.Running, true),
-        last(), timeout({ first: PROJECT_LIMITS.requestMs + PROJECT_LIMITS.pollMs }), takeUntilDestroyed(this.destroyRef),
+        last(), timeout({ first: PROJECT_LIMITS.requestMs + 10000 }), takeUntilDestroyed(this.destroyRef),
       ));
       if (this.destroyed) return;
       if (request.error || !request.result) throw new Error(request.error || 'Worker не вернул результат.');
       apply(request.result);
       return request.result;
-    } catch (error) { if (!this.destroyed) this.error = this.errorMessage(error); }
+    } catch (error) {
+      if (!this.destroyed) {
+        this.error = this.errorMessage(error);
+        if (research) {
+          this.researchError = error instanceof TimeoutError
+            ? `${this.researchStatus} Интерфейс не получил итоговый статус от SAT. Повторите запрос, если паспорт не появился.`
+            : this.error;
+          this.error = this.researchError;
+          this.researchStatus = '';
+        }
+      }
+    }
     finally { this.projectBusy = false; if (!this.destroyed) this.changeDetector.markForCheck(); }
   }
   public get connectionOptions() {

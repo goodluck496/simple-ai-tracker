@@ -618,16 +618,19 @@ export class AutomationService {
     return this.projects.enqueue({ action: ProjectAction.Diff, path: run.checkout?.repositoryRoot ?? run.settings.repositoryPath, diff: { head, base } }, true);
   }
 
-  public requestPreviewPatch(taskId: string, rollback: boolean) {
+  public requestPreviewPatch(taskId: string, rollback: boolean, deploy = false) {
     return this.runs.db.transaction(() => {
       const run = this.runs.list(taskId)[0];
       if (!run?.commitSha || !run.checkout || run.status !== RunStatus.Review || run.stage < run.settings.pipeline.length
         || this.tasks.getTaskCard(taskId).status !== TaskStatus.Review || this.runs.hasActive(taskId)) {
         throw new TrackerError('CONFLICT', 'Для патча нужен завершённый запуск до слияния.');
       }
+      const deployment = deploy ? this.settings().postOperations : undefined;
+      if (deploy && !deployment?.length) throw new TrackerError('VALIDATION_FAILED', 'Настройте команды в «Проект и проверки → Пост-операции».');
+      if (this.projects.previewPatchPending(run.id)) throw new TrackerError('CONFLICT', 'Операция с патчем уже выполняется.');
       if (!rollback && this.projects.hasPreviewPatch(run.id)) throw new TrackerError('CONFLICT', 'Патч уже примеряется или накатан.');
       return this.projects.enqueue({ action: ProjectAction.PreviewPatch, path: run.checkout.repositoryRoot,
-        previewPatch: { runId: run.id, head: run.commitSha, branch: run.settings.baseBranch, rollback } }, true);
+        previewPatch: { runId: run.id, head: run.commitSha, branch: run.settings.baseBranch, rollback, deployment } }, true);
     });
   }
 

@@ -13,6 +13,10 @@ export class ProjectRequests {
   public constructor(private readonly meta: MetaRepository, private readonly db: SqlDatabase, private readonly now: () => number = Date.now) {}
   public passport(): ProjectPassport | undefined { return this.read().passport; }
   public status(): HostStatus { const state = this.read(); return { online: !!state.lastSeen && this.now() - state.lastSeen < PROJECT_LIMITS.requestMs, workerId: state.workerId, lastSeen: state.lastSeen, platform: state.platform, execution: state.execution, executionDesired: state.executionDesired }; }
+  public previewPatchPending(runId: string): boolean {
+    return this.read().requests.some(request => request.previewPatch?.runId === runId
+      && (request.status === ProjectRequestStatus.Queued || request.status === ProjectRequestStatus.Running));
+  }
   public hasPreviewPatch(runId: string): boolean {
     const state = this.read();
     return !!state.previewRuns?.includes(runId) || state.requests.some(request => request.previewPatch?.runId === runId
@@ -91,8 +95,14 @@ export class ProjectRequests {
   }
   private read(): HostState {
     const state: HostState = JSON.parse(this.meta.get(STATE_KEY) ?? '{"requests":[]}');
-    for (const request of state.requests) if ((request.status === ProjectRequestStatus.Queued || request.status === ProjectRequestStatus.Running) && this.now() - request.createdAt > (request.action === ProjectAction.Cleanup ? PROJECT_LIMITS.cleanupMs : PROJECT_LIMITS.requestMs)) {
-      request.status = ProjectRequestStatus.Failed; request.error = 'Worker не ответил за минуту. Проверьте, что он запущен для этого пространства, и повторите запрос.'; delete request.token;
+    for (const request of state.requests) if ((request.status === ProjectRequestStatus.Queued || request.status === ProjectRequestStatus.Running) && this.now() - request.createdAt > (request.action === ProjectAction.Cleanup ? PROJECT_LIMITS.cleanupMs : request.previewPatch?.deployment ? PROJECT_LIMITS.deploymentMs : PROJECT_LIMITS.requestMs)) {
+      const wasQueued = request.status === ProjectRequestStatus.Queued;
+      request.status = ProjectRequestStatus.Failed;
+      request.error = request.action === ProjectAction.Research
+        ? wasQueued ? 'Воркер не забрал запрос исследования за минуту. Проверьте подключение воркера этого пространства.'
+          : 'Воркер начал исследование, но SAT не получил результат за минуту. Проверьте журнал воркера.'
+        : 'Истекло время ожидания ответа воркера. Проверьте, что он запущен для этого пространства, и повторите запрос.';
+      delete request.token;
     }
     return state;
   }

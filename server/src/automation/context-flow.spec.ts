@@ -53,9 +53,10 @@ test('budget diagnostics separate cached traffic from noncached input and preser
   const attempt = { id: 'a', stage: 0, revision: 0, role: 'developer', runner: 'codex', model: 'fixture', startedAt: '', updatedAt: '', finished: false,
     usage: { inputTokens: 840101, cachedInputTokens: 778752, outputTokens: 5390, reportedRequests: 1, missingRequests: 0, source: 'codex-json' } } as const;
   const run = { settings: { ...DEFAULT_AUTOMATION_SETTINGS }, usageAttempts: [attempt] } as unknown as AgentRun;
-  assert.equal(RunBudget.explain(run).nonCached, 61349); assert.equal(RunBudget.explain(run).percent, 168);
-  assert.equal(RunBudget.explain(run).partial, true); assert.match(RunBudget.explain(run).advice, /оставшейся работы/);
+  assert.equal(RunBudget.explain(run).nonCached, 61349); assert.equal(RunBudget.explain(run).percent, 12); assert.equal(RunBudget.reason(run, 0), undefined);
+  assert.equal(RunBudget.explain(run).partial, true); assert.match(RunBudget.explain(run).advice, /подтверждённое чтение кеша/);
   const unknown = structuredClone(run); delete unknown.usageAttempts![0].usage!.cachedInputTokens;
+  assert.match(RunBudget.reason(unknown, 0) ?? '', /input token limit/);
   assert.equal(RunBudget.explain(unknown).cached, undefined); assert.equal(RunBudget.explain(unknown).nonCached, undefined);
 });
 
