@@ -184,6 +184,7 @@ npm run db:restore -- --file tracker-2026-10-19_15-04-12.db   # сервер д�
 
 | Переменная | По умолчанию | Назначение |
 |---|---|---|
+| `AUTH` | `true` | `true` — вход через Google; `false` — UI и API доступны без авторизации |
 | `SAT_HOME` | корень приложения | каталог приложения (поиск конфигурации/инструкций) |
 | `SAT_DB_PATH` | `data/tracker.db` | путь к файлу SQLite |
 | `SAT_PORT` | `4317` | порт HTTP API + UI |
@@ -193,6 +194,22 @@ npm run db:restore -- --file tracker-2026-10-19_15-04-12.db   # сервер д�
 | `SAT_BACKUP_INTERVAL_HOURS` | `12` | минимальный интервал авто-бэкапов |
 | `SAT_BACKUP_MAX_PER_DAY` | `2` | предел авто-бэкапов за сутки (`0` — без предела) |
 | `SAT_BACKUP_KEEP` | `20` | сколько последних копий хранить |
+
+Для Docker задайте `AUTH=true` или `AUTH=false` в `.env.auth` и пересоздайте контейнер:
+
+```bash
+docker compose up -d --build simple-ai-tracker
+```
+
+При запуске через npm передайте переменную окружения явно:
+
+```bash
+AUTH=false npm start
+```
+
+При `AUTH=false` Google OAuth и секрет сессии не требуются, кнопка выхода скрыта.
+При `AUTH=true` нужны настройки из [docs/google-auth.md](docs/google-auth.md).
+Без `AUTH` авторизация включена; другие значения, кроме `true`/`false`, вызывают ошибку запуска.
 
 > `node:sqlite` помечен в Node как экспериментальный и печатает предупреждение в stderr — на работу не влияет.
 > Требуется Node.js ≥ 22.5.

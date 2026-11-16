@@ -79,6 +79,14 @@
         </div>
       </button>
 
+      <button type="button" class="nav-item" [class.active]="activeTab === tab.Budgets" [disabled]="isTabDisabled(tab.Budgets)" (click)="selectTab(tab.Budgets)">
+        <i class="pi pi-sliders-h nav-icon"></i>
+        <div class="nav-item-content">
+          <span class="nav-item-label">Лимиты и бюджеты</span>
+          <span class="nav-item-sub">{{ settings.maxStageToolCalls }} инстр. · {{ settings.timeoutMinutes }} мин</span>
+        </div>
+      </button>
+
       <button type="button" class="nav-item" [class.active]="activeTab === tab.Models" [disabled]="isTabDisabled(tab.Models)" (click)="selectTab(tab.Models)">
         <i class="pi pi-server nav-icon"></i>
         <div class="nav-item-content">
@@ -129,6 +137,7 @@
             @switch (activeTab) {
               @case (tab.Launch) { Запуск задачи }
               @case (tab.Team) { Команда агентов и этапы }
+              @case (tab.Budgets) { Лимиты и бюджеты }
               @case (tab.Models) { Подключения моделей }
               @case (tab.Project) { Компьютер, проект и проверки }
             }
@@ -252,6 +261,17 @@
                   }
                 </ul>
                 <p class="hint" role="status">{{ launchOutcomeHint }}</p>
+                <div class="budget-summary-banner">
+                  <div class="budget-summary-info">
+                    <i class="pi pi-sliders-h"></i>
+                    <div>
+                      <strong>Бюджет выполнения:</strong>
+                      <span>до {{ settings.maxStageToolCalls }} инструментов на этап · таймаут {{ settings.timeoutMinutes }} мин · лимит {{ settings.maxRunMinutes }} мин</span>
+                    </div>
+                  </div>
+                  <button pButton severity="secondary" [text]="true" size="small" icon="pi pi-pencil" (click)="selectTab(tab.Budgets)" title="Изменить лимиты и бюджет">Настроить</button>
+                </div>
+
                 <div class="launch-action-bar">
                   <p-button [label]="'Поставить группу в очередь (' + batchTaskIds.length + ')'" [loading]="starting" icon="pi pi-send"
                     [disabled]="busy || starting || !batchTaskIds.length || batchBlocked || !settings.pipeline.length" (onClick)="startBatch()" />
@@ -293,6 +313,17 @@
                     @for (reason of eligibility.reasons; track reason) { <p class="error">{{ reason }}</p> }
                   </div>
                 }
+
+                <div class="budget-summary-banner">
+                  <div class="budget-summary-info">
+                    <i class="pi pi-sliders-h"></i>
+                    <div>
+                      <strong>Бюджет выполнения:</strong>
+                      <span>до {{ settings.maxStageToolCalls }} инструментов на этап · таймаут {{ settings.timeoutMinutes }} мин · лимит {{ settings.maxRunMinutes }} мин</span>
+                    </div>
+                  </div>
+                  <button pButton severity="secondary" [text]="true" size="small" icon="pi pi-pencil" (click)="selectTab(tab.Budgets)" title="Изменить лимиты и бюджет">Настроить</button>
+                </div>
 
                 <div class="launch-action-bar">
                   <p-button [label]="executorReady ? 'Запустить задачу' : 'Поставить в очередь'" [loading]="starting" icon="pi pi-play"
@@ -564,6 +595,117 @@
       }
 
       <!-- ================================================================= -->
+      <!-- РАЗДЕЛ: ЛИМИТЫ И БЮДЖЕТЫ -->
+      <!-- ================================================================= -->
+      @else if (activeTab === tab.Budgets) {
+        <div class="tab-pane-content">
+          <!-- Карточка: Пресеты бюджета из списка -->
+          <div class="panel-card">
+            <div class="panel-card-header">
+              <div class="card-title-row">
+                <h4>Готовые пресеты бюджетов</h4>
+                <span class="badge-count">{{ settingsScope === 'task' ? 'Для задачи ' + (selectedTask || '') : 'По умолчанию для проекта' }}</span>
+              </div>
+              <p class="card-hint">Выберите готовый профиль из списка или настройте точные лимиты вручную ниже.</p>
+            </div>
+            <div class="card-body">
+              <div class="budget-presets-grid">
+                @for (preset of budgetPresets; track preset.id) {
+                  <div class="budget-preset-card" [class.selected]="selectedBudgetPresetId === preset.id" (click)="applyBudgetPreset(preset.id)">
+                    <div class="preset-header">
+                      <strong>{{ preset.label }}</strong>
+                      @if (preset.id === 'standard') { <span class="preset-badge">Рекомендуемый</span> }
+                    </div>
+                    <p class="preset-desc">{{ preset.description }}</p>
+                    <div class="preset-specs">
+                      <span><i class="pi pi-wrench"></i> {{ preset.maxStageToolCalls }} инстр.</span>
+                      <span><i class="pi pi-clock"></i> {{ preset.timeoutMinutes }} мин / шаг</span>
+                      <span><i class="pi pi-hourglass"></i> {{ preset.maxRunMinutes }} мин всего</span>
+                    </div>
+                  </div>
+                }
+              </div>
+            </div>
+          </div>
+
+          <!-- Карточка: Детальные лимиты и бюджеты -->
+          <div class="panel-card">
+            <div class="panel-card-header">
+              <h4>Параметры выполнения и квоты</h4>
+              <p class="card-hint">Ограничения защищают от бесконечных циклов инструментов (например, в Antigravity CLI) и перерасхода токенов моделей.</p>
+            </div>
+            <div class="card-body">
+              <div class="limits-grid">
+                <label>
+                  <span>Операций инструментами на этап <i class="pi pi-info-circle help-icon" [pTooltip]="fieldTooltips['maxStageToolCalls']"></i></span>
+                  <input pInputText type="number" [(ngModel)]="settings.maxStageToolCalls" min="1" max="200" [pTooltip]="fieldTooltips['maxStageToolCalls']" />
+                  <small class="field-hint">Для Antigravity CLI и Model API (1-200)</small>
+                </label>
+                <label>
+                  <span>Лимит одного этапа (мин) <i class="pi pi-info-circle help-icon" [pTooltip]="fieldTooltips['timeoutMinutes']"></i></span>
+                  <input pInputText type="number" [(ngModel)]="settings.timeoutMinutes" [min]="limits.timeoutMinutes.min" [max]="limits.timeoutMinutes.max" [pTooltip]="fieldTooltips['timeoutMinutes']" />
+                  <small class="field-hint">Таймаут одного вызова агента</small>
+                </label>
+                <label>
+                  <span>Всего минут работы агентов <i class="pi pi-info-circle help-icon" [pTooltip]="fieldTooltips['maxRunMinutes']"></i></span>
+                  <input pInputText type="number" [(ngModel)]="settings.maxRunMinutes" min="1" max="240" [pTooltip]="fieldTooltips['maxRunMinutes']" />
+                  <small class="field-hint">Предельное общее время задачи</small>
+                </label>
+                <label>
+                  <span>Вызовов агентов за прогон <i class="pi pi-info-circle help-icon" [pTooltip]="fieldTooltips['maxAgentCalls']"></i></span>
+                  <input pInputText type="number" [(ngModel)]="settings.maxAgentCalls" min="1" max="100" [pTooltip]="fieldTooltips['maxAgentCalls']" />
+                  <small class="field-hint">Максимум этапов и обращений к моделям</small>
+                </label>
+                <label>
+                  <span>Доработок (revisions) <i class="pi pi-info-circle help-icon" [pTooltip]="fieldTooltips['maxRevisions']"></i></span>
+                  <input pInputText type="number" [(ngModel)]="settings.maxRevisions" [min]="limits.revisions.min" [max]="limits.revisions.max" [pTooltip]="fieldTooltips['maxRevisions']" />
+                  <small class="field-hint">Циклов исправлений по замечаниям</small>
+                </label>
+                <label>
+                  <span>Лимит входных токенов <i class="pi pi-info-circle help-icon" [pTooltip]="fieldTooltips['maxInputTokens']"></i></span>
+                  <input pInputText type="number" [(ngModel)]="settings.maxInputTokens" min="1" max="100000000" [pTooltip]="fieldTooltips['maxInputTokens']" />
+                  <small class="field-hint">Контроль расхода контекста</small>
+                </label>
+              </div>
+
+              @if (settingsScope === 'project') {
+                <h5 class="limits-subheading">Интеграция и параллельное выполнение</h5>
+                <div class="limits-grid">
+                  <label>
+                    <span>Слияние <i class="pi pi-info-circle help-icon" [pTooltip]="fieldTooltips['mergePolicy']"></i></span>
+                    <p-select [options]="mergePolicies" [(ngModel)]="settings.mergePolicy" appendTo="body" [pTooltip]="fieldTooltips['mergePolicy']" />
+                  </label>
+                  <label>
+                    <span>Параллельных слотов <i class="pi pi-info-circle help-icon" [pTooltip]="fieldTooltips['maxParallelRuns']"></i></span>
+                    <input pInputText type="number" [(ngModel)]="settings.maxParallelRuns" min="1" max="8" [pTooltip]="fieldTooltips['maxParallelRuns']" />
+                  </label>
+                  <label>
+                    <span>Зависимости <i class="pi pi-info-circle help-icon" [pTooltip]="fieldTooltips['dependencyMode']"></i></span>
+                    <p-select [options]="dependencyModes" [(ngModel)]="settings.dependencyMode" appendTo="body" [pTooltip]="fieldTooltips['dependencyMode']" />
+                  </label>
+                </div>
+
+                @if (settings.mergePolicy === 'local') {
+                  <div class="merge-options-box">
+                    <label class="checkbox-inline">
+                      <p-checkbox [binary]="true" [(ngModel)]="settings.resolveConflicts" ariaLabel="Автоматически разрешать конфликты" />
+                      <span>Автоматически разрешать конфликты <i class="pi pi-info-circle help-icon" [pTooltip]="fieldTooltips['resolveConflicts']"></i></span>
+                    </label>
+                    <div class="resolver-grid">
+                      <label><span>Попыток интеграции <i class="pi pi-info-circle help-icon" [pTooltip]="fieldTooltips['maxMergeAttempts']"></i></span><input pInputText type="number" [(ngModel)]="settings.maxMergeAttempts" min="1" max="3" [pTooltip]="fieldTooltips['maxMergeAttempts']" /></label>
+                      <label><span>Вызовов resolver <i class="pi pi-info-circle help-icon" [pTooltip]="fieldTooltips['resolveConflicts']"></i></span><input pInputText type="number" [(ngModel)]="settings.maxResolverCalls" min="0" max="3" /></label>
+                      <label><span>Минут на resolver <i class="pi pi-info-circle help-icon" [pTooltip]="fieldTooltips['timeoutMinutes']"></i></span><input pInputText type="number" [(ngModel)]="settings.resolverTimeoutMinutes" min="1" max="10" /></label>
+                      <label><span>Инструментов resolver <i class="pi pi-info-circle help-icon" [pTooltip]="fieldTooltips['maxStageToolCalls']"></i></span><input pInputText type="number" [(ngModel)]="settings.maxResolverToolCalls" min="1" max="40" /></label>
+                    </div>
+                  </div>
+                }
+              }
+            </div>
+          </div>
+        </div>
+      }
+
+      <!-- ================================================================= -->
       <!-- РАЗДЕЛ: ПОДКЛЮЧЕНИЯ МОДЕЛЕЙ -->
       <!-- ================================================================= -->
       @else if (activeTab === tab.Models) {
@@ -810,7 +952,7 @@
                 <label><span>Доработок <i class="pi pi-info-circle help-icon" [pTooltip]="fieldTooltips['maxRevisions']"></i></span><input pInputText type="number" [(ngModel)]="settings.maxRevisions" [min]="limits.revisions.min" [max]="limits.revisions.max" [pTooltip]="fieldTooltips['maxRevisions']" /></label>
                 <label><span>Всего минут работы агентов <i class="pi pi-info-circle help-icon" [pTooltip]="fieldTooltips['maxRunMinutes']"></i></span><input pInputText type="number" [(ngModel)]="settings.maxRunMinutes" min="1" max="240" [pTooltip]="fieldTooltips['maxRunMinutes']" /></label>
                 <label><span>Вызовов агентов <i class="pi pi-info-circle help-icon" [pTooltip]="fieldTooltips['maxAgentCalls']"></i></span><input pInputText type="number" [(ngModel)]="settings.maxAgentCalls" min="1" max="100" [pTooltip]="fieldTooltips['maxAgentCalls']" /></label>
-                <label><span>Операций инструментами <i class="pi pi-info-circle help-icon" [pTooltip]="fieldTooltips['maxStageToolCalls']"></i></span><input pInputText type="number" [(ngModel)]="settings.maxStageToolCalls" min="1" max="80" [pTooltip]="fieldTooltips['maxStageToolCalls']" /></label>
+                <label><span>Операций инструментами <i class="pi pi-info-circle help-icon" [pTooltip]="fieldTooltips['maxStageToolCalls']"></i></span><input pInputText type="number" [(ngModel)]="settings.maxStageToolCalls" min="1" max="200" [pTooltip]="fieldTooltips['maxStageToolCalls']" /></label>
                 <label><span>Лимит входных токенов <i class="pi pi-info-circle help-icon" [pTooltip]="fieldTooltips['maxInputTokens']"></i></span><input pInputText type="number" [(ngModel)]="settings.maxInputTokens" min="1" max="100000000" [pTooltip]="fieldTooltips['maxInputTokens']" /></label>
                 <label><span>Слияние <i class="pi pi-info-circle help-icon" [pTooltip]="fieldTooltips['mergePolicy']"></i></span><p-select [options]="mergePolicies" [(ngModel)]="settings.mergePolicy" appendTo="body" [pTooltip]="fieldTooltips['mergePolicy']" /></label>
                 <label><span>Параллельных слотов <i class="pi pi-info-circle help-icon" [pTooltip]="fieldTooltips['maxParallelRuns']"></i></span><input pInputText type="number" [(ngModel)]="settings.maxParallelRuns" min="1" max="8" [pTooltip]="fieldTooltips['maxParallelRuns']" /></label>

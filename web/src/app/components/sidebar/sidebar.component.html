@@ -112,7 +112,7 @@
     </div>
   </div>
 
-  <div class="sidebar-footer">
+  <div *ngIf="authEnabled()" class="sidebar-footer">
     <form action="api/auth/logout" method="post" class="sidebar-logout-form">
       <button
         pButton

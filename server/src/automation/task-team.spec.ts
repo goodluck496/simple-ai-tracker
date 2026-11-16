@@ -13,8 +13,11 @@ test('task team overrides inherit project infrastructure and snapshots never cha
     const first = app.taskService.createTask({ title: 'Single developer' }); const second = app.taskService.createTask({ title: 'Full team' });
     app.taskService.attachPlan({ id: first.id, planContent: '# Approved plan', actor: 'agent' });
     const base = service.settings();
-    const override = service.taskTeam(first.id, { ...base, repositoryPath: '/ignored', pipeline: ['developer'] });
+    const override = service.taskTeam(first.id, { ...base, repositoryPath: '/ignored', pipeline: ['developer'], maxStageToolCalls: 90, timeoutMinutes: 45 });
     assert.equal(override.settings.repositoryPath, '/fixture'); assert.equal(override.overridden, true);
+    assert.equal(override.settings.maxStageToolCalls, 90);
+    assert.equal(override.settings.timeoutMinutes, 45);
+    assert.equal(service.taskTeam(second.id).settings.maxStageToolCalls, base.maxStageToolCalls);
     assert.equal(service.taskTeam(second.id).overridden, false);
     assert.deepEqual(service.settings().pipeline, base.pipeline);
     const run = service.enqueue(first.id, undefined, false);

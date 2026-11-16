@@ -6,16 +6,27 @@ const OWNER = 'nikita.a.kalinin@gmail.com';
 const SESSION = '__Host-sat_session';
 const STATE = '__Host-sat_oauth';
 interface Signed { purpose: 'session' | 'oauth'; exp: number; email?: string; sub?: string; state?: string; verifier?: string }
-export interface GoogleAuthOptions { clientId?: string; clientSecret?: string; sessionSecret?: string; redirectUri?: string; fetch?: typeof fetch }
+export interface GoogleAuthOptions { enabled?: boolean; clientId?: string; clientSecret?: string; sessionSecret?: string; redirectUri?: string; fetch?: typeof fetch }
+
+function authEnabled(value = process.env.AUTH): boolean {
+  if (value === undefined) return true;
+  switch (value.trim().toLowerCase()) {
+    case 'true': return true;
+    case 'false': return false;
+    default: throw new Error('AUTH must be true or false.');
+  }
+}
 
 /** Public HTTP entrypoint uses this gate before any workspace or file access. */
 export class GoogleAuth {
   private readonly options: GoogleAuthOptions;
+  public readonly enabled: boolean;
   public readonly basePath: string;
   constructor(options: GoogleAuthOptions = {}) {
+    this.enabled = options.enabled ?? authEnabled();
     this.options = { clientId: process.env.GOOGLE_CLIENT_ID, clientSecret: process.env.GOOGLE_CLIENT_SECRET,
       sessionSecret: process.env.AUTH_SESSION_SECRET, redirectUri: process.env.GOOGLE_REDIRECT_URI, ...options };
-    this.basePath = this.redirectUrl()?.pathname.replace(/api\/auth\/google\/callback$/, '') || '/tracker/';
+    this.basePath = this.redirectUrl()?.pathname.replace(/api\/auth\/google\/callback$/, '') || (this.enabled ? '/tracker/' : '/');
   }
   private redirectUrl(): URL | undefined {
     try {
@@ -59,7 +70,13 @@ export class GoogleAuth {
     res.setHeader('Referrer-Policy', 'same-origin');
     const route = url.pathname;
     if (route === '/api/auth/status' && req.method === 'GET') {
-      sendJson(res, 200, { configured: this.configured, authenticated: this.authenticated(req) }); return true;
+      sendJson(res, 200, { enabled: this.enabled, configured: this.configured, authenticated: this.enabled && this.authenticated(req) }); return true;
+    }
+    if (!this.enabled) {
+      if (['/api/auth/google', '/api/auth/google/callback', '/api/auth/logout'].includes(route)) {
+        this.redirect(res, this.basePath); return true;
+      }
+      return false;
     }
     if (route === '/api/auth/google' && req.method === 'GET') {
       if (!this.configured) { this.page(res, 503, 'Вход через Google пока не настроен.'); return true; }

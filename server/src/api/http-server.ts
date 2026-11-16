@@ -31,7 +31,7 @@ export function createApiServer(app: AppContainer, options: ApiServerOptions = {
   registerAutomationRoutes(router, app);
 
   const staticServer = new StaticFileServer(app.config.webDistDir);
-  const cors = options.auth ? false : options.cors ?? true;
+  const cors = options.auth?.enabled ? false : options.cors ?? true;
 
   const dispatch = (req: http.IncomingMessage, res: http.ServerResponse): void => {
     const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);

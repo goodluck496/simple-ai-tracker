@@ -1,5 +1,6 @@
 import { DatabaseSync } from 'node:sqlite';
 import { mkdirSync, readFileSync, realpathSync, lstatSync, existsSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 import os from 'node:os';
 import { randomUUID, createHash } from 'node:crypto';
@@ -117,12 +118,22 @@ export class RuntimeCoordinator {
   private static alive(pid: number): boolean {
     try {
       process.kill(pid, 0);
-      if (process.platform === 'linux') {
+    } catch (error) { return !['ESRCH', 'ENOENT'].includes((error as NodeJS.ErrnoException).code ?? ''); }
+    if (process.platform === 'win32') {
+      try {
+        const res = spawnSync('tasklist', ['/FI', `PID eq ${pid}`, '/FO', 'CSV', '/NH'], { windowsHide: true, encoding: 'utf8' });
+        if (res.status === 0 && !res.stdout.toLowerCase().includes('node.exe')) {
+          return false;
+        }
+      } catch {}
+    }
+    if (process.platform === 'linux') {
+      try {
         const stat = readFileSync(`/proc/${pid}/stat`, 'utf8');
         if (stat.slice(stat.lastIndexOf(')') + 2).startsWith('Z')) return false;
-      }
-      return true;
-    } catch (error) { return !['ESRCH', 'ENOENT'].includes((error as NodeJS.ErrnoException).code ?? ''); }
+      } catch {}
+    }
+    return true;
   }
 }
 

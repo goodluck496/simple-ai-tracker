@@ -27,14 +27,24 @@ function isAlive(pid) {
   if (!pid || typeof pid !== 'number' || pid <= 0) return false;
   try {
     process.kill(pid, 0);
-    if (process.platform === 'linux') {
-      const stat = fs.readFileSync(`/proc/${pid}/stat`, 'utf8');
-      if (stat.slice(stat.lastIndexOf(')') + 2).startsWith('Z')) return false;
-    }
-    return true;
   } catch {
     return false;
   }
+  if (process.platform === 'win32') {
+    try {
+      const res = spawnSync('tasklist', ['/FI', `PID eq ${pid}`, '/FO', 'CSV', '/NH'], { windowsHide: true, encoding: 'utf8' });
+      if (res.status === 0 && !res.stdout.toLowerCase().includes('node.exe')) {
+        return false;
+      }
+    } catch {}
+  }
+  if (process.platform === 'linux') {
+    try {
+      const stat = fs.readFileSync(`/proc/${pid}/stat`, 'utf8');
+      if (stat.slice(stat.lastIndexOf(')') + 2).startsWith('Z')) return false;
+    } catch {}
+  }
+  return true;
 }
 
 function killProcessTree(pid) {

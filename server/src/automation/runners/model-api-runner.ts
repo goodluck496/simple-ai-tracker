@@ -87,7 +87,7 @@ export class ModelApiRunner implements AgentRunner {
     const auditDirectory = process.env.SAT_STAGE_AUDIT_DIR?.trim() || (job.settings.auditAgent?.connectionId ? path.resolve('data', 'stage-audit') : undefined);
     const audit = auditDirectory && job.auditAttempt ? new StageAudit(job, auditDirectory) : undefined;
     try {
-    for (let turn = 0; job.trustedExecution || formatting || turn < Math.min(MAX_TURNS, (job.maxToolCalls ?? MAX_TURNS) + 1); turn += 1) {
+    for (let turn = 0; job.trustedExecution || formatting || turn < Math.min(MAX_TURNS, (job.maxToolCalls ?? MAX_TURNS) + 3); turn += 1) {
       job.signal.throwIfAborted();
       audit?.request();
       const response = await this.request(url, { method: 'POST', signal: job.signal,
@@ -137,7 +137,22 @@ export class ModelApiRunner implements AgentRunner {
         return { text: finalText, usage };
       }
       for (const call of message.tool_calls) {
-        if (call.function.name !== ModelTool.Finish && ++calls > (job.maxToolCalls ?? MAX_TURNS) && !job.trustedExecution) throw new Error('Model tool-call limit exceeded.');
+        const isActionTool = call.function.name !== ModelTool.Finish && call.function.name !== ModelTool.Checkpoint;
+        if (isActionTool && !job.trustedExecution) {
+          const limit = job.maxToolCalls ?? MAX_TURNS;
+          if (++calls > limit) {
+            if (calls > limit + 1) throw new Error('Model tool-call limit exceeded.');
+            messages.push({
+              role: 'tool',
+              tool_call_id: call.id,
+              content: JSON.stringify({
+                error: `Превышен лимит вызовов инструментов (${limit}). Действие ${call.function.name} отклонено. Сохраните прогресс с помощью save_progress при необходимости и вызовите finish_task для завершения этапа с текущими результатами.`
+              })
+            });
+            onProgress(`Превышен лимит вызовов инструментов (${limit}). Действие ${call.function.name} отклонено; модели предложено завершить этап через finish_task.\n`);
+            continue;
+          }
+        }
         if (!names.includes(call.function.name)) {
           messages.push({
             role: 'tool',
@@ -203,7 +218,12 @@ export class ModelApiRunner implements AgentRunner {
 
       const cleanProse = (v: unknown, max: number): string => {
         if (!v) return '';
-        const s = String(v).replace(/[\r\n\x00-\x1f{}]|```|~~~/g, ' ').replace(/\s+/g, ' ').trim();
+        let s = String(v).replace(/[\r\n\x00-\x1f{}]|```|~~~/g, ' ')
+          .replace(/=>/g, '->')
+          .replace(/(\w+\([^)]*\));/g, '$1')
+          .replace(/^(?:import |export |const |let |class |function |diff --git|@@)\s*/gm, '')
+          .replace(/\s+/g, ' ')
+          .trim();
         return s.slice(0, max);
       };
 

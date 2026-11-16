@@ -14,6 +14,12 @@ export class PostOperationRunner {
   public constructor(private readonly executor: ProcessExecutor) {}
 
   public async run(op: PostOperation, cwd: string, common: string, signal: AbortSignal, onProgress?: (text: string) => void): Promise<void> {
+    const missing = await PostOperationRunner.isMissingNpmScript(op, cwd);
+    if (missing) {
+      onProgress?.(`Пропуск пост-операции ${op.command} ${op.args.join(' ')}: скрипт "${missing}" отсутствует в package.json.\n`);
+      return;
+    }
+
     if (!op.background) {
       await this.executor.run({ ...op, cwd, signal, env: TaskEnvironment.create(), compactProgress: true, onProgress });
       return;
@@ -97,5 +103,27 @@ export class PostOperationRunner {
     } catch (error) {
       if (RuntimeCoordinator.isAlive(pid)) throw error;
     }
+  }
+
+  private static async isMissingNpmScript(op: PostOperation, cwd: string): Promise<string | undefined> {
+    if (!['npm', 'pnpm', 'yarn', 'bun'].includes(op.command)) return undefined;
+    let scriptName: string | undefined;
+    if (op.args[0] === 'test' || op.args[0] === 't' || op.args[0] === 'tst') {
+      scriptName = 'test';
+    } else if (op.args[0] === 'run' && typeof op.args[1] === 'string') {
+      scriptName = op.args[1];
+    }
+    if (!scriptName) return undefined;
+    try {
+      const manifestPath = path.join(cwd, 'package.json');
+      const content = await readFile(manifestPath, 'utf8');
+      const manifest = JSON.parse(content) as { scripts?: Record<string, unknown> };
+      if (!manifest.scripts || !(scriptName in manifest.scripts)) {
+        return scriptName;
+      }
+    } catch {
+      // If package.json is missing or unreadable, let executor run directly
+    }
+    return undefined;
   }
 }

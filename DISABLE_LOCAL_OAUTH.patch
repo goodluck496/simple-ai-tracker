@@ -1,0 +1,319 @@
+Subject: [PATCH] DISABLE_LOCAL_OAUTH
+---
+Index: .env.auth.example
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/.env.auth.example b/.env.auth.example
+--- a/.env.auth.example	(revision 3080981a4261164f68fb4be4da119d5682bb873b)
++++ b/.env.auth.example	(date 1794222781936)
+@@ -1,3 +1,4 @@
++AUTH=true
+ GOOGLE_CLIENT_ID=
+ GOOGLE_CLIENT_SECRET=
+ GOOGLE_REDIRECT_URI=https://nekitekat.online/tracker/api/auth/google/callback
+Index: docs/google-auth.md
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/docs/google-auth.md b/docs/google-auth.md
+--- a/docs/google-auth.md	(revision 3080981a4261164f68fb4be4da119d5682bb873b)
++++ b/docs/google-auth.md	(date 1794222875213)
+@@ -2,7 +2,7 @@
+ 
+ Only verified Google email nikita.a.kalinin@gmail.com can sign in. Other accounts receive 403 and https://t.me/goodluck496. Existing workspaces are unchanged. Local stdio MCP and workers do not use browser sessions.
+ 
+-Copy .env.auth.example to .env.auth. Set Google Web application client ID and secret, and a separate random AUTH_SESSION_SECRET with at least 32 characters. Preserve it across restarts. Secrets are excluded from Git and Docker context.
++Copy .env.auth.example to .env.auth. Set AUTH=true (the default when omitted) to require Google sign-in. Set Google Web application client ID and secret, and a separate random AUTH_SESSION_SECRET with at least 32 characters. Preserve it across restarts. Secrets are excluded from Git and Docker context.
+ 
+ Register this exact Authorized redirect URI in Google Console:
+ https://nekitekat.online/tracker/api/auth/google/callback
+@@ -13,7 +13,7 @@
+ 
+ Nginx already strips /tracker/ and forwards to port 4317. Root /api/ remains CRM. HTML base href is derived from callback URL; browser API calls, image previews and downloads use /tracker/api/.
+ 
+-The production HTTP entrypoint always enables GoogleAuth. The lower-level createApiServer accepts an optional gate for local tests. Missing OAuth configuration keeps production closed. All application APIs including health, images, backups and automation require sessions. /api/auth/status only returns configuration/session booleans. Mutations require the configured HTTPS Origin. Proxy email headers are not identities.
++The production HTTP entrypoint requires GoogleAuth by default. AUTH=false disables authentication for all UI and application API access, including mutations, without OAuth configuration or cookies; the logout button is hidden. Only true/false are accepted (case-insensitive, surrounding whitespace ignored); invalid values stop startup. For Docker set AUTH in .env.auth and recreate the container; for a direct launch use AUTH=false npm start. Direct npm launches do not load .env.auth automatically. Without a valid Google redirect URI, disabled mode serves the UI at /; a configured callback preserves its base path (for example /tracker/). The lower-level createApiServer accepts an optional gate for local tests. With AUTH=true, missing OAuth configuration keeps production closed. With AUTH=true, all application APIs including health, images, backups and automation require sessions. /api/auth/status only returns enabled/configured/authenticated booleans; authenticated is false when authentication is disabled. With AUTH=true, mutations require the configured HTTPS Origin. Proxy email headers are not identities.
+ 
+ Authorization Code flow uses PKCE S256, signed state and verified Google userinfo. Separate __Host-sat_session cookie uses Secure, HttpOnly, SameSite=Lax, Path=/ and HMAC-SHA256; lifetime seven days. OAuth cookie lifetime is ten minutes. Google tokens stay on the server. Logout clears cookies. Images use private no-store caching.
+ 
+Index: web/src/app/components/sidebar/sidebar.component.ts
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/web/src/app/components/sidebar/sidebar.component.ts b/web/src/app/components/sidebar/sidebar.component.ts
+--- a/web/src/app/components/sidebar/sidebar.component.ts	(revision 3080981a4261164f68fb4be4da119d5682bb873b)
++++ b/web/src/app/components/sidebar/sidebar.component.ts	(date 1794222792998)
+@@ -1,5 +1,8 @@
+ import { ChangeDetectionStrategy, Component, inject, model, output, signal } from '@angular/core';
+ import { CommonModule } from '@angular/common';
++import { HttpClient } from '@angular/common/http';
++import { toSignal } from '@angular/core/rxjs-interop';
++import { catchError, map, of } from 'rxjs';
+ import { ButtonModule } from 'primeng/button';
+ import { TooltipModule } from 'primeng/tooltip';
+ import { DialogModule } from 'primeng/dialog';
+@@ -24,6 +27,13 @@
+ export class SidebarComponent {
+   public readonly store = inject(TrackerStore);
+   public readonly ws = inject(WorkspaceService);
++  public readonly authEnabled = toSignal(
++    inject(HttpClient).get<{ enabled: boolean }>('/api/auth/status').pipe(
++      map(status => status.enabled),
++      catchError(() => of(false)),
++    ),
++    { initialValue: false },
++  );
+ 
+   public readonly isExpanded = model<boolean>(true);
+   public readonly showWorkspaceDialog = signal(false);
+@@ -58,4 +68,4 @@
+   public onShowInstructions(): void {
+     this.showInstructions.emit(true);
+   }
+-}
+\ No newline at end of file
++}
+Index: web/src/app/components/sidebar/sidebar.component.html
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/web/src/app/components/sidebar/sidebar.component.html b/web/src/app/components/sidebar/sidebar.component.html
+--- a/web/src/app/components/sidebar/sidebar.component.html	(revision 3080981a4261164f68fb4be4da119d5682bb873b)
++++ b/web/src/app/components/sidebar/sidebar.component.html	(date 1794222781938)
+@@ -112,7 +112,7 @@
+     </div>
+   </div>
+ 
+-  <div class="sidebar-footer">
++  <div *ngIf="authEnabled()" class="sidebar-footer">
+     <form action="api/auth/logout" method="post" class="sidebar-logout-form">
+       <button
+         pButton
+@@ -127,4 +127,4 @@
+       </button>
+     </form>
+   </div>
+-</aside>
+\ No newline at end of file
++</aside>
+Index: server/src/api/google-auth.spec.ts
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/server/src/api/google-auth.spec.ts b/server/src/api/google-auth.spec.ts
+--- a/server/src/api/google-auth.spec.ts	(revision 3080981a4261164f68fb4be4da119d5682bb873b)
++++ b/server/src/api/google-auth.spec.ts	(date 1794222874799)
+@@ -2,6 +2,9 @@
+ import { test } from 'node:test';
+ import { createHmac } from 'node:crypto';
+ import type { AddressInfo } from 'node:net';
++import fs from 'node:fs';
++import os from 'node:os';
++import path from 'node:path';
+ import { GoogleAuth } from './google-auth.js';
+ import { createApiServer } from './http-server.js';
+ import { createContainer } from '../bootstrap/container.js';
+@@ -16,7 +19,7 @@
+ }
+ test('Google gate denies anonymous and non-owner accounts before workspace access', async () => {
+   let email = owner, verified = true, calls = 0;
+-  const auth = new GoogleAuth({ clientId: 'test-client', clientSecret: 'test-secret', sessionSecret: secret,
++  const auth = new GoogleAuth({ enabled: true, clientId: 'test-client', clientSecret: 'test-secret', sessionSecret: secret,
+     redirectUri: 'https://nekitekat.online/tracker/api/auth/google/callback',
+     fetch: (async (input: string | URL | Request, init?: RequestInit) => {
+       calls++;
+@@ -33,6 +36,9 @@
+   const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+   const get = (path: string, headers: Record<string, string> = {}) => fetch(base + path, { headers, redirect: 'manual' });
+   try {
++    assert.deepEqual(await (await get('/api/auth/status')).json(), {
++      enabled: true, configured: true, authenticated: false,
++    });
+     assert.match(await (await get('/')).text(), /https:\/\/t.me\/goodluck496/);
+     for (const path of ['/api/tasks', '/api/workspaces', '/api/admin/backups', '/api/images/aaaaaaaa.png?workspace=default', '/api/automation/settings', '/api/health']) {
+       const response = await get(path, { 'ngrok-auth-user-email': owner, 'X-Tracker-Workspace': 'default' });
+@@ -77,3 +83,70 @@
+     assert.equal(new GoogleAuth({ redirectUri, clientId: 'id', clientSecret: 'secret', sessionSecret: secret }).configured, false);
+   }
+ });
++
++test('AUTH defaults to true, accepts true/false and rejects invalid values', () => {
++  const previous = process.env.AUTH;
++  try {
++    delete process.env.AUTH;
++    assert.equal(new GoogleAuth().enabled, true);
++    for (const value of ['true', ' TRUE ']) {
++      process.env.AUTH = value;
++      assert.equal(new GoogleAuth().enabled, true);
++    }
++    for (const value of ['false', ' FALSE ']) {
++      process.env.AUTH = value;
++      assert.equal(new GoogleAuth().enabled, false);
++    }
++    for (const value of ['', '0', 'flase']) {
++      process.env.AUTH = value;
++      assert.throws(() => new GoogleAuth(), /AUTH must be true or false/);
++    }
++  } finally {
++    if (previous === undefined) delete process.env.AUTH;
++    else process.env.AUTH = previous;
++  }
++});
++
++test('AUTH=false serves UI and permits API reads and mutations without OAuth or cookies', async () => {
++  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'sat-no-auth-'));
++  fs.writeFileSync(path.join(directory, 'index.html'), '<html><base href="/"><body>Tracker UI</body></html>');
++  const auth = new GoogleAuth({ enabled: false, clientId: undefined, clientSecret: undefined,
++    sessionSecret: undefined, redirectUri: undefined });
++  assert.equal(auth.configured, false);
++  assert.equal(auth.basePath, '/');
++  assert.equal(new GoogleAuth({ enabled: false,
++    redirectUri: 'https://example.com/tracker/api/auth/google/callback' }).basePath, '/tracker/');
++  const app = createContainer({ config: { dbPath: ':memory:', webDistDir: directory },
++    db: new NodeSqliteDatabase({ file: ':memory:' }), logger: new SilentLogger() });
++  const server = createApiServer(app, { auth });
++  await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
++  const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
++  try {
++    const ui = await fetch(base + '/');
++    assert.equal(ui.status, 200);
++    assert.match(await ui.text(), /<base href="\/">.*Tracker UI/);
++    const status = await fetch(base + '/api/auth/status');
++    assert.deepEqual(await status.json(), { enabled: false, configured: false, authenticated: false });
++    for (const route of ['/api/health', '/api/workspaces', '/api/tasks', '/api/admin/backups', '/api/automation/settings']) {
++      assert.equal((await fetch(base + route)).status, 200, route);
++    }
++    const created = await fetch(base + '/api/tasks', { method: 'POST',
++      headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title: 'No login required' }) });
++    assert.equal(created.status, 201);
++    const { task } = await created.json() as { task: { id: string } };
++    assert.equal((await fetch(base + '/api/tasks/' + task.id, { method: 'PATCH',
++      headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title: 'Updated anonymously' }) })).status, 200);
++    assert.equal((await fetch(base + '/api/tasks/' + task.id, { method: 'DELETE' })).status, 200);
++    assert.equal((await fetch(base + '/api/tasks', { method: 'OPTIONS' })).status, 204);
++    for (const route of ['/api/auth/google', '/api/auth/google/callback', '/api/auth/logout']) {
++      const response = await fetch(base + route, { method: route.endsWith('logout') ? 'POST' : 'GET', redirect: 'manual' });
++      assert.equal(response.status, 303);
++      assert.equal(response.headers.get('location'), '/');
++      assert.equal(response.headers.get('set-cookie'), null);
++    }
++  } finally {
++    await new Promise<void>(resolve => server.close(() => resolve()));
++    app.close();
++    fs.rmSync(directory, { recursive: true, force: true });
++  }
++});
+Index: server/src/api/http-server.ts
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/server/src/api/http-server.ts b/server/src/api/http-server.ts
+--- a/server/src/api/http-server.ts	(revision 3080981a4261164f68fb4be4da119d5682bb873b)
++++ b/server/src/api/http-server.ts	(date 1794222781935)
+@@ -31,7 +31,7 @@
+   registerAutomationRoutes(router, app);
+ 
+   const staticServer = new StaticFileServer(app.config.webDistDir);
+-  const cors = options.auth ? false : options.cors ?? true;
++  const cors = options.auth?.enabled ? false : options.cors ?? true;
+ 
+   const dispatch = (req: http.IncomingMessage, res: http.ServerResponse): void => {
+     const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
+Index: README.md
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/README.md b/README.md
+--- a/README.md	(revision 3080981a4261164f68fb4be4da119d5682bb873b)
++++ b/README.md	(date 1794222829101)
+@@ -184,6 +184,7 @@
+ 
+ | Переменная | По умолчанию | Назначение |
+ |---|---|---|
++| `AUTH` | `true` | `true` — вход через Google; `false` — UI и API доступны без авторизации |
+ | `SAT_HOME` | корень приложения | каталог приложения (поиск конфигурации/инструкций) |
+ | `SAT_DB_PATH` | `data/tracker.db` | путь к файлу SQLite |
+ | `SAT_PORT` | `4317` | порт HTTP API + UI |
+@@ -194,5 +195,21 @@
+ | `SAT_BACKUP_MAX_PER_DAY` | `2` | предел авто-бэкапов за сутки (`0` — без предела) |
+ | `SAT_BACKUP_KEEP` | `20` | сколько последних копий хранить |
+ 
++Для Docker задайте `AUTH=true` или `AUTH=false` в `.env.auth` и пересоздайте контейнер:
++
++```bash
++docker compose up -d --build simple-ai-tracker
++```
++
++При запуске через npm передайте переменную окружения явно:
++
++```bash
++AUTH=false npm start
++```
++
++При `AUTH=false` Google OAuth и секрет сессии не требуются, кнопка выхода скрыта.
++При `AUTH=true` нужны настройки из [docs/google-auth.md](docs/google-auth.md).
++Без `AUTH` авторизация включена; другие значения, кроме `true`/`false`, вызывают ошибку запуска.
++
+ > `node:sqlite` помечен в Node как экспериментальный и печатает предупреждение в stderr — на работу не влияет.
+ > Требуется Node.js ≥ 22.5.
+Index: server/src/api/google-auth.ts
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/server/src/api/google-auth.ts b/server/src/api/google-auth.ts
+--- a/server/src/api/google-auth.ts	(revision 3080981a4261164f68fb4be4da119d5682bb873b)
++++ b/server/src/api/google-auth.ts	(date 1794222781933)
+@@ -6,16 +6,27 @@
+ const SESSION = '__Host-sat_session';
+ const STATE = '__Host-sat_oauth';
+ interface Signed { purpose: 'session' | 'oauth'; exp: number; email?: string; sub?: string; state?: string; verifier?: string }
+-export interface GoogleAuthOptions { clientId?: string; clientSecret?: string; sessionSecret?: string; redirectUri?: string; fetch?: typeof fetch }
++export interface GoogleAuthOptions { enabled?: boolean; clientId?: string; clientSecret?: string; sessionSecret?: string; redirectUri?: string; fetch?: typeof fetch }
++
++function authEnabled(value = process.env.AUTH): boolean {
++  if (value === undefined) return true;
++  switch (value.trim().toLowerCase()) {
++    case 'true': return true;
++    case 'false': return false;
++    default: throw new Error('AUTH must be true or false.');
++  }
++}
+ 
+ /** Public HTTP entrypoint uses this gate before any workspace or file access. */
+ export class GoogleAuth {
+   private readonly options: GoogleAuthOptions;
++  public readonly enabled: boolean;
+   public readonly basePath: string;
+   constructor(options: GoogleAuthOptions = {}) {
++    this.enabled = options.enabled ?? authEnabled();
+     this.options = { clientId: process.env.GOOGLE_CLIENT_ID, clientSecret: process.env.GOOGLE_CLIENT_SECRET,
+       sessionSecret: process.env.AUTH_SESSION_SECRET, redirectUri: process.env.GOOGLE_REDIRECT_URI, ...options };
+-    this.basePath = this.redirectUrl()?.pathname.replace(/api\/auth\/google\/callback$/, '') || '/tracker/';
++    this.basePath = this.redirectUrl()?.pathname.replace(/api\/auth\/google\/callback$/, '') || (this.enabled ? '/tracker/' : '/');
+   }
+   private redirectUrl(): URL | undefined {
+     try {
+@@ -59,7 +70,13 @@
+     res.setHeader('Referrer-Policy', 'same-origin');
+     const route = url.pathname;
+     if (route === '/api/auth/status' && req.method === 'GET') {
+-      sendJson(res, 200, { configured: this.configured, authenticated: this.authenticated(req) }); return true;
++      sendJson(res, 200, { enabled: this.enabled, configured: this.configured, authenticated: this.enabled && this.authenticated(req) }); return true;
++    }
++    if (!this.enabled) {
++      if (['/api/auth/google', '/api/auth/google/callback', '/api/auth/logout'].includes(route)) {
++        this.redirect(res, this.basePath); return true;
++      }
++      return false;
+     }
+     if (route === '/api/auth/google' && req.method === 'GET') {
+       if (!this.configured) { this.page(res, 503, 'Вход через Google пока не настроен.'); return true; }

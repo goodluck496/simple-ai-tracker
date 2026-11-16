@@ -111,13 +111,13 @@ export class AutomationPanelComponent implements OnInit {
       else this.taskDrafts.set(this.loadedTask, { settings: structuredClone(this.settings), overridden: this.taskOverridden });
     }
   }
-  private teamSignature(settings: AutomationSettings): string { return JSON.stringify([settings.agents, settings.pipeline]); }
+  private teamSignature(settings: AutomationSettings): string { return JSON.stringify([settings.agents, settings.pipeline, settings.maxStageToolCalls, settings.maxAgentCalls, settings.maxInputTokens, settings.maxRunMinutes, settings.timeoutMinutes, settings.maxRevisions]); }
   private async loadTaskTeam(id: string): Promise<void> {
     const value = await firstValueFrom(this.http.get<{ settings: AutomationSettings; overridden: boolean }>(`/api/automation/tasks/${encodeURIComponent(id)}/team`));
     if (this.settingsScope !== 'task' || id !== this.selectedTask) return;
     this.loadedTeamSignature = this.teamSignature(value.settings);
     const draft = this.taskDrafts.get(id)?.settings;
-    this.settings = structuredClone(draft ? { ...value.settings, agents: draft.agents, pipeline: draft.pipeline } : value.settings);
+    this.settings = structuredClone(draft ? { ...value.settings, agents: draft.agents, pipeline: draft.pipeline, maxStageToolCalls: draft.maxStageToolCalls, maxAgentCalls: draft.maxAgentCalls, maxInputTokens: draft.maxInputTokens, maxRunMinutes: draft.maxRunMinutes, timeoutMinutes: draft.timeoutMinutes, maxRevisions: draft.maxRevisions } : value.settings);
     this.taskOverridden = value.overridden; this.loadedTask = id;
   }
   public changeScope(scope: 'project' | 'task'): void {
@@ -272,6 +272,64 @@ export class AutomationPanelComponent implements OnInit {
   public readonly providerKind = ProviderKind;
   public readonly runnerId = RunnerId;
   public readonly limits = AUTOMATION_LIMITS;
+  public readonly budgetPresets = [
+    {
+      id: 'quick',
+      label: 'Быстрый',
+      description: 'До 30 инстр., 15 мин/этап, 30 мин всего (для небольших правок)',
+      maxStageToolCalls: 30,
+      timeoutMinutes: 15,
+      maxRunMinutes: 30,
+      maxAgentCalls: 10,
+      maxRevisions: 1,
+      maxInputTokens: 2000000,
+    },
+    {
+      id: 'standard',
+      label: 'Стандартный',
+      description: 'До 60 инстр., 30 мин/этап, 60 мин всего (рекомендуемый)',
+      maxStageToolCalls: 60,
+      timeoutMinutes: 30,
+      maxRunMinutes: 60,
+      maxAgentCalls: 20,
+      maxRevisions: 2,
+      maxInputTokens: 5000000,
+    },
+    {
+      id: 'deep',
+      label: 'Углублённый',
+      description: 'До 100 инстр., 45 мин/этап, 120 мин всего (для больших фич и рефакторинга)',
+      maxStageToolCalls: 100,
+      timeoutMinutes: 45,
+      maxRunMinutes: 120,
+      maxAgentCalls: 35,
+      maxRevisions: 3,
+      maxInputTokens: 10000000,
+    },
+    {
+      id: 'maximum',
+      label: 'Максимальный',
+      description: 'До 180 инстр., 60 мин/этап, 240 мин всего (для масштабных автономных задач)',
+      maxStageToolCalls: 180,
+      timeoutMinutes: 60,
+      maxRunMinutes: 240,
+      maxAgentCalls: 50,
+      maxRevisions: 5,
+      maxInputTokens: 20000000,
+    },
+  ] as const;
+  public selectedBudgetPresetId: string = 'standard';
+  public applyBudgetPreset(presetId: string): void {
+    const preset = this.budgetPresets.find(p => p.id === presetId);
+    if (!preset) return;
+    this.selectedBudgetPresetId = preset.id;
+    this.settings.maxStageToolCalls = preset.maxStageToolCalls;
+    this.settings.timeoutMinutes = preset.timeoutMinutes;
+    this.settings.maxRunMinutes = preset.maxRunMinutes;
+    this.settings.maxAgentCalls = preset.maxAgentCalls;
+    this.settings.maxRevisions = preset.maxRevisions;
+    this.settings.maxInputTokens = preset.maxInputTokens;
+  }
   public readonly providerOptions = PROVIDER_OPTIONS;
   public readonly roleOptions = ROLE_OPTIONS.filter((option) => option.value !== AgentRole.Doctor);
   private readonly systemRoles = [
@@ -303,6 +361,40 @@ export class AutomationPanelComponent implements OnInit {
     { label: 'Пост-операции', value: 'postOp', description: 'Выполнить действие после конвейера, например развернуть сборку' },
   ];
   public npmScriptPhase: 'setup' | 'checks' | 'postOp' = 'postOp';
+  public postOpScriptId = '';
+  public checkScriptId = '';
+
+  public get availableCheckPresets(): readonly CommandPreset[] {
+    if (!this.npmScripts.length) return this.checkPresets;
+    return this.checkPresets.filter(p => this.isPresetAvailable(p));
+  }
+
+  public get availablePostOpPresets(): readonly CommandPreset[] {
+    if (!this.npmScripts.length) return this.checkPresets;
+    return this.checkPresets.filter(p => this.isPresetAvailable(p));
+  }
+
+  public isPresetAvailable(preset: CommandPreset): boolean {
+    if (!this.npmScripts.length) return true;
+    if (preset.value.command === 'npm') {
+      const scriptName = preset.value.args[0] === 'test' ? 'test' : (preset.value.args[0] === 'run' ? preset.value.args[1] : undefined);
+      if (scriptName) return this.npmScripts.some(s => s.id === scriptName);
+    }
+    return true;
+  }
+
+  public addScriptToPhase(scriptId: string, phase: 'setup' | 'checks' | 'postOp'): void {
+    const script = this.npmScripts.find(s => s.id === scriptId);
+    if (script && !this.commandSelected(script.value, phase)) {
+      this.toggleCommand(script.value, phase);
+    }
+  }
+
+  public isScriptSelectedInPhase(scriptId: string, phase: 'setup' | 'checks' | 'postOp'): boolean {
+    const script = this.npmScripts.find(s => s.id === scriptId);
+    if (!script) return false;
+    return this.commandSelected(script.value, phase);
+  }
   public get selectedNpmScript() {
     return this.npmScriptPath === this.settings.repositoryPath ? this.npmScripts.find(script => script.id === this.npmScriptId) : undefined;
   }
@@ -384,11 +476,26 @@ export class AutomationPanelComponent implements OnInit {
       await this.refresh();
       const { passport } = await firstValueFrom(this.http.get<{ passport: ProjectPassport | null }>('/api/automation/project-passport'));
       this.passport ??= passport;
+      if (this.passport && !this.npmScripts.length) {
+        this.initNpmScriptsFromPassport(this.passport);
+      }
     });
     timer(AUTOMATION_TIMING.pollMs, AUTOMATION_TIMING.pollMs).pipe(
       filter(() => !this.busy && !this.starting), exhaustMap(() => this.poll()), takeUntilDestroyed(this.destroyRef),
     ).subscribe();
   }
+  private initNpmScriptsFromPassport(passport: ProjectPassport): void {
+    const npmCmds = passport.commands.find(c => c.source === 'package.json');
+    if (npmCmds?.names?.length) {
+      this.npmScriptPath = passport.path;
+      this.npmScripts = npmCmds.names.map(script => ({
+        id: script, label: script,
+        description: script === 'test' ? 'npm test' : 'npm run ' + script,
+        value: { command: 'npm', args: script === 'test' ? ['test'] : ['run', script] }
+      }));
+    }
+  }
+
   public addPresetConnection(id: ConnectionPreset): string {
     const preset = CONNECTION_PRESETS.find((entry) => entry.id === id)!;
     const connectionId = crypto.randomUUID();

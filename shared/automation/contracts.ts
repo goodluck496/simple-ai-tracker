@@ -97,8 +97,8 @@ export interface AutomationSettings {
 
 export const DEFAULT_AUTOMATION_SETTINGS: AutomationSettings = {
   repositoryPath: '', baseBranch: 'main', connections: [], agents: [], pipeline: [], checks: [], setup: [], postOperations: [],
-  artifactPaths: [], timeoutMinutes: AUTOMATION_LIMITS.timeoutMinutes.default, maxRevisions: 1, maxAgentCalls: 6, maxInputTokens: 500000, maxRunMinutes: 20, mergePolicy: MergePolicy.Manual,
-  maxStageToolCalls: 24, maxParallelRuns: 2, dependencyMode: 'isolated', maxMergeAttempts: 2, resolveConflicts: true,
+  artifactPaths: [], timeoutMinutes: AUTOMATION_LIMITS.timeoutMinutes.default, maxRevisions: 1, maxAgentCalls: 20, maxInputTokens: 5000000, maxRunMinutes: 60, mergePolicy: MergePolicy.Manual,
+  maxStageToolCalls: 60, maxParallelRuns: 2, dependencyMode: 'isolated', maxMergeAttempts: 2, resolveConflicts: true,
   maxResolverCalls: 1, resolverTimeoutMinutes: 3, maxResolverToolCalls: 16,
 };
 export const DEFAULT_CHECK_COMMAND: CheckCommand = { command: 'npm', args: ['test'] };

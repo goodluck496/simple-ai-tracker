@@ -1,4 +1,4 @@
-param(
+﻿param(
   [Parameter(Position=0)]
   [ValidateSet('install','uninstall','start','stop','status','restart','logs')]
   [string]$Action = 'status',

@@ -1,5 +1,8 @@
 import { ChangeDetectionStrategy, Component, inject, model, output, signal } from '@angular/core';
 import { CommonModule } from '@angular/common';
+import { HttpClient } from '@angular/common/http';
+import { toSignal } from '@angular/core/rxjs-interop';
+import { catchError, map, of } from 'rxjs';
 import { ButtonModule } from 'primeng/button';
 import { TooltipModule } from 'primeng/tooltip';
 import { DialogModule } from 'primeng/dialog';
@@ -24,6 +27,13 @@ import { WorkspaceService } from '../../services/workspace.service';
 export class SidebarComponent {
   public readonly store = inject(TrackerStore);
   public readonly ws = inject(WorkspaceService);
+  public readonly authEnabled = toSignal(
+    inject(HttpClient).get<{ enabled: boolean }>('/api/auth/status').pipe(
+      map(status => status.enabled),
+      catchError(() => of(false)),
+    ),
+    { initialValue: false },
+  );
 
   public readonly isExpanded = model<boolean>(true);
   public readonly showWorkspaceDialog = signal(false);

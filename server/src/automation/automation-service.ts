@@ -48,9 +48,29 @@ export class AutomationService {
     if (input !== undefined) {
       if (input === null) this.repos.meta.set(key, 'null');
       else {
-        const value = input as AutomationSettings;
-        const checked = new AutomationSettingsValidator().validate({ ...this.settings(), agents: value.agents, pipeline: value.pipeline });
-        this.repos.meta.set(key, JSON.stringify({ agents: checked.agents, pipeline: checked.pipeline }));
+        const value = input as Partial<AutomationSettings>;
+        const checked = new AutomationSettingsValidator().validate({
+          ...this.settings(),
+          ...(value.agents ? { agents: value.agents } : {}),
+          ...(value.pipeline ? { pipeline: value.pipeline } : {}),
+          ...(value.maxStageToolCalls !== undefined ? { maxStageToolCalls: value.maxStageToolCalls } : {}),
+          ...(value.maxAgentCalls !== undefined ? { maxAgentCalls: value.maxAgentCalls } : {}),
+          ...(value.maxInputTokens !== undefined ? { maxInputTokens: value.maxInputTokens } : {}),
+          ...(value.maxRunMinutes !== undefined ? { maxRunMinutes: value.maxRunMinutes } : {}),
+          ...(value.timeoutMinutes !== undefined ? { timeoutMinutes: value.timeoutMinutes } : {}),
+          ...(value.maxRevisions !== undefined ? { maxRevisions: value.maxRevisions } : {}),
+        });
+        const teamPayload: Partial<AutomationSettings> = {
+          agents: checked.agents,
+          pipeline: checked.pipeline,
+          ...(value.maxStageToolCalls !== undefined ? { maxStageToolCalls: checked.maxStageToolCalls } : {}),
+          ...(value.maxAgentCalls !== undefined ? { maxAgentCalls: checked.maxAgentCalls } : {}),
+          ...(value.maxInputTokens !== undefined ? { maxInputTokens: checked.maxInputTokens } : {}),
+          ...(value.maxRunMinutes !== undefined ? { maxRunMinutes: checked.maxRunMinutes } : {}),
+          ...(value.timeoutMinutes !== undefined ? { timeoutMinutes: checked.timeoutMinutes } : {}),
+          ...(value.maxRevisions !== undefined ? { maxRevisions: checked.maxRevisions } : {}),
+        };
+        this.repos.meta.set(key, JSON.stringify(teamPayload));
       }
     }
     const override = JSON.parse(this.repos.meta.get(key) ?? 'null') as Partial<AutomationSettings> | null;

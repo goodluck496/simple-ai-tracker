@@ -1303,3 +1303,143 @@ code {
     color: #38bdf8;
   }
 }
+
+.command-picker-inline {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0.4rem 0;
+  flex-wrap: wrap;
+
+  .grow-field {
+    flex: 1;
+    min-width: 220px;
+  }
+}
+
+/* Budget Summary Banner & Presets */
+.budget-summary-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.65rem 0.85rem;
+  border-radius: 8px;
+  background: rgba(56, 189, 248, 0.08);
+  border: 1px solid rgba(56, 189, 248, 0.25);
+  margin-top: 0.75rem;
+
+  .budget-summary-info {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    font-size: 0.82rem;
+
+    i {
+      font-size: 1rem;
+      color: #38bdf8;
+      flex-shrink: 0;
+    }
+
+    strong {
+      color: #e2e8f0;
+      margin-right: 0.4rem;
+    }
+
+    span {
+      color: #94a3b8;
+    }
+  }
+}
+
+.budget-presets-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 0.75rem;
+  margin-bottom: 0.5rem;
+}
+
+.budget-preset-card {
+  padding: 0.85rem;
+  border-radius: 8px;
+  background: var(--p-content-background, #1e293b);
+  border: 1px solid var(--p-content-border-color, #334155);
+  cursor: pointer;
+  transition: all 0.15s ease;
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+
+  &:hover {
+    border-color: #38bdf8;
+    background: rgba(56, 189, 248, 0.05);
+  }
+
+  &.selected {
+    border-color: #38bdf8;
+    background: rgba(56, 189, 248, 0.12);
+    box-shadow: 0 0 0 1px #38bdf8;
+  }
+
+  .preset-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+
+    strong {
+      font-size: 0.9rem;
+      color: #f1f5f9;
+    }
+
+    .preset-badge {
+      font-size: 0.68rem;
+      font-weight: 600;
+      padding: 0.15rem 0.45rem;
+      border-radius: 4px;
+      background: rgba(56, 189, 248, 0.2);
+      color: #38bdf8;
+    }
+  }
+
+  .preset-desc {
+    margin: 0;
+    font-size: 0.78rem;
+    color: #94a3b8;
+    line-height: 1.35;
+  }
+
+  .preset-specs {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    margin-top: auto;
+    padding-top: 0.4rem;
+    border-top: 1px dashed rgba(255, 255, 255, 0.08);
+
+    span {
+      font-size: 0.72rem;
+      color: #cbd5e1;
+      display: inline-flex;
+      align-items: center;
+      gap: 0.25rem;
+
+      i {
+        font-size: 0.7rem;
+        color: #38bdf8;
+      }
+    }
+  }
+}
+
+.limits-subheading {
+  margin: 1.2rem 0 0.4rem;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: #cbd5e1;
+}
+
+.field-hint {
+  font-size: 0.7rem;
+  color: #64748b;
+  margin-top: 0.15rem;
+}

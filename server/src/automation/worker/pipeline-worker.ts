@@ -1,6 +1,6 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { AgentRole, RunStatus, AgentVerdict, MergePolicy, READ_ONLY_AGENT_ROLES, AGENT_VERDICTS, AUTOMATION_TIMING, AUTOMATION_LIMITS, type AgentOutcome, type AgentRun } from '../../../../shared/automation/contracts.js';
+import { AgentRole, RunStatus, AgentVerdict, MergePolicy, READ_ONLY_AGENT_ROLES, WRITABLE_AGENT_ROLES, AGENT_VERDICTS, AUTOMATION_TIMING, AUTOMATION_LIMITS, type AgentOutcome, type AgentRun } from '../../../../shared/automation/contracts.js';
 import type { TrackerChannel } from './mcp-client.js';
 import { PostOperationRunner } from './post-operation-runner.js';
 import { ProcessExecutor, ProcessExecutionError } from '../runners/process-executor.js';
@@ -293,7 +293,7 @@ export class PipelineWorker {
           + (run.reviewFeedback ? `\nHuman acceptance feedback:\n${AgentHandoff.feedback(run.reviewFeedback)}\nFeedback screenshots in worktree: ${JSON.stringify(reviewImages)}. Inspect them if your tools support images.\n` : '')
           + (overlapPreparation ? '\nDependencies are being prepared concurrently. Start with source reads and save_progress planning in this conversation. Write/edit/check/project tools automatically wait for successful setup. Recheck any generated source relevant to your plan after setup; do not install dependencies yourself.\n' : '')
           + (run.trustedExecution ? '\nTrusted execution: worker token/time/tool/call/revision quotas are disabled. Continue to completion unless blocked or manually stopped.\n'
-            : `\nObserved tool budget for this stage: ${run.settings.maxStageToolCalls ?? 24}. Use tools for the current implementation/check, then finish with the requested outcome.\n`)
+            : `\nObserved tool budget for this stage: ${run.settings.maxStageToolCalls ?? 60}. Use tools for the current implementation/check, then finish with the requested outcome.\n`)
           + `\nSelected execution stages: ${PipelinePolicy.roles(run.settings).join(' → ')}. No missing roles may be added. `
           + (profile.role === AgentRole.Analyst && !PipelinePolicy.canDecompose(run.settings) ? 'Return decomposition: []; describe proposed subtasks in plan text if useful, without dispatching other roles.\n' : '');
         let outcome: AgentOutcome;
@@ -359,7 +359,7 @@ export class PipelineWorker {
               .filter(attempt => attempt.nativeSessionId === memory.conversationId && attempt.usage?.source === 'antigravity-json')
               .reduce<TokenUsage | undefined>((total, attempt) => attempt.usage ? TokenMeter.add(total, attempt.usage) : total, undefined) : undefined,
             onSession: id => journal.session(id),
-            maxToolCalls: run.settings.maxStageToolCalls ?? 24,
+            maxToolCalls: run.settings.maxStageToolCalls ?? 60,
             onUsage: (usage, state) => {
               if (metering) {
                 metering = { ...metering, usage, terminal: state?.terminal };
@@ -486,7 +486,8 @@ export class PipelineWorker {
           outcome = { ...outcome, delivery: { childKey: child.key, sourceSha, mergedSha: sha } };
         }
         const isPipelineComplete = run.stage === run.settings.pipeline.length - 1 && outcome.verdict === AgentVerdict.Pass && !outcome.questions?.length;
-        if (isPipelineComplete && run.settings.postOperations?.length) {
+        const hasCodeModifications = changedFiles.length > 0 || (WRITABLE_AGENT_ROLES as readonly string[]).includes(profile.role);
+        if (isPipelineComplete && hasCodeModifications && run.settings.postOperations?.length) {
           for (const op of run.settings.postOperations) {
             await phase(RunPhase.PostOp, `Пост-операция: ${op.command} ${op.args.join(' ')}`);
             await new PostOperationRunner(this.executor).run(op, cwd, common, controller.signal, progress);
