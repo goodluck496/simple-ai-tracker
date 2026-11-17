@@ -1,5 +1,6 @@
 import { ChangeDetectorRef, Component, DestroyRef, ElementRef, EventEmitter, Input, OnInit, Output, ViewChild, inject } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
+import { CdkScrollable } from '@angular/cdk/scrolling';
 import { FormsModule, ReactiveFormsModule, FormControl } from '@angular/forms';
 import { HttpClient } from '@angular/common/http';
 import { exhaustMap, filter, firstValueFrom, last, lastValueFrom, switchMap, takeWhile, tap, timeout, timer, TimeoutError } from 'rxjs';
@@ -14,16 +15,19 @@ import { AccordionModule } from 'primeng/accordion';
 import { DialogModule } from 'primeng/dialog';
 import { MultiSelectModule } from 'primeng/multiselect';
 import { TooltipModule } from 'primeng/tooltip';
+import { PanelModule } from 'primeng/panel';
+import { TextareaModule } from 'primeng/textarea';
 import { BATCH_TASK_LIMIT } from '../../../../../shared/automation/batch';
 import { MCP_CATALOG } from '../../../../../shared/automation/mcp-catalog';
 import { PipelinePolicy } from '../../../../../shared/automation/pipeline-policy';
 import { AUTOMATION_TABS, AutomationTab } from './automation-panel.types';
+import { PipelineFlowComponent } from './pipeline-flow.component';
 import { AGENT_ROLES, RUNNER_IDS, DEFAULT_AUTOMATION_SETTINGS, PROVIDER_KINDS, REASONING_EFFORTS, MERGE_POLICIES,
   AUTOMATION_LIMITS, AUTOMATION_TIMING,
-  DEFAULT_CHECK_COMMAND, DEFAULT_SETUP_COMMAND, DEFAULT_POST_OPERATION, ProviderKind, RunnerId, AgentRole,
+  DEFAULT_SETUP_COMMAND, ProviderKind, RunnerId, AgentRole,
   type AgentRun, type AutomationSettings, type CheckCommand, type AgentProfile, type ModelConnection } from '../../../../../shared/automation/contracts';
-import { ProjectAction, ProjectRequestStatus, PROJECT_LIMITS, SETUP_PRESETS, CHECK_PRESETS, WorkerPlatform,
-  type ProjectPassport, type ProjectInput, type ProjectRequest, type ProjectResult, type HostStatus, type CommandPreset } from '../../../../../shared/automation/project';
+import { ProjectAction, ProjectRequestStatus, PROJECT_LIMITS, SETUP_PRESETS, CHECK_PRESETS, WorkerPlatform, packageScript, pnpmInstall, projectCommand,
+  type PackageManagerInfo, type ProjectPassport, type ProjectInput, type ProjectRequest, type ProjectResult, type HostStatus, type CommandPreset } from '../../../../../shared/automation/project';
 import { CONNECTION_PRESETS, PROVIDER_OPTIONS, RUNNER_OPTIONS, ROLE_OPTIONS, STANDARD_TEAM_ROLES, type ConnectionPreset } from '../../../../../shared/automation/presets';
 import type { TaskSummary } from '../../models/tracker.models';
 import { TrackerApiService } from '../../services/tracker-api.service';
@@ -34,7 +38,7 @@ import { TaskAutomationReadiness, TASK_STATUS_TITLES, TASK_SELECTION_LIMIT, type
 import { ModelCatalogKey, type ModelOption } from '../../../../../shared/automation/model-catalog';
 
 @Component({ selector: 'sat-automation-panel', standalone: true,
-  imports: [TreeModule, FormsModule, ReactiveFormsModule, SelectModule, ButtonModule, CheckboxModule, InputTextModule, TabsModule, AccordionModule, DialogModule, MultiSelectModule, TooltipModule],
+  imports: [TreeModule, FormsModule, ReactiveFormsModule, SelectModule, ButtonModule, CheckboxModule, InputTextModule, TabsModule, AccordionModule, DialogModule, MultiSelectModule, TooltipModule, PanelModule, TextareaModule, PipelineFlowComponent, CdkScrollable],
   templateUrl: './automation-panel.component.html', styleUrl: './automation-panel.component.scss' })
 export class AutomationPanelComponent implements OnInit {
   public readonly mcpCatalog = MCP_CATALOG;
@@ -111,13 +115,13 @@ export class AutomationPanelComponent implements OnInit {
       else this.taskDrafts.set(this.loadedTask, { settings: structuredClone(this.settings), overridden: this.taskOverridden });
     }
   }
-  private teamSignature(settings: AutomationSettings): string { return JSON.stringify([settings.agents, settings.pipeline, settings.maxStageToolCalls, settings.maxAgentCalls, settings.maxInputTokens, settings.maxRunMinutes, settings.timeoutMinutes, settings.maxRevisions]); }
+  private teamSignature(settings: AutomationSettings): string { return JSON.stringify([settings.agents, settings.pipeline, settings.pipelineRoutes, settings.maxStageToolCalls, settings.maxAgentCalls, settings.maxInputTokens, settings.maxRunMinutes, settings.timeoutMinutes, settings.maxRevisions]); }
   private async loadTaskTeam(id: string): Promise<void> {
     const value = await firstValueFrom(this.http.get<{ settings: AutomationSettings; overridden: boolean }>(`/api/automation/tasks/${encodeURIComponent(id)}/team`));
     if (this.settingsScope !== 'task' || id !== this.selectedTask) return;
     this.loadedTeamSignature = this.teamSignature(value.settings);
     const draft = this.taskDrafts.get(id)?.settings;
-    this.settings = structuredClone(draft ? { ...value.settings, agents: draft.agents, pipeline: draft.pipeline, maxStageToolCalls: draft.maxStageToolCalls, maxAgentCalls: draft.maxAgentCalls, maxInputTokens: draft.maxInputTokens, maxRunMinutes: draft.maxRunMinutes, timeoutMinutes: draft.timeoutMinutes, maxRevisions: draft.maxRevisions } : value.settings);
+    this.settings = structuredClone(draft ? { ...value.settings, agents: draft.agents, pipeline: draft.pipeline, pipelineRoutes: draft.pipelineRoutes, maxStageToolCalls: draft.maxStageToolCalls, maxAgentCalls: draft.maxAgentCalls, maxInputTokens: draft.maxInputTokens, maxRunMinutes: draft.maxRunMinutes, timeoutMinutes: draft.timeoutMinutes, maxRevisions: draft.maxRevisions } : value.settings);
     this.taskOverridden = value.overridden; this.loadedTask = id;
   }
   public changeScope(scope: 'project' | 'task'): void {
@@ -134,7 +138,17 @@ export class AutomationPanelComponent implements OnInit {
     void this.act(async () => { const value = await firstValueFrom(this.http.post<{ settings: AutomationSettings; overridden: boolean }>(`/api/automation/tasks/${id}/team/reset`, {})); this.taskDrafts.delete(id); this.settings = value.settings; this.loadedTask = id; this.loadedTeamSignature = this.teamSignature(this.settings); this.taskOverridden = false; this.notice = 'Задача наследует команду проекта.'; });
   }
   public toggleStage(id: string, selected: boolean): void {
-    this.settings.pipeline = selected ? this.settings.pipeline.includes(id) ? this.settings.pipeline : [...this.settings.pipeline, id] : this.settings.pipeline.filter(stage => stage !== id);
+    const index = this.settings.pipeline.indexOf(id);
+    if (selected) {
+      if (index < 0) this.settings.pipeline = [...this.settings.pipeline, id];
+      return;
+    }
+    if (index < 0) return;
+    const successor = this.settings.pipeline[PipelinePolicy.passStage(this.settings, index)] ?? null;
+    const pipeline = this.settings.pipeline.filter(stage => stage !== id);
+    const pipelineRoutes = this.settings.pipelineRoutes?.map(route => route.passTo === id ? { ...route, passTo: successor } : route);
+    this.settings.pipelineRoutes = PipelinePolicy.routesFor({ ...this.settings, pipelineRoutes }, pipeline);
+    this.settings.pipeline = pipeline;
   }
   public get launchConfigurationProblems(): string[] { return PipelinePolicy.configurationProblems(this.settings); }
   public get launchOutcomeHint(): string {
@@ -350,8 +364,22 @@ export class AutomationPanelComponent implements OnInit {
     if (connection.kind !== ProviderKind.Native) delete connection.nativeRunner;
     for (const agent of this.settings.agents.filter(agent => agent.connectionId === connection.id)) this.selectConnection(agent);
   }
-  public readonly setupPresets = SETUP_PRESETS;
-  public readonly checkPresets = CHECK_PRESETS;
+  private scriptProject: PackageManagerInfo = { packageManager: 'npm', hasLockfile: false };
+  public get packageManager(): PackageManagerInfo['packageManager'] { return this.currentScriptProject.packageManager; }
+  private get currentScriptProject(): PackageManagerInfo {
+    return this.npmScriptPath && this.npmScriptPath === this.settings.repositoryPath ? this.scriptProject : { packageManager: 'npm', hasLockfile: false };
+  }
+  public get setupPresets(): readonly CommandPreset[] {
+    if (this.packageManager === 'npm') return SETUP_PRESETS;
+    const value = pnpmInstall(this.currentScriptProject.hasLockfile);
+    return [{ id: 'pnpm-install', label: this.commandLabel(value), description: 'Установить зависимости в рабочей копии через pnpm', value }];
+  }
+  public get checkPresets(): readonly CommandPreset[] {
+    return this.packageManager === 'npm' ? CHECK_PRESETS : CHECK_PRESETS.map(preset => {
+      const value = packageScript('pnpm', preset.id);
+      return { ...preset, value, description: this.commandLabel(value) };
+    });
+  }
   public npmScripts: (CommandPreset & { body?: string })[] = [];
   public npmScriptPath = '';
   public npmScriptId = '';
@@ -375,8 +403,8 @@ export class AutomationPanelComponent implements OnInit {
   }
 
   public isPresetAvailable(preset: CommandPreset): boolean {
-    if (!this.npmScripts.length) return true;
-    if (preset.value.command === 'npm') {
+    if (this.npmScriptPath !== this.settings.repositoryPath || !this.npmScripts.length) return true;
+    if (preset.value.command === 'npm' || preset.value.command === 'pnpm') {
       const scriptName = preset.value.args[0] === 'test' ? 'test' : (preset.value.args[0] === 'run' ? preset.value.args[1] : undefined);
       if (scriptName) return this.npmScripts.some(s => s.id === scriptName);
     }
@@ -486,14 +514,7 @@ export class AutomationPanelComponent implements OnInit {
   }
   private initNpmScriptsFromPassport(passport: ProjectPassport): void {
     const npmCmds = passport.commands.find(c => c.source === 'package.json');
-    if (npmCmds?.names?.length) {
-      this.npmScriptPath = passport.path;
-      this.npmScripts = npmCmds.names.map(script => ({
-        id: script, label: script,
-        description: script === 'test' ? 'npm test' : 'npm run ' + script,
-        value: { command: 'npm', args: script === 'test' ? ['test'] : ['run', script] }
-      }));
-    }
+    this.applyNpmScripts({ path: passport.path, scripts: npmCmds?.names, packageManager: passport.packageManager, hasLockfile: passport.hasLockfile });
   }
 
   public addPresetConnection(id: ConnectionPreset): string {
@@ -507,7 +528,7 @@ export class AutomationPanelComponent implements OnInit {
     repositoryPath: 'Путь к папке git-репозитория на компьютере worker для сборки и проверок.',
     baseBranch: 'Базовая ветка репозитория, от которой создаются задачи и куда сливаются изменения.',
     newBranch: 'Имя новой ветки для создания от базовой без смены рабочей папки.',
-    setupCommands: 'Команды подготовки окружения (npm ci) перед запуском агентов.',
+    setupCommands: 'Команды подготовки окружения перед запуском агентов. Worker определяет пакетный менеджер проекта.',
     checkCommands: 'Обязательные автопроверки (тесты, линтер, сборка) после работы разработчика.',
     postOperations: 'Команды, выполняемые автоматически после завершения основного конвейера агентов.',
     artifactPaths: 'Относительные пути к артефактам и отчетам для сохранения в результатах.',
@@ -543,14 +564,26 @@ export class AutomationPanelComponent implements OnInit {
   }
   public commandSelected(value: CheckCommand, phase: 'setup' | 'checks' | 'postOp' | boolean): boolean {
     const list = this.getCommandList(phase);
-    return list.some((entry) => entry.command === value.command && this.json(entry.args) === this.json(value.args));
+    return list.some(entry => this.sameCommand(entry, value));
   }
   public toggleCommand(value: CheckCommand, phase: 'setup' | 'checks' | 'postOp' | boolean): void {
     const list = this.getCommandList(phase);
-    const index = list.findIndex((entry) => entry.command === value.command && this.json(entry.args) === this.json(value.args));
+    const index = list.findIndex(entry => this.sameCommand(entry, value));
     if (index >= 0) list.splice(index, 1); else list.push(structuredClone(value));
   }
-  public commandLabel(value: CheckCommand): string { return [value.command, ...value.args].join(' '); }
+  private effectiveCommand(value: CheckCommand): CheckCommand {
+    try { return projectCommand(value, this.currentScriptProject); }
+    catch { return value; }
+  }
+  private sameCommand(first: CheckCommand, second: CheckCommand): boolean {
+    const a = this.effectiveCommand(first);
+    const b = this.effectiveCommand(second);
+    return a.command === b.command && this.json(a.args) === this.json(b.args);
+  }
+  public commandLabel(value: CheckCommand): string {
+    const command = this.effectiveCommand(value);
+    return [command.command, ...command.args].join(' ');
+  }
   public async pickFolder(): Promise<void> {
     if (!this.host.online) {
       this.pendingFolderPick = true;
@@ -607,6 +640,7 @@ export class AutomationPanelComponent implements OnInit {
       if (!result.passport) throw new Error('Worker не вернул паспорт. Проверьте его версию.');
       if (this.settings.repositoryPath === path) this.settings.repositoryPath = result.path;
       this.passport = result.passport;
+      if (this.settings.repositoryPath === result.path) this.initNpmScriptsFromPassport(result.passport);
       this.researchStatus = 'Исследование завершено. Черновик паспорта сохранён.';
     });
   }
@@ -650,9 +684,12 @@ export class AutomationPanelComponent implements OnInit {
   }
   private applyNpmScripts(result: ProjectResult, path = result.path): void {
     this.npmScriptPath = path;
-    this.npmScripts = (result.scripts ?? []).map((script) => ({ id: script, label: script,
-      body: result.scriptBodies && Object.hasOwn(result.scriptBodies, script) ? result.scriptBodies[script] : undefined,
-      description: script === 'test' ? 'npm test' : `npm run ${script}`, value: { command: 'npm', args: script === 'test' ? ['test'] : ['run', script] } }));
+    this.scriptProject = { packageManager: result.packageManager ?? 'npm', hasLockfile: result.hasLockfile ?? false };
+    this.npmScripts = (result.scripts ?? []).map((script) => {
+      const value = packageScript(this.scriptProject.packageManager, script);
+      return { id: script, label: script, description: this.commandLabel(value), value,
+        body: result.scriptBodies && Object.hasOwn(result.scriptBodies, script) ? result.scriptBodies[script] : undefined };
+    });
     if (!this.npmScripts.some(script => script.id === this.npmScriptId)) this.npmScriptId = '';
   }
   private async project(input: ProjectInput, apply: (result: ProjectResult) => void): Promise<ProjectResult | undefined> {
@@ -788,11 +825,11 @@ export class AutomationPanelComponent implements OnInit {
     if (preset) agent.runner = preset.runner;
     else if (agent.runner === RunnerId.ModelApi) agent.runner = RunnerId.Codex;
   }
-  public removeAgent(id: string): void { this.settings.agents = this.settings.agents.filter((entry) => entry.id !== id); this.settings.pipeline = this.settings.pipeline.filter((entry) => entry !== id); }
-  public move(index: number, direction: number): void {
-    const target = index + direction;
-    if (target < 0 || target >= this.settings.pipeline.length) return;
-    [this.settings.pipeline[index], this.settings.pipeline[target]] = [this.settings.pipeline[target], this.settings.pipeline[index]];
+  public removeAgent(id: string): void { this.settings.agents = this.settings.agents.filter((entry) => entry.id !== id); this.toggleStage(id, false); }
+  public moveStage(index: number, target: number): void {
+    if (index < 0 || index >= this.settings.pipeline.length || target < 0 || target >= this.settings.pipeline.length) return;
+    const [stage] = this.settings.pipeline.splice(index, 1);
+    this.settings.pipeline.splice(target, 0, stage);
   }
   public roleLabel(role: AgentRole): string { return ROLE_OPTIONS.find((option) => option.value === role)?.label ?? role; }
   public changeRole(agent: AgentProfile, role: AgentRole): void { this.teamProfiles.changeRole(agent, role); }
@@ -830,11 +867,11 @@ export class AutomationPanelComponent implements OnInit {
       finally { this.starting = false; this.changeDetector.markForCheck(); }
     })();
   }
-  public addCheck(): void { this.settings.checks.push(structuredClone(DEFAULT_CHECK_COMMAND)); }
-  public addSetup(): void { this.settings.setup.push(structuredClone(DEFAULT_SETUP_COMMAND)); }
+  public addCheck(): void { this.settings.checks.push(packageScript(this.packageManager, 'test')); }
+  public addSetup(): void { this.settings.setup.push(this.packageManager === 'pnpm' ? pnpmInstall(this.currentScriptProject.hasLockfile) : structuredClone(DEFAULT_SETUP_COMMAND)); }
   public addPostOp(): void {
     if (!this.settings.postOperations) this.settings.postOperations = [];
-    this.settings.postOperations.push(structuredClone(DEFAULT_POST_OPERATION));
+    this.settings.postOperations.push(packageScript(this.packageManager, 'build'));
   }
   public setArgs(index: number, value: string, custom = false, phase: 'setup' | 'checks' | 'postOp' | boolean = false): void {
     try {

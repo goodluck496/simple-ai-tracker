@@ -6,10 +6,10 @@
       <div class="scope-box">
         <label class="sidebar-field-label">Область настроек</label>
         <div class="scope-toggle-group">
-          <button type="button" class="scope-toggle-btn" [class.active]="settingsScope === 'project'" [disabled]="busy || starting" (click)="changeScope('project')">
+          <button pButton type="button" class="scope-toggle-btn" [class.active]="settingsScope === 'project'" [disabled]="busy || starting" (click)="changeScope('project')">
             <i class="pi pi-folder"></i> Проект
           </button>
-          <button type="button" class="scope-toggle-btn" [class.active]="settingsScope === 'task'" [disabled]="busy || starting" (click)="changeScope('task')">
+          <button pButton type="button" class="scope-toggle-btn" [class.active]="settingsScope === 'task'" [disabled]="busy || starting" (click)="changeScope('task')">
             <i class="pi pi-bookmark"></i> Задача
           </button>
         </div>
@@ -60,7 +60,7 @@
     <nav class="sidebar-nav" role="tablist">
       <div class="nav-section-title">Разделы</div>
 
-      <button type="button" class="nav-item" [class.active]="activeTab === tab.Launch" (click)="selectTab(tab.Launch)">
+      <button pButton type="button" class="nav-item" [class.active]="activeTab === tab.Launch" (click)="selectTab(tab.Launch)">
         <i class="pi pi-bolt nav-icon"></i>
         <div class="nav-item-content">
           <span class="nav-item-label">Запуск</span>
@@ -71,7 +71,7 @@
         }
       </button>
 
-      <button type="button" class="nav-item" [class.active]="activeTab === tab.Team" [disabled]="isTabDisabled(tab.Team)" (click)="selectTab(tab.Team)">
+      <button pButton type="button" class="nav-item" [class.active]="activeTab === tab.Team" [disabled]="isTabDisabled(tab.Team)" (click)="selectTab(tab.Team)">
         <i class="pi pi-users nav-icon"></i>
         <div class="nav-item-content">
           <span class="nav-item-label">Команда и этапы</span>
@@ -79,7 +79,7 @@
         </div>
       </button>
 
-      <button type="button" class="nav-item" [class.active]="activeTab === tab.Budgets" [disabled]="isTabDisabled(tab.Budgets)" (click)="selectTab(tab.Budgets)">
+      <button pButton type="button" class="nav-item" [class.active]="activeTab === tab.Budgets" [disabled]="isTabDisabled(tab.Budgets)" (click)="selectTab(tab.Budgets)">
         <i class="pi pi-sliders-h nav-icon"></i>
         <div class="nav-item-content">
           <span class="nav-item-label">Лимиты и бюджеты</span>
@@ -87,7 +87,7 @@
         </div>
       </button>
 
-      <button type="button" class="nav-item" [class.active]="activeTab === tab.Models" [disabled]="isTabDisabled(tab.Models)" (click)="selectTab(tab.Models)">
+      <button pButton type="button" class="nav-item" [class.active]="activeTab === tab.Models" [disabled]="isTabDisabled(tab.Models)" (click)="selectTab(tab.Models)">
         <i class="pi pi-server nav-icon"></i>
         <div class="nav-item-content">
           <span class="nav-item-label">Модели</span>
@@ -95,7 +95,7 @@
         </div>
       </button>
 
-      <button type="button" class="nav-item" [class.active]="activeTab === tab.Project" [disabled]="isTabDisabled(tab.Project)" (click)="selectTab(tab.Project)">
+      <button pButton type="button" class="nav-item" [class.active]="activeTab === tab.Project" [disabled]="isTabDisabled(tab.Project)" (click)="selectTab(tab.Project)">
         <i class="pi pi-cog nav-icon"></i>
         <div class="nav-item-content">
           <span class="nav-item-label">Проект и проверки</span>
@@ -104,7 +104,7 @@
       </button>
 
       <div class="nav-section-title">Быстрый переход</div>
-      <button type="button" class="nav-item nav-action-item" (click)="openQueue.emit(selectedRun)">
+      <button pButton type="button" class="nav-item nav-action-item" (click)="openQueue.emit(selectedRun)">
         <i class="pi pi-list nav-icon"></i>
         <div class="nav-item-content">
           <span class="nav-item-label">Очередь агентов</span>
@@ -169,7 +169,7 @@
     </div>
 
     <!-- Основная прокручиваемая область -->
-    <div class="main-scroll-pane">
+    <div class="main-scroll-pane" cdkScrollable>
       <!-- ================================================================= -->
       <!-- РАЗДЕЛ: ЗАПУСК ЗАДАЧИ -->
       <!-- ================================================================= -->
@@ -207,6 +207,8 @@
                 <span class="badge-count">Выбрано этапов: {{ settings.pipeline.length }}</span>
               </div>
               <p class="card-hint">Источник: {{ settingsScope === 'task' ? 'команда выбранной задачи' : 'настройки проекта' }}. Отметьте только нужных исполнителей для нового запуска.</p>
+              <button pButton type="button" severity="secondary" size="small" [text]="true"
+                [disabled]="busy || !taskTeamReady" (click)="selectTab(tab.Team)">Настроить маршрут</button>
             </div>
             <div class="card-body">
               <div class="launch-agent-list">
@@ -219,15 +221,15 @@
                       <strong class="stage-role-name">{{ roleLabel(agent.role) }}</strong>
                       <span class="stage-runner-meta">{{ agent.runner }} · {{ agent.model || 'модель не выбрана' }}</span>
                     </label>
-                    <div class="stage-actions">
-                      <button pButton severity="secondary" type="button" size="small" [disabled]="busy || !taskTeamReady || stageIndex <= 0" (click)="move(stageIndex, -1)" [attr.aria-label]="'Этап запуска выше: ' + roleLabel(agent.role)">↑</button>
-                      <button pButton severity="secondary" type="button" size="small" [disabled]="busy || !taskTeamReady || stageIndex < 0 || stageIndex === settings.pipeline.length - 1" (click)="move(stageIndex, 1)" [attr.aria-label]="'Этап запуска ниже: ' + roleLabel(agent.role)">↓</button>
-                    </div>
                   </div>
                 }
               </div>
             </div>
           </div>
+
+          <p-panel header="Схема запуска и критерии проверок" [toggleable]="true" [collapsed]="true">
+            <sat-pipeline-flow [settings]="settings" />
+          </p-panel>
 
           <!-- Группа задач (Batch launch) -->
           @if (batchMode && settingsScope === 'project') {
@@ -364,6 +366,16 @@
 
           <div class="panel-card">
             <div class="panel-card-header">
+              <h4>Маршрут запуска</h4>
+            </div>
+            <div class="card-body">
+              <sat-pipeline-flow [settings]="settings" [editable]="!busy" (reorder)="moveStage($event.from, $event.to)"
+                (includeAgent)="toggleStage($event, true)" (createAgent)="addAgent($event)" (excludeAgent)="toggleStage($event, false)" />
+            </div>
+          </div>
+
+          <div class="panel-card">
+            <div class="panel-card-header">
               <div class="card-title-row">
                 <h4>Агенты команды</h4>
                 @if (!settings.agents.length) {
@@ -418,7 +430,7 @@
                       <p-accordion-panel value="instructions">
                         <p-accordion-header>Инструкции роли</p-accordion-header>
                         <p-accordion-content>
-                          <textarea rows="4" [(ngModel)]="agent.instructions" class="instructions-textarea" placeholder="Правила и системный промпт роли..."></textarea>
+                          <textarea pTextarea rows="4" [(ngModel)]="agent.instructions" class="instructions-textarea" placeholder="Правила и системный промпт роли..."></textarea>
                           <div class="instructions-actions">
                             <button pButton severity="secondary" size="small" type="button" (click)="resetInstructions(agent)">Вставить базовую инструкцию</button>
                           </div>
@@ -498,7 +510,7 @@
                       <p-accordion-panel value="instructions">
                         <p-accordion-header>Инструкции роли</p-accordion-header>
                         <p-accordion-content>
-                          <textarea rows="4" [(ngModel)]="doctorAgent.instructions" class="instructions-textarea" placeholder="Правила и системный промпт роли..."></textarea>
+                          <textarea pTextarea rows="4" [(ngModel)]="doctorAgent.instructions" class="instructions-textarea" placeholder="Правила и системный промпт роли..."></textarea>
                           <div class="instructions-actions">
                             <button pButton severity="secondary" size="small" type="button" (click)="resetInstructions(doctorAgent)">Вставить базовую инструкцию</button>
                           </div>
@@ -550,7 +562,7 @@
                       <p-accordion-panel value="audit-instructions">
                         <p-accordion-header>Инструкции роли аудитора</p-accordion-header>
                         <p-accordion-content>
-                          <textarea rows="4" maxlength="1500" [(ngModel)]="auditAgent.instructions"
+                          <textarea pTextarea rows="4" maxlength="1500" [(ngModel)]="auditAgent.instructions"
                             class="instructions-textarea" placeholder="На что обращать внимание при оценке этапов"></textarea>
                         </p-accordion-content>
                       </p-accordion-panel>
@@ -570,27 +582,6 @@
             </div>
           }
 
-          <!-- Порядок этапов -->
-          <div class="panel-card">
-            <div class="panel-card-header">
-              <h4>Порядок этапов конвейера</h4>
-              <p class="card-hint">Этапы выполняются последовательно сверху вниз</p>
-            </div>
-            <div class="card-body">
-              <div class="pipeline-order-list">
-                @for (id of settings.pipeline; track $index; let i = $index) {
-                  <div class="pipeline-order-row">
-                    <span class="stage-num-badge">{{ i + 1 }}</span>
-                    <span class="stage-label-text">{{ agentLabel(id) }}</span>
-                    <div class="order-buttons">
-                      <button pButton severity="secondary" type="button" size="small" [disabled]="i === 0" (click)="move(i, -1)" aria-label="Этап выше">↑</button>
-                      <button pButton severity="secondary" type="button" size="small" [disabled]="i === settings.pipeline.length - 1" (click)="move(i, 1)" aria-label="Этап ниже">↓</button>
-                    </div>
-                  </div>
-                }
-              </div>
-            </div>
-          </div>
         </div>
       }
 
@@ -718,7 +709,7 @@
             <div class="card-body">
               <div class="presets-chips">
                 @for (preset of connectionPresets; track preset.id) {
-                  <button type="button" class="preset-chip" (click)="addPresetConnection(preset.id)">
+                  <button pButton type="button" class="preset-chip" (click)="addPresetConnection(preset.id)">
                     <i class="pi pi-plus"></i> {{ preset.label }}
                   </button>
                 }
@@ -816,7 +807,7 @@
                 <div class="command-box">
                   <label class="field-label-block">
                     <span>Команда запуска PowerShell</span>
-                    <textarea #commandText readonly rows="6" [value]="launchCommand" class="powershell-textarea" aria-label="Команда запуска PowerShell"></textarea>
+                    <textarea pTextarea #commandText readonly rows="6" [value]="launchCommand" class="powershell-textarea" aria-label="Команда запуска PowerShell"></textarea>
                   </label>
                   <p class="hint">Требуются Node.js 22+, Docker CLI, Git и CodeGraph. Запускает worker в фоне из любой папки.</p>
                 </div>
@@ -911,23 +902,21 @@
                     { title: 'Разработка и проверки', sources: passport.development },
                     { title: 'Готовые скиллы', sources: passport.skills }
                   ]; track section.title) {
-                    <details>
-                      <summary>{{ section.title }} ({{ section.sources.length }})</summary>
+                    <p-panel [header]="section.title + ' (' + section.sources.length + ')'" [toggleable]="true" [collapsed]="true">
                       <ul>
                         @for (source of section.sources; track source) { <li><code>{{ source }}</code></li> }
                         @empty { <li>Источники не найдены.</li> }
                       </ul>
-                    </details>
+                    </p-panel>
                   }
                   @if (passport.commands.length) {
-                    <details>
-                      <summary>Скрипты из package.json</summary>
+                    <p-panel header="Скрипты из package.json" [toggleable]="true" [collapsed]="true">
                       <ul>
                         @for (entry of passport.commands; track entry.source) {
                           <li><code>{{ entry.source }}</code> · {{ entry.names.join(', ') }}</li>
                         }
                       </ul>
-                    </details>
+                    </p-panel>
                   }
                 }
               </section>
@@ -988,6 +977,7 @@
                 <p-button label="Перечитать package.json" icon="pi pi-refresh" severity="secondary" size="small"
                   [disabled]="projectBusy || !host.online || !settings.repositoryPath.trim()" (onClick)="refreshNpmScripts()" />
                 @if (npmScriptPath === settings.repositoryPath && npmScriptPath) {
+                  <p class="hint">Пакетный менеджер · {{ packageManager }}</p>
                   @if (npmScripts.length) {
                     <label for="npm-script">Скрипт
                       <p-select [options]="npmScripts" optionLabel="description" optionValue="id" [(ngModel)]="npmScriptId" inputId="npm-script" placeholder="Выберите скрипт" [filter]="true" appendTo="body">
@@ -1019,10 +1009,10 @@
                   }
                 }
                 <p class="card-hint">Перечитывание обновляет список скриптов. Уже выбранные команды можно убрать ниже.</p>
-                <h5><span class="phase-badge setup-badge">[Setup]</span> Подготовка рабочей папки (npm ci) <i class="pi pi-info-circle help-icon" [pTooltip]="fieldTooltips['setupCommands']"></i></h5>
+                <h5><span class="phase-badge setup-badge">[Setup]</span> Подготовка рабочей папки <i class="pi pi-info-circle help-icon" [pTooltip]="fieldTooltips['setupCommands']"></i></h5>
                 <div class="chips-row">
                   @for (preset of setupPresets; track preset.id) {
-                    <button type="button" class="command-chip" [class.selected]="commandSelected(preset.value, 'setup')" (click)="toggleCommand(preset.value, 'setup')" [pTooltip]="preset.description || preset.label">
+                    <button pButton type="button" class="command-chip" [class.selected]="commandSelected(preset.value, 'setup')" (click)="toggleCommand(preset.value, 'setup')" [pTooltip]="preset.description || preset.label">
                       [Setup] {{ preset.label }}
                     </button>
                   }
@@ -1030,8 +1020,8 @@
 
                 <h5><span class="phase-badge check-badge">[Check]</span> Обязательные проверки (тесты, линтер, сборка) <i class="pi pi-info-circle help-icon" [pTooltip]="fieldTooltips['checkCommands']"></i></h5>
                 <div class="chips-row">
-                  @for (preset of checkPresets; track preset.id) {
-                    <button type="button" class="command-chip" [class.selected]="commandSelected(preset.value, 'checks')" (click)="toggleCommand(preset.value, 'checks')" [pTooltip]="preset.description || preset.label">
+                  @for (preset of availableCheckPresets; track preset.id) {
+                    <button pButton type="button" class="command-chip" [class.selected]="commandSelected(preset.value, 'checks')" (click)="toggleCommand(preset.value, 'checks')" [pTooltip]="preset.description || preset.label">
                       [Check] {{ preset.label }}
                     </button>
                   }
@@ -1039,8 +1029,8 @@
 
                 <h5><span class="phase-badge postop-badge">[Post-op]</span> Пост-операции (после завершения основного конвейера) <i class="pi pi-info-circle help-icon" [pTooltip]="fieldTooltips['postOperations']"></i></h5>
                 <div class="chips-row">
-                  @for (preset of checkPresets; track preset.id) {
-                    <button type="button" class="command-chip" [class.selected]="commandSelected(preset.value, 'postOp')" (click)="toggleCommand(preset.value, 'postOp')" [pTooltip]="preset.description || preset.label">
+                  @for (preset of availablePostOpPresets; track preset.id) {
+                    <button pButton type="button" class="command-chip" [class.selected]="commandSelected(preset.value, 'postOp')" (click)="toggleCommand(preset.value, 'postOp')" [pTooltip]="preset.description || preset.label">
                       [Post-op] {{ preset.label }}
                     </button>
                   }
@@ -1051,17 +1041,17 @@
                   <div class="chips-row">
                     @for (command of settings.setup; track $index; let i = $index) {
                       <span class="active-command-tag setup-tag" (click)="settings.setup.splice(i, 1)">
-                        <span class="phase-label">[Setup]</span> Подготовка: {{ commandLabel(command) }} <button type="button">×</button>
+                        <span class="phase-label">[Setup]</span> Подготовка: {{ commandLabel(command) }} <button pButton type="button">×</button>
                       </span>
                     }
                     @for (command of settings.checks; track $index; let i = $index) {
                       <span class="active-command-tag check-tag" (click)="settings.checks.splice(i, 1)">
-                        <span class="phase-label">[Check]</span> Проверка: {{ commandLabel(command) }} <button type="button">×</button>
+                        <span class="phase-label">[Check]</span> Проверка: {{ commandLabel(command) }} <button pButton type="button">×</button>
                       </span>
                     }
                     @for (command of (settings.postOperations ?? []); track $index; let i = $index) {
                       <span class="active-command-tag postop-tag" (click)="settings.postOperations?.splice(i, 1)">
-                        <span class="phase-label">[Post-op]</span> Пост-оп: {{ commandLabel(command) }} <button type="button">×</button>
+                        <span class="phase-label">[Post-op]</span> Пост-оп: {{ commandLabel(command) }} <button pButton type="button">×</button>
                       </span>
                     }
                     @if (!settings.setup.length && !settings.checks.length && !(settings.postOperations?.length)) {
@@ -1113,17 +1103,14 @@
                   </div>
                 }
 
-                <p-accordion>
-                  <p-accordion-panel value="artifacts">
-                    <p-accordion-header>Скриншоты для визуального валидатора (необязательно)</p-accordion-header>
-                    <p-accordion-content>
-                      <label class="field-label-block">
-                        <span>Пути скриншотов относительно корня проекта, по одному на строку</span>
-                        <textarea rows="2" [ngModel]="settings.artifactPaths.join('\n')" (ngModelChange)="setArtifacts($event)" placeholder="e2e-screenshots/login.png"></textarea>
-                      </label>
-                    </p-accordion-content>
-                  </p-accordion-panel>
-                </p-accordion>
+                <p-panel header="Дополнительные скриншоты для визуальной проверки" [toggleable]="true" [collapsed]="true">
+                  <label class="field-label-block">
+                    <span>Пути относительно корня проекта, по одному на строку</span>
+                    <textarea pTextarea rows="3" [ngModel]="settings.artifactPaths.join('\n')" (ngModelChange)="setArtifacts($event)"
+                      placeholder="e2e-screenshots/login.png"></textarea>
+                  </label>
+                  <p class="hint">Можно оставить поле пустым. Валидатор автоматически получает скриншоты предыдущих этапов для текущих изменений. Без доступных изображений он проверяет реализацию по коду.</p>
+                </p-panel>
               </div>
             </div>
           </div>
@@ -1145,7 +1132,7 @@
   </ol>
   <label class="field-label-block">
     <span>Команда подключения</span>
-    <textarea #folderCommandText readonly rows="6" [value]="launchCommand" class="powershell-textarea" aria-label="Команда подключения для выбора папки"></textarea>
+    <textarea pTextarea #folderCommandText readonly rows="6" [value]="launchCommand" class="powershell-textarea" aria-label="Команда подключения для выбора папки"></textarea>
   </label>
   @if (launchNotice) { <p role="status" class="alert-banner alert-info">{{ launchNotice }}</p> }
   <p role="status" class="waiting-text"><i class="pi pi-spin pi-spinner"></i> Ожидаем подключения компьютера…</p>

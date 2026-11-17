@@ -8,6 +8,7 @@ import { RuntimeCoordinator, type RuntimeLease } from './runtime-coordinator.js'
 import { RunWorkspace } from './run-workspace.js';
 import { ImmutableDependencies } from './immutable-dependencies.js';
 import { TaskEnvironment } from '../runners/task-environment.js';
+import { readProjectPackageManager } from '../package-manager.js';
 
 interface Links { key: string; signature: string; names: string[]; }
 interface Ready { sid?: string; }
@@ -31,6 +32,7 @@ export class DependencyPool {
     const text = await this.text(path.join(cwd, '.sat', 'dependency-links.json')); return text ? JSON.parse(text) as Links : undefined;
   }
   public async link(cwd: string, signal: AbortSignal, progress: (text: string) => void): Promise<{ key?: string; reason?: string }> {
+    if ((await readProjectPackageManager(cwd)).packageManager === 'pnpm') return { reason: 'Проект использует pnpm. Зависимости устанавливаются в рабочей копии.' };
     const manifestText = await this.text(path.join(cwd, 'package.json')); const lockText = await this.text(path.join(cwd, 'package-lock.json'));
     if (!manifestText || !lockText) return { reason: 'No npm lockfile; isolated dependencies.' };
     if (process.platform !== 'win32' && os.userInfo().uid === 0) return { reason: 'Privileged POSIX user can bypass readonly permissions; isolated dependencies.' };

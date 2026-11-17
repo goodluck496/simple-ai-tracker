@@ -1,5 +1,6 @@
-import { AGENT_ROLES, RUNNER_IDS, AgentRole, RunnerId, ProviderKind, PROVIDER_KINDS, REASONING_EFFORTS, MERGE_POLICIES, AUTOMATION_LIMITS, type AutomationSettings } from '../../../shared/automation/contracts.js';
+import { AGENT_ROLES, RUNNER_IDS, RunnerId, ProviderKind, PROVIDER_KINDS, REASONING_EFFORTS, MERGE_POLICIES, AUTOMATION_LIMITS, type AutomationSettings } from '../../../shared/automation/contracts.js';
 import { TrackerError } from '../core/errors.js';
+import { PipelinePolicy } from '../../../shared/automation/pipeline-policy.js';
 const PROVIDER_URL_PROTOCOLS = new Set(['http:', 'https:']);
 
 export class AutomationSettingsValidator {
@@ -38,7 +39,6 @@ export class AutomationSettingsValidator {
       if (!AGENT_ROLES.includes(agent.role) || !RUNNER_IDS.includes(agent.runner) || !text(agent.instructions)
         || !text(agent.model) || !agent.model.trim() || !ids.has(agent.connectionId)) return fail('Invalid agent profile, model or connection.');
       const connection = settings.connections.find((entry) => entry.id === agent.connectionId)!;
-      if (agent.role === AgentRole.VisualValidator && !connection.supportsImages) return fail('Visual validator requires an image-capable connection.');
       if (agent.runner === RunnerId.ModelApi && connection.kind === ProviderKind.Native) return fail('Model API runner requires Ollama or an OpenAI-compatible endpoint.');
       if (agent.runner !== RunnerId.ModelApi && connection.kind !== ProviderKind.Native) return fail('Native runners use their own provider configuration. Use model-api for endpoint connections.');
       if (agent.runner === RunnerId.DeepSeekHarness && !agent.nativeProfile) return fail('DeepSeek Harness requires a worker-side native profile with the selected model.');
@@ -66,6 +66,9 @@ export class AutomationSettingsValidator {
     }
     if (!settings.pipeline.every((id) => text(id) && profiles.has(id))) return fail('Pipeline references an unknown agent.');
     if (!settings.checks.every((check) => check && text(check.command) && check.command && Array.isArray(check.args) && check.args.every(text))) return fail('Invalid check command.');
+    if (settings.pipelineRoutes !== undefined && !Array.isArray(settings.pipelineRoutes)) return fail('Invalid pipeline routes.');
+    const routeProblem = PipelinePolicy.routeProblem(settings);
+    if (routeProblem) return fail(routeProblem);
     if (!settings.setup.every((check) => check && text(check.command) && check.command && Array.isArray(check.args) && check.args.every(text))) return fail('Invalid setup command.');
     const postOperations = Array.isArray(settings.postOperations) ? settings.postOperations : [];
     if (!postOperations.every((op) => op && text(op.command) && op.command && Array.isArray(op.args) && op.args.every(text) && (op.background === undefined || typeof op.background === 'boolean'))) return fail('Invalid post-operation command.');
@@ -101,6 +104,9 @@ export class AutomationSettingsValidator {
       connections: settings.connections.map(({ id, label, kind, baseUrl, credentialEnv, supportsImages, reasoningEffort, nativeRunner, isLocal }) => ({ id, label, kind, baseUrl, credentialEnv, supportsImages, reasoningEffort, ...(isLocal !== undefined ? { isLocal } : (kind === ProviderKind.Ollama ? { isLocal: true } : {})), ...(kind === ProviderKind.Native && nativeRunner ? { nativeRunner } : {}) })),
       agents: settings.agents.map(({ id, role, runner, connectionId, model, instructions, nativeProfile, command, args }) => ({ id, role, runner, connectionId, model, instructions, nativeProfile, command, args })),
       pipeline: settings.pipeline, checks: settings.checks.map(({ command, args }) => ({ command, args })), setup: settings.setup.map(({ command, args }) => ({ command, args })), postOperations: postOperations.map(({ command, args, background }) => ({ command, args, ...(background ? { background } : {}) })), artifactPaths: settings.artifactPaths,
+      ...(settings.pipelineRoutes?.length ? { pipelineRoutes: settings.pipelineRoutes.map(({ from, passTo, retry }) => ({
+        from, passTo, ...(retry ? { retry: { to: retry.to, limit: retry.limit, exhausted: retry.exhausted } } : {}),
+      })) } : {}),
       timeoutMinutes: settings.timeoutMinutes, maxRevisions: settings.maxRevisions, mergePolicy: settings.mergePolicy,
       maxAgentCalls, maxStageToolCalls, maxInputTokens, maxRunMinutes,
       ...(doctorAgent ? { doctorAgent } : {}),

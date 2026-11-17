@@ -6,7 +6,8 @@ import type { StageEvidence } from '../../../../shared/automation/work-order.js'
 
 type Git = (args: string[]) => Promise<string>;
 export interface StageResult {
-  key: string; head: string; fingerprint: string; priorHead: string; priorStatus: string; outcome: AgentOutcome; checksComplete?: boolean; checks?: StageEvidence['checks'];
+  key: string; head: string; fingerprint: string; priorHead: string; priorStatus: string; priorFingerprint?: string;
+  outcome: AgentOutcome; checksComplete?: boolean; checks?: StageEvidence['checks'];
 }
 
 /** Durable completed-agent output; infrastructure retries must not call the model again. */
@@ -35,7 +36,10 @@ export class StageCheckpoint {
     await fs.rename(temporary, this.file);
   }
   public async invalidate(): Promise<void> { await fs.rm(this.file, { force: true }); }
-  private async fingerprint(): Promise<string> {
+  public async isClean(): Promise<boolean> {
+    return await this.fingerprint() === createHash('sha256').digest('hex');
+  }
+  public async fingerprint(): Promise<string> {
     const hash = createHash('sha256');
     // Hash actual changed files, not a possibly truncated textual/binary Git diff.
     hash.update(await this.git(['diff', '--cached', '--raw', '--no-abbrev', '--', '.', ':!.sat']));

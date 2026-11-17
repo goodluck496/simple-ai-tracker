@@ -11,6 +11,7 @@ import { WorkerModelCatalog } from './model-catalog.js';
 import { researchProject } from './project-research.js';
 import { RunCleanup } from './run-cleanup.js';
 import type { ExecutionControl } from './execution-supervisor.js';
+import { readProjectPackageManager } from '../package-manager.js';
 
 export class ProjectWorker {
   private readonly executor = new ProcessExecutor();
@@ -99,19 +100,21 @@ export class ProjectWorker {
     }
     const branches = (await this.git(root, ['for-each-ref', '--format=%(refname:short)', 'refs/heads/'])).trim().split('\n').map((v) => v.trim()).filter(Boolean);
     if (branches.length > PROJECT_LIMITS.maxEntries) throw new Error('Слишком много веток для выбора.');
-    let scriptBodies: Record<string, string> = {}; let hasLockfile = false;
+    let scriptBodies: Record<string, string> = {};
+    let declared: unknown = null;
     try {
       const file = path.join(root, 'package.json');
       if ((await stat(file)).size <= PROJECT_LIMITS.packageBytes) {
-        const json = JSON.parse(await readFile(file, 'utf8')) as { scripts?: Record<string, unknown> };
+        const json = JSON.parse(await readFile(file, 'utf8')) as { scripts?: Record<string, unknown>; packageManager?: unknown };
+        declared = json.packageManager ?? null;
         scriptBodies = Object.fromEntries(Object.entries(json.scripts ?? {})
           .filter((entry): entry is [string, string] => entry[0].length <= 200 && typeof entry[1] === 'string')
           .slice(0, PROJECT_LIMITS.maxEntries)
           .map(([name, value]) => [name, value.length > 300 ? value.slice(0, 300) + '…' : value]));
       }
     } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw new Error('Не удалось прочитать package.json проекта.'); }
-    try { await stat(path.join(root, 'package-lock.json')); hasLockfile = true; } catch { /* non-npm projects have no lockfile */ }
-    return { path: root, branches, currentBranch: (await this.git(root, ['branch', '--show-current'])).trim(), scripts: Object.keys(scriptBodies), scriptBodies, hasLockfile };
+    return { path: root, branches, currentBranch: (await this.git(root, ['branch', '--show-current'])).trim(),
+      scripts: Object.keys(scriptBodies), scriptBodies, ...await readProjectPackageManager(root, declared) };
   }
   private async previewPatch(cwd: string, patch: PreviewPatch): Promise<void> {
     const git = async (...args: string[]) => (await this.git(cwd, args)).trimEnd();

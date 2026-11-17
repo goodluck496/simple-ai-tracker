@@ -11,5 +11,5 @@ pre { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; 
 .level { font-size: .65rem; text-transform: uppercase; color: #94a3b8; }
 [data-level='error'] { color: #fda4af; } [data-level='warning'] { color: #fde68a; }
 [data-level='success'] { color: #86efac; } [data-level='command'] { color: #7dd3fc; }
-details { margin-top: .65rem; } summary { cursor: pointer; } .raw { max-height: 16rem; overflow: auto; padding: .5rem; font-size: .75rem; }
+.raw-panel { display: block; margin-top: .65rem; } .raw { max-height: 16rem; overflow: auto; padding: .5rem; font-size: .75rem; }
 @media (max-width: 600px) { .line { grid-template-columns: 4.5rem minmax(0, 1fr); gap: 0 .4rem; margin-bottom: .4rem; } .line .level { display: none; } .line pre { grid-column: 1 / -1; } }

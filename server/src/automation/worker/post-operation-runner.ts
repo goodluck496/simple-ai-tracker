@@ -7,6 +7,8 @@ import type { PostOperation } from '../../../../shared/automation/contracts.js';
 import { ProcessExecutor } from '../runners/process-executor.js';
 import { TaskEnvironment } from '../runners/task-environment.js';
 import { RuntimeCoordinator } from './runtime-coordinator.js';
+import { readProjectPackageManager } from '../package-manager.js';
+import { projectCommand } from '../../../../shared/automation/project.js';
 
 interface Receipt { pid: number; started: string; }
 
@@ -14,6 +16,7 @@ export class PostOperationRunner {
   public constructor(private readonly executor: ProcessExecutor) {}
 
   public async run(op: PostOperation, cwd: string, common: string, signal: AbortSignal, onProgress?: (text: string) => void): Promise<void> {
+    op = projectCommand(op, await readProjectPackageManager(cwd));
     const missing = await PostOperationRunner.isMissingNpmScript(op, cwd);
     if (missing) {
       onProgress?.(`Пропуск пост-операции ${op.command} ${op.args.join(' ')}: скрипт "${missing}" отсутствует в package.json.\n`);

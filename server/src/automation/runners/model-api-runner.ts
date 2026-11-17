@@ -9,6 +9,9 @@ import { ProjectMcpTools } from './project-mcp-tools.js';
 import { AGENT_OUTCOME_SCHEMA } from '../../../../shared/automation/outcome-schema.js';
 import { PipelineHelper } from '../pipeline-helper.js';
 import { StageAudit } from './stage-audit.js';
+import { readVisualArtifacts } from '../visual-artifacts.js';
+import { readProjectPackageManager } from '../package-manager.js';
+import { projectCommand } from '../../../../shared/automation/project.js';
 
 interface ToolCall { id: string; function: { name: string; arguments: string }; }
 interface Message { role: string; content: unknown; tool_calls?: ToolCall[]; tool_call_id?: string; }
@@ -30,7 +33,12 @@ export class ModelApiRunner implements AgentRunner {
     if (job.connection.credentialEnv && !secret) throw new Error(`Missing worker environment variable: ${job.connection.credentialEnv}`);
     const writable = WRITABLE_AGENT_ROLES.includes(job.profile.role);
     const contents: unknown[] = [{ type: 'text', text: job.prompt }];
-    if (job.profile.role === AgentRole.VisualValidator || job.profile.role === AgentRole.Designer) {
+    const visual = job.profile.role === AgentRole.VisualValidator;
+    if (visual && job.connection.supportsImages) {
+      const images = job.visualArtifactData ?? (await readVisualArtifacts(job.cwd, job.settings.artifactPaths)).map(image => image.url);
+      for (const url of images) contents.push({ type: 'image_url', image_url: { url } });
+    }
+    if (job.profile.role === AgentRole.Designer) {
       for (const relative of job.settings.artifactPaths) {
         if (!/\.(png|jpe?g|webp)$/i.test(relative)) continue;
         if (!job.connection.supportsImages) throw new Error('Connection does not support images.');
@@ -40,15 +48,16 @@ export class ModelApiRunner implements AgentRunner {
         const mime = /\.png$/i.test(relative) ? 'image/png' : /\.webp$/i.test(relative) ? 'image/webp' : 'image/jpeg';
         contents.push({ type: 'image_url', image_url: { url: `data:${mime};base64,${(await fs.readFile(file)).toString('base64')}` } });
       }
-      if (job.profile.role === AgentRole.VisualValidator && contents.length < 2) throw new Error('Visual validator requires at least one generated image artifact.');
     }
     if (job.connection.supportsImages) {
       for (const url of job.reviewImageData ?? []) contents.push({ type: 'image_url', image_url: { url } });
     }
     const messages: Message[] = [{ role: 'system', content: 'Follow the task instructions and return the requested JSON outcome. Use only the supplied tools. Use save_progress(note) to save findings and implementationPlan, not .sat filesystem writes. inspect_changes() lists changed files, inspect_changes(path) reads a focused current Git diff.' }, { role: 'user', content: contents.length > 1 ? contents : job.prompt }];
-    const names: string[] = job.profile.role === AgentRole.VisualValidator ? [ModelTool.Finish] : [...READ_MODEL_TOOLS.filter(name => name !== ModelTool.RunCheck || job.settings.checks.length > 0), ...(job.projectMcp?.length ? [ModelTool.Project] : []), ...(writable ? [ModelTool.WriteFile, ModelTool.EditFile] : []), ModelTool.Finish];
+    const names: string[] = [...READ_MODEL_TOOLS.filter(name => name !== ModelTool.RunCheck || (!visual && job.settings.checks.length > 0)),
+      ...(!visual && job.projectMcp?.length ? [ModelTool.Project] : []), ...(writable ? [ModelTool.WriteFile, ModelTool.EditFile] : []), ModelTool.Finish];
     messages.push({ role: 'system', content: 'When the assigned work is finished or blocked, call finish_task with the actual verdict and evidence as structured arguments. It ends this stage immediately; no prose final answer or extra confirmation is needed. Never report pass when required work or checks are incomplete. The worker independently validates changes and configured checks.' });
-    if (job.projectMcp?.length) messages.push({ role: 'system', content: 'Approved project MCP tools: ' + JSON.stringify(job.projectMcp.map(server => ({ server: server.name, tools: server.tools }))) + '. Call them using call_project_tool(server, tool, arguments). Non-text content is reported as omitted; never claim to have inspected an omitted image.' });
+    if (visual && contents.length === 1) messages.push({ role: 'system', content: 'No usable screenshot is attached. Review the current implementation through the read tools. Report code-backed findings and distinguish them from unverified rendered appearance.' });
+    if (!visual && job.projectMcp?.length) messages.push({ role: 'system', content: 'Approved project MCP tools: ' + JSON.stringify(job.projectMcp.map(server => ({ server: server.name, tools: server.tools }))) + '. Call them using call_project_tool(server, tool, arguments). Non-text content is reported as omitted; never claim to have inspected an omitted image.' });
     const parameters = (name: string) => {
       const fields: Record<string, string[]> = { list_files: ['path'], read_file: ['path', 'startLine', 'endLine'], run_check: ['index'],
         write_file: ['path', 'content'], edit_file: ['path', 'oldText', 'newText'], explore_code: ['symbol'], save_progress: ['note'], inspect_changes: ['path'], call_project_tool: ['server', 'tool', 'arguments'] };
@@ -197,6 +206,11 @@ export class ModelApiRunner implements AgentRunner {
         const completedLabel = read ? CompactProgress.apiTool(call.function.name, read) : label;
         onProgress(`Инструмент ${completedLabel}: ${error ? 'ошибка' : 'завершён'}${read?.limited ? ' (диапазон ограничен 40 строками)' : ''}.\n`);
         if (error) onProgress(CompactProgress.diagnostics(`Error: ${String(error)}`) + '\n');
+        if (error && call.function.name === ModelTool.RunCheck && result && typeof result === 'object' && 'stdout' in result) {
+          const evidence = result as { stdout?: string; stderr?: string };
+          const output = [evidence.stdout, evidence.stderr].filter(Boolean).join('\n').trim();
+          if (output) onProgress(CompactProgress.diagnostics(output) + '\n');
+        }
         const content = JSON.stringify(result);
         audit?.tool(call.function.name, read ?? args, content, Boolean(error));
         messages.push({ role: 'tool', tool_call_id: call.id, content });
@@ -264,8 +278,9 @@ export class ModelApiRunner implements AgentRunner {
     }
     if (name === ModelTool.RunCheck) {
       if (!Number.isInteger(args.index)) throw new Error('Check index must be an integer.');
-      const check = job.settings.checks[Number(args.index)];
+      let check = job.settings.checks[Number(args.index)];
       if (!check) throw new Error(`Unknown configured check #${args.index}. Available zero-based indices: ${job.settings.checks.map((entry, index) => `${index}: ${CompactProgress.command(entry.command, entry.args)}`).join('; ') || 'none'}.`);
+      check = projectCommand(check, await readProjectPackageManager(job.cwd));
       try { await this.executor.run({ ...check, cwd: job.cwd, signal: job.signal, compactProgress: true }); }
       catch (error) {
         job.signal.throwIfAborted();

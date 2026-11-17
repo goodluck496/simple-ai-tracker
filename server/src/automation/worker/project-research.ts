@@ -1,4 +1,4 @@
-import { PROJECT_LIMITS, type ProjectPassport } from '../../../../shared/automation/project.js';
+import { PROJECT_LIMITS, detectPackageManager, type ProjectPassport } from '../../../../shared/automation/project.js';
 import { ProcessExecutor } from '../runners/process-executor.js';
 
 export async function researchProject(executor: ProcessExecutor, cwd: string, branch: string): Promise<ProjectPassport> {
@@ -20,12 +20,15 @@ export async function researchProject(executor: ProcessExecutor, cwd: string, br
     .sort((a, b) => a.split('/').length - b.split('/').length).slice(0, 24);
   const manifests = section(/(?:^|\/)package\.json$/i).slice(0, 12);
   const commands = [];
+  let declared: unknown;
   for (const source of manifests) {
     const file = files.get(source)!;
     if (file.size > PROJECT_LIMITS.packageBytes) continue;
     const contents = await git(['cat-file', 'blob', file.oid], PROJECT_LIMITS.packageBytes);
     try {
-      const scripts: unknown = JSON.parse(contents)?.scripts;
+      const manifest = JSON.parse(contents);
+      if (source === 'package.json') declared = manifest?.packageManager;
+      const scripts: unknown = manifest?.scripts;
       if (!scripts || typeof scripts !== 'object' || Array.isArray(scripts)) continue;
       const names = Object.entries(scripts).filter(([name, value]) => /^[\w:.-]{1,80}$/.test(name) && typeof value === 'string')
         .map(([name]) => name).slice(0, 32);
@@ -34,8 +37,9 @@ export async function researchProject(executor: ProcessExecutor, cwd: string, br
       if (!(error instanceof SyntaxError)) throw error;
     }
   }
+  const packageManager = detectPackageManager(declared, files.has('pnpm-lock.yaml') || files.has('pnpm-workspace.yaml'));
   return {
-    path: cwd, branch, commit,
+    path: cwd, branch, commit, packageManager, hasLockfile: files.has(packageManager === 'pnpm' ? 'pnpm-lock.yaml' : 'package-lock.json'),
     architecture: section(/(?:^|\/)(?:readme[^/]*\.md|architecture[^/]*\.md|adr\/[^/]+\.md|(?:main|index|app|server)\.(?:ts|js|py|go|rs|java|cs|kt|rb|php))$/i),
     runtime: section(/(?:^|\/)(?:dockerfile[^/]*|(?:docker-)?compose[^/]*\.ya?ml|launch\.json|makefile|justfile|procfile)$/i),
     development: section(/(?:^|\/)(?:agents\.md|agent_instructions\.md|claude\.md|contributing[^/]*\.md|agent-environment\.json|\.github\/workflows\/[^/]+|\.gitlab-ci\.yml|package\.json|pyproject\.toml|cargo\.toml|go\.mod|pom\.xml|build\.gradle(?:\.kts)?|[^/]+\.csproj)$/i),

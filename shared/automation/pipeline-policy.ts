@@ -1,4 +1,5 @@
-import { AgentRole, WRITABLE_AGENT_ROLES, type AutomationSettings } from './contracts.js';
+import { AgentRole, AUTOMATION_LIMITS, EVIDENCE_AGENT_ROLES, WRITABLE_AGENT_ROLES, type AutomationSettings, type PipelineRoute } from './contracts.js';
+import type { FeatureExecution } from './decomposition.js';
 
 /** Execution is derived from selected stages, never from a named team preset. */
 export class PipelinePolicy {
@@ -7,16 +8,98 @@ export class PipelinePolicy {
     if (!settings.repositoryPath.trim()) problems.push('Не указана папка Git-проекта. Выберите её в настройках проекта.');
     if (!settings.pipeline.length) problems.push('Не выбраны этапы запуска. Отметьте нужных агентов.');
     if (this.writes(settings) && !settings.checks.length) problems.push('Для изменения кода нужны команды проверок. Настройте их в проекте; для запуска только аналитика они не требуются.');
+    const routeProblem = this.routeProblem(settings);
+    if (routeProblem) problems.push(routeProblem);
     return problems;
+  }
+  public static executionPath(settings: AutomationSettings): number[] {
+    const path: number[] = [];
+    for (let stage = 0; stage < settings.pipeline.length;) {
+      path.push(stage);
+      const next = this.passStage(settings, stage);
+      if (next <= stage) break;
+      stage = next;
+    }
+    return path;
+  }
+  public static route(settings: AutomationSettings, stage: number): PipelineRoute | undefined {
+    return settings.pipelineRoutes?.find(route => route.from === settings.pipeline[stage]);
+  }
+  public static passStage(settings: AutomationSettings, stage: number): number {
+    const target = this.route(settings, stage)?.passTo;
+    if (target === undefined) return stage + 1;
+    return target === null ? settings.pipeline.length : settings.pipeline.indexOf(target);
+  }
+  public static isGate(settings: AutomationSettings, stage: number): boolean {
+    const role = this.roles(settings)[stage];
+    return EVIDENCE_AGENT_ROLES.includes(role) || (settings.checks.length > 0 && this.checkAt(settings, stage));
+  }
+  public static canPassTo(settings: AutomationSettings, from: number, to: number): boolean {
+    if (to <= from || to > settings.pipeline.length) return false;
+    const roles = this.roles(settings);
+    return roles.slice(from + 1, to).every((role, offset) =>
+      EVIDENCE_AGENT_ROLES.includes(role) && !(settings.checks.length && this.checkAt(settings, from + 1 + offset)));
+  }
+  public static canRetryFrom(settings: AutomationSettings, gate: number, writer: number): boolean {
+    if (writer < 0 || writer > gate || !WRITABLE_AGENT_ROLES.includes(this.roles(settings)[writer])) return false;
+    let stage = writer;
+    while (stage < gate) {
+      const next = this.passStage(settings, stage);
+      if (next <= stage) return false;
+      stage = next;
+    }
+    return stage === gate;
+  }
+  public static routeProblem(settings: AutomationSettings): string | undefined {
+    const routes = settings.pipelineRoutes;
+    if (!routes) return;
+    if (!Array.isArray(routes) || routes.length > settings.pipeline.length) return 'Задайте по одной связи на каждый этап проверки.';
+    if (!routes.length) return;
+    if (new Set(settings.pipeline).size !== settings.pipeline.length) return 'Для настройки связей выберите отдельный профиль для каждого этапа.';
+    const sources = new Set<string>();
+    for (const route of routes) {
+      const from = route && settings.pipeline.indexOf(route.from);
+      if (typeof from !== 'number' || from < 0 || sources.has(route.from) || !this.isGate(settings, from)) {
+        return 'Связь должна начинаться с выбранного этапа проверки. Проверьте источники связей.';
+      }
+      sources.add(route.from);
+      if (route.passTo !== undefined && !this.canPassTo(settings, from, this.passStage(settings, from))) {
+        return 'Успешный переход должен идти вперёд и сохранять этапы реализации и обязательные команды worker.';
+      }
+      if (route.retry !== undefined && (!route.retry || !Number.isSafeInteger(route.retry.limit)
+        || route.retry.limit < 0 || route.retry.limit > AUTOMATION_LIMITS.revisions.max
+        || !['stop', 'ask'].includes(route.retry.exhausted))) {
+        return 'Укажите лимит возвратов от 0 до 10 и действие после его исчерпания.';
+      }
+    }
+    for (const route of routes) {
+      if (route.retry && !this.canRetryFrom(settings, settings.pipeline.indexOf(route.from), settings.pipeline.indexOf(route.retry.to))) {
+        return 'Возврат должен вести к этапу реализации, после которого повторится исходная проверка.';
+      }
+    }
+    return undefined;
+  }
+  public static routesFor(settings: AutomationSettings, pipeline: string[]): PipelineRoute[] | undefined {
+    return settings.pipelineRoutes?.filter(route => pipeline.includes(route.from)).map(route => ({
+      from: route.from,
+      ...(route.passTo === null || (route.passTo && pipeline.includes(route.passTo)) ? { passTo: route.passTo } : {}),
+      ...(route.retry && pipeline.includes(route.retry.to) ? { retry: route.retry } : {}),
+    })).filter(route => route.passTo !== undefined || route.retry);
   }
   public static roles(settings: AutomationSettings): AgentRole[] { return settings.pipeline.flatMap(id => { const agent = settings.agents.find(agent => agent.id === id); return agent ? [agent.role] : []; }); }
   public static writes(settings: AutomationSettings): boolean { return this.roles(settings).some(role => WRITABLE_AGENT_ROLES.includes(role)); }
+  public static revisionStage(settings: AutomationSettings, stage: number, retryWriterCheck: boolean, feature?: FeatureExecution): number {
+    if (retryWriterCheck) return stage;
+    return feature?.children.find(child => child.developerStage === stage || child.reviewerStage === stage)?.developerStage
+      ?? feature?.finalDeveloperStage
+      ?? settings.pipeline.findIndex(id => settings.agents.some(agent => agent.id === id && WRITABLE_AGENT_ROLES.includes(agent.role)));
+  }
   public static checkAt(settings: AutomationSettings, stage: number): boolean {
     const roles = this.roles(settings);
     if (roles[stage] === AgentRole.Tester) return true;
     return WRITABLE_AGENT_ROLES.includes(roles[stage]) && !roles.slice(stage + 1).some(role => WRITABLE_AGENT_ROLES.includes(role) || role === AgentRole.Tester);
   }
-  public static canDecompose(settings: AutomationSettings): boolean { return this.roles(settings).join(',') === [AgentRole.Analyst, AgentRole.Developer, AgentRole.Tester, AgentRole.Reviewer].join(','); }
+  public static canDecompose(settings: AutomationSettings): boolean { return !settings.pipelineRoutes?.length && this.roles(settings).join(',') === [AgentRole.Analyst, AgentRole.Developer, AgentRole.Tester, AgentRole.Reviewer].join(','); }
   public static needsPlan(settings: AutomationSettings, hasPlan: boolean): boolean {
     const roles = this.roles(settings); const writer = roles.findIndex(role => WRITABLE_AGENT_ROLES.includes(role));
     return !hasPlan && writer >= 0 && roles[writer] !== AgentRole.Developer && !roles.slice(0, writer).includes(AgentRole.Analyst);

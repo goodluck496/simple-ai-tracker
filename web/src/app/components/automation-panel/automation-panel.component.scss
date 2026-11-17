@@ -597,7 +597,7 @@
 
 .launch-agent-row {
   display: grid;
-  grid-template-columns: auto 2.5rem minmax(0, 1fr) auto;
+  grid-template-columns: auto 2.5rem minmax(0, 1fr);
   align-items: center;
   gap: 0.75rem;
   padding: 0.6rem 0.85rem;
@@ -639,17 +639,6 @@
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
-    }
-  }
-
-  .stage-actions {
-    display: flex;
-    gap: 0.25rem;
-
-    button {
-      width: 1.85rem;
-      height: 1.85rem;
-      padding: 0;
     }
   }
 }
@@ -822,48 +811,6 @@
   align-items: center;
   gap: 0.5rem;
   margin-top: 0.5rem;
-}
-
-/* Pipeline Order */
-.pipeline-order-list {
-  display: flex;
-  flex-direction: column;
-  gap: 0.35rem;
-}
-
-.pipeline-order-row {
-  display: flex;
-  align-items: center;
-  gap: 0.65rem;
-  padding: 0.45rem 0.75rem;
-  border-radius: 0.35rem;
-  background: rgba(0, 0, 0, 0.2);
-  border: 1px solid var(--p-content-border-color, #334155);
-
-  .stage-num-badge {
-    font-weight: 700;
-    font-size: 0.85rem;
-    color: var(--p-primary-color, #38bdf8);
-    width: 1.5rem;
-    text-align: center;
-  }
-
-  .stage-label-text {
-    flex: 1;
-    font-size: 0.82rem;
-    color: #e2e8f0;
-  }
-
-  .order-buttons {
-    display: flex;
-    gap: 0.25rem;
-
-    button {
-      width: 1.75rem;
-      height: 1.75rem;
-      padding: 0;
-    }
-  }
 }
 
 /* Presets & Connections */

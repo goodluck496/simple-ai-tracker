@@ -6,6 +6,7 @@ export interface StageEvidence {
   stage: number; revision: number; role: AgentRole; sha: string; requirementsKey: string;
   verdict: AgentVerdict; summary: string; changedFiles: string[];
   checks: { command: string; args: string[]; exitCode: 0 }[];
+  screenshotPaths?: string[];
   current?: boolean;
 }
 

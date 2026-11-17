@@ -6,6 +6,9 @@ import { TableModule } from 'primeng/table';
 import { ButtonModule } from 'primeng/button';
 import { FormsModule } from '@angular/forms';
 import { SelectModule } from 'primeng/select';
+import { PanelModule } from 'primeng/panel';
+import { InputTextModule } from 'primeng/inputtext';
+import { InputNumberModule } from 'primeng/inputnumber';
 import { PROJECT_LIMITS, ProjectAction, ProjectRequestStatus, type ProjectDiff, type ProjectRequest } from '../../../../../shared/automation/project';
 import type { ModelCatalogInput, ModelOption } from '../../../../../shared/automation/model-catalog';
 import { CheckboxModule } from 'primeng/checkbox';
@@ -27,7 +30,9 @@ import { WorkspaceService } from '../../services/workspace.service';
 import { filterQueueItems } from './queue-search';
 import { formatQueueDate, sortRunHistory } from './queue-dates';
 
-@Component({ selector: 'sat-automation-queue', standalone: true, imports: [DatePipe, DecimalPipe, RunConsoleComponent, RunActivityComponent, TableModule, ButtonModule, FormsModule, CheckboxModule, DialogModule, SelectModule],
+import { PipelineFlowComponent } from '../automation-panel/pipeline-flow.component';
+
+@Component({ selector: 'sat-automation-queue', standalone: true, imports: [DatePipe, DecimalPipe, RunConsoleComponent, RunActivityComponent, TableModule, ButtonModule, FormsModule, CheckboxModule, DialogModule, SelectModule, PanelModule, InputTextModule, InputNumberModule, PipelineFlowComponent],
   changeDetection: ChangeDetectionStrategy.OnPush, templateUrl: './automation-queue.component.html', styleUrl: './automation-queue.component.scss' })
 export class AutomationQueueComponent {
   private readonly http = inject(HttpClient);
@@ -347,10 +352,10 @@ export class AutomationQueueComponent {
       }
     });
   }
-  public action(item: QueueItem, action: RunAction): void {
+  public action(item: QueueItem, action: RunAction, refreshChecks = false): void {
     if (this.busy()) return;
     this.busy.set(true); this.error.set(''); this.notice.set('');
-    this.http.post<{ run?: AgentRun }>(`/api/automation/runs/${item.id}/${action}`, {}).pipe(
+    this.http.post<{ run?: AgentRun }>(`/api/automation/runs/${item.id}/${action}`, refreshChecks ? { refreshChecks: true } : {}).pipe(
       tap((result) => { if (result.run) this.selectedId.set(result.run.id); this.refresh.next(); this.changed.emit(); }),
       catchError((error: unknown) => { this.error.set(this.message(error)); return EMPTY; }),
       finalize(() => this.busy.set(false)), takeUntilDestroyed(this.destroyRef),

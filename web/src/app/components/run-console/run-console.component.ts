@@ -3,12 +3,13 @@ import { DatePipe } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { ButtonModule } from 'primeng/button';
 import { SelectModule } from 'primeng/select';
+import { PanelModule } from 'primeng/panel';
 import { HttpClient } from '@angular/common/http';
 import { firstValueFrom } from 'rxjs';
 import type { RunEvent } from '../../../../../shared/automation/contracts';
 import { CONSOLE_LIMITS, RunConsoleDecoder } from '../../../../../shared/automation/console';
 
-@Component({ selector: 'sat-run-console', standalone: true, imports: [DatePipe, FormsModule, ButtonModule, SelectModule],
+@Component({ selector: 'sat-run-console', standalone: true, imports: [DatePipe, FormsModule, ButtonModule, SelectModule, PanelModule],
   changeDetection: ChangeDetectionStrategy.OnPush, templateUrl: './run-console.component.html', styleUrl: './run-console.component.scss' })
 export class RunConsoleComponent {
   private readonly http = inject(HttpClient);

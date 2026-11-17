@@ -16,12 +16,32 @@ export function exampleSettings(): AutomationSettings {
     pipeline: ['analyst', 'developer', 'tester', 'reviewer'], checks: [{ command: 'npm', args: ['test'] }] };
 }
 
-test('automation settings validate image capabilities, provider compatibility and secret references', () => {
+test('resuming with current project checks retains the run and its progress', () => {
+  const app = createContainer({ config: { dbPath: ':memory:' }, logger: new SilentLogger() });
+  try {
+    const service = app.automationService;
+    const settings = service.configure(exampleSettings());
+    const task = app.taskService.createTask({ title: 'Update a failed check' });
+    const run = service.enqueue(task.id);
+    const owned = service.claim('fixture')!;
+    service.fail(run.id, owned.leaseToken!, 'Configured check script unavailable');
+    const checks = [{ command: 'pnpm', args: ['run', 'build:browser'] }];
+    service.configure({ ...settings, checks });
+    const resumed = service.resume(run.id, undefined, undefined, false, true);
+    assert.equal(resumed.id, run.id);
+    assert.equal(resumed.stage, run.stage);
+    assert.equal(resumed.status, 'queued');
+    assert.deepEqual(resumed.settings.checks, checks);
+    assert.deepEqual(resumed.settings.pipeline, run.settings.pipeline);
+  } finally { app.close(); }
+});
+
+test('automation settings allow source-based visual validation and validate provider compatibility and secret references', () => {
   const validator = new AutomationSettingsValidator();
   const config = exampleSettings();
   assert.equal(validator.validate(config).agents[0].runner, 'codex');
   config.agents[0].role = 'visual-validator';
-  assert.throws(() => validator.validate(config), /image-capable/);
+  assert.equal(validator.validate(config).agents[0].role, 'visual-validator');
   config.connections[0].supportsImages = true;
   config.agents[0].runner = 'model-api';
   assert.throws(() => validator.validate(config), /endpoint/);

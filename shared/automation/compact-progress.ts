@@ -41,7 +41,8 @@ export class CompactProgress {
   }
   public static diagnostics(text: string): string {
     const lines = text.replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, '').split(/\r?\n/);
-    const selected = lines.filter(l => /^\s*ошибк/iu.test(l) || /^(?:\s*at\s|\s*(?:error|exception|assertionerror|typeerror|referenceerror|syntaxerror|rangeerror|expected|actual|npm (?:err|error))\b)|:\s*error\s+(?:TS\d+|[A-Z]+\d*)\b/i.test(l));
+    const selected = lines.filter(l => /^\s*ошибк/iu.test(l) ||
+      /^(?:\s*(?:at\s|NX\s{2,}|Set NX_SOCKET_DIR\b)|\s*(?:[✘×]\s*)?\[(?:ERROR|FATAL)\]|\s*(?:error|exception|assertionerror|typeerror|referenceerror|syntaxerror|rangeerror|expected|actual|npm (?:err|error))\b)|:\s*error\s+(?:TS\d+|[A-Z]+\d*)\b/i.test(l));
     return selected.slice(0, 16).map(l => l.slice(0, 700)).join('\n').slice(0, 4000) || 'Ошибка выполнения; подробности доступны у исполнителя.';
   }
   public static success(text: string): string[] {

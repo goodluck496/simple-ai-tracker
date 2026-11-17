@@ -13,6 +13,7 @@ export class StageHandoff {
     catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined; throw new Error('Stage handoff is unreadable; preserved work requires inspection.'); }
     const evidence = saved.evidence;
     if (saved.runId !== this.runId || !evidence || !Array.isArray(evidence.changedFiles) || !Array.isArray(evidence.checks)
+      || (evidence.screenshotPaths !== undefined && (!Array.isArray(evidence.screenshotPaths) || evidence.screenshotPaths.some(file => typeof file !== 'string')))
       || typeof evidence.summary !== 'string' || !Number.isSafeInteger(evidence.stage) || !Number.isSafeInteger(evidence.revision)) throw new Error('Invalid stage handoff; refusing unverified evidence.');
     if (evidence.revision > revision || (evidence.stage === stage && evidence.revision === revision)) return undefined;
     return { ...evidence, current: evidence.requirementsKey === requirementsKey && evidence.sha === sha };

@@ -53,6 +53,7 @@ export class AutomationService {
           ...this.settings(),
           ...(value.agents ? { agents: value.agents } : {}),
           ...(value.pipeline ? { pipeline: value.pipeline } : {}),
+          pipelineRoutes: value.pipelineRoutes ?? [],
           ...(value.maxStageToolCalls !== undefined ? { maxStageToolCalls: value.maxStageToolCalls } : {}),
           ...(value.maxAgentCalls !== undefined ? { maxAgentCalls: value.maxAgentCalls } : {}),
           ...(value.maxInputTokens !== undefined ? { maxInputTokens: value.maxInputTokens } : {}),
@@ -63,6 +64,7 @@ export class AutomationService {
         const teamPayload: Partial<AutomationSettings> = {
           agents: checked.agents,
           pipeline: checked.pipeline,
+          pipelineRoutes: checked.pipelineRoutes ?? [],
           ...(value.maxStageToolCalls !== undefined ? { maxStageToolCalls: checked.maxStageToolCalls } : {}),
           ...(value.maxAgentCalls !== undefined ? { maxAgentCalls: checked.maxAgentCalls } : {}),
           ...(value.maxInputTokens !== undefined ? { maxInputTokens: checked.maxInputTokens } : {}),
@@ -74,7 +76,9 @@ export class AutomationService {
       }
     }
     const override = JSON.parse(this.repos.meta.get(key) ?? 'null') as Partial<AutomationSettings> | null;
-    return { overridden: !!override, settings: new AutomationSettingsValidator().validate({ ...this.settings(), ...override }) };
+    return { overridden: !!override, settings: new AutomationSettingsValidator().validate({
+      ...this.settings(), ...override, ...(override ? { pipelineRoutes: override.pipelineRoutes ?? [] } : {}),
+    }) };
   }
   public list(taskId?: string): AgentRun[] {
     return this.runs.db.transaction(() => { this.expireLeases(); return this.runs.list(taskId).map((run) => this.publicRun(run)); });
@@ -167,8 +171,6 @@ export class AutomationService {
         || settings.baseBranch !== previous.settings.baseBranch || settings.mergePolicy !== MergePolicy.Local)) throw new TrackerError('CONFLICT', 'Integration restart must keep the source repository, target branch and local merge policy.');
       const configurationProblems = PipelinePolicy.configurationProblems(settings);
       if (configurationProblems.length) throw new TrackerError('VALIDATION_FAILED', configurationProblems.join(' '));
-      const roles = settings.pipeline.map((id) => settings.agents.find((agent) => agent.id === id)!.role);
-      if (roles.includes(AgentRole.VisualValidator) && !settings.artifactPaths.some((file) => /\.(png|jpe?g|webp)$/i.test(file))) throw new TrackerError('VALIDATION_FAILED', 'Visual validator requires image artifact paths.');
       if (PipelinePolicy.needsPlan(settings, !!task.plan)) throw new TrackerError('VALIDATION_FAILED', 'Task needs an existing plan or an analyst before development.');
       if (this.activeTaskIds().includes(taskId)) throw new TrackerError('CONFLICT', 'Task already has an active run or belongs to an executing feature.');
       const now = this.clock.now();
@@ -412,10 +414,30 @@ export class AutomationService {
         updated = { ...updated, status: RunStatus.Waiting, leaseToken: null };
       } else if (outcome.verdict === AgentVerdict.ChangesRequested) {
         if (profile.role === AgentRole.Analyst) throw new TrackerError('VALIDATION_FAILED', 'Analyst must return a plan or questions.');
-        const developer = retryWriterCheck ? run.stage : child?.developerStage ?? run.feature?.finalDeveloperStage ?? run.settings.pipeline.findIndex((profileId) => WRITABLE_AGENT_ROLES.includes(run.settings.agents.find((agent) => agent.id === profileId)!.role));
-        updated = developer < 0 ? { ...updated, status: RunStatus.Review, leaseToken: null } : (checkFailed || !run.trustedExecution) && run.revision >= run.settings.maxRevisions
-          ? { ...updated, status: RunStatus.Failed, leaseToken: null, summary: `Revision limit reached: ${outcome.summary}` }
-          : { ...updated, stage: developer, revision: run.revision + 1 };
+        const route = PipelinePolicy.route(run.settings, run.stage)?.retry;
+        const developer = PipelinePolicy.revisionStage(run.settings, run.stage, retryWriterCheck, run.feature);
+        if (route) {
+          const used = run.routeRetries?.[run.stage] ?? 0;
+          const target = run.settings.pipeline.indexOf(route.to);
+          if (used < route.limit) {
+            updated = { ...updated, stage: target, revision: run.revision + 1,
+              routeRetries: { ...run.routeRetries, [run.stage]: used + 1 },
+              lastRoute: { from: run.stage, to: target, kind: 'retry' } };
+          } else {
+            const summary = `Лимит возвратов этапа ${run.stage + 1} исчерпан (${used}/${route.limit}). ${outcome.summary}`;
+            if (route.exhausted === 'ask') {
+              this.tasks.askQuestions({ id: taskId, questions: [
+                `${summary.slice(0, 1200)} Как продолжить проверку?`,
+              ], actor: 'agent' });
+            }
+            updated = { ...updated, status: route.exhausted === 'ask' ? RunStatus.Waiting : RunStatus.Failed,
+              leaseToken: null, summary, lastRoute: { from: run.stage, to: run.stage, kind: 'exhausted' } };
+          }
+        } else {
+          updated = developer < 0 ? { ...updated, status: RunStatus.Review, leaseToken: null } : (checkFailed || !run.trustedExecution) && run.revision >= run.settings.maxRevisions
+            ? { ...updated, status: RunStatus.Failed, leaseToken: null, summary: `Revision limit reached: ${outcome.summary}` }
+            : { ...updated, stage: developer, revision: run.revision + 1 };
+        }
       } else {
         if (profile.role === AgentRole.Analyst) {
           if (!outcome.plan?.trim()) throw new TrackerError('VALIDATION_FAILED', 'Analyst must return a plan.');
@@ -439,7 +461,9 @@ export class AutomationService {
           this.tasks.setStatus({ id: taskId, status: TaskStatus.Testing, actor: 'agent' });
           this.tasks.setStatus({ id: taskId, status: TaskStatus.Review, actor: 'agent' });
         }
-        updated = { ...updated, stage: run.stage + 1 };
+        const next = PipelinePolicy.passStage(run.settings, run.stage);
+        updated = { ...updated, stage: next };
+        if (run.settings.pipelineRoutes?.length) updated.lastRoute = { from: run.stage, to: next, kind: 'pass' };
         if (child && updated.stage === updated.feature?.finalDeveloperStage) updated.stage++;
         if (updated.stage >= updated.settings.pipeline.length) {
           const writes = PipelinePolicy.writes(run.settings);
@@ -454,6 +478,12 @@ export class AutomationService {
       }
       if (updated.status === RunStatus.Failed || updated.status === RunStatus.Review) updated = { ...updated, finishedAt: now };
       this.runs.save(updated);
+      if (updated.lastRoute && updated.lastRoute !== run.lastRoute) {
+        const { from, to, kind } = updated.lastRoute;
+        const destination = to >= run.settings.pipeline.length ? 'ручная приёмка' : `этап ${to + 1}`;
+        this.runs.event(id, 'route', kind === 'exhausted' ? updated.summary
+          : `Этап ${from + 1} → ${destination}. ${kind === 'retry' ? `Возврат ${updated.routeRetries?.[from]}/${PipelinePolicy.route(run.settings, from)?.retry?.limit}. ${outcome.summary}` : 'Проверка пройдена.'}`, now);
+      }
       this.runs.event(id, updated.status === RunStatus.Failed ? 'failed' : outcome.verdict, updated.summary, now);
       this.tasks.addComment({ id: taskId, text: `[AGENT ${profile.role}] ${outcome.summary}\nBranch: ${branch}\nCommit: ${commitSha}`, kind: 'note', actor: 'agent' });
       if (screenshots !== undefined) this.attachStageScreenshots(taskId, screenshots, now);
@@ -510,7 +540,7 @@ export class AutomationService {
       this.runs.event(id, RunStatus.Cancelled, 'Убрано из очереди пользователем. Задача и журнал сохранены.', now);
     });
   }
-  public resume(id: string, replacementProfileId?: unknown, replacementModel?: unknown, repair = false): AgentRun {
+  public resume(id: string, replacementProfileId?: unknown, replacementModel?: unknown, repair = false, refreshChecks = false): AgentRun {
     return this.runs.db.transaction(() => {
     const run = this.requireRun(id);
     if (run.cleanup) throw new TrackerError('CONFLICT', 'Рабочая копия очищается или уже очищена. Создайте новый запуск.');
@@ -531,9 +561,20 @@ export class AutomationService {
       const reason = RunBudget.reason(run, Date.parse(this.clock.now()), true);
       if (reason) throw new TrackerError('CONFLICT', reason);
     }
-    const stage = repairStage ?? (run.status === RunStatus.Waiting && role && EVIDENCE_AGENT_ROLES.includes(role)
-      ? Decomposition.child(run)?.developerStage ?? run.feature?.finalDeveloperStage ?? run.settings.pipeline.findIndex((id) => run.settings.agents.find((agent) => agent.id === id)?.role === AgentRole.Developer) : run.stage);
+    const retry = PipelinePolicy.route(run.settings, run.stage)?.retry;
+    const manualRetry = run.status === RunStatus.Waiting && run.lastRoute?.kind === 'exhausted' && run.lastRoute.from === run.stage && retry;
+    const waitingDeveloper = run.status === RunStatus.Waiting && role && EVIDENCE_AGENT_ROLES.includes(role)
+      ? Decomposition.child(run)?.developerStage ?? run.feature?.finalDeveloperStage ?? run.settings.pipeline.findIndex((id) => run.settings.agents.find((agent) => agent.id === id)?.role === AgentRole.Developer) : -1;
+    const stage = repairStage ?? (manualRetry ? run.settings.pipeline.indexOf(manualRetry.to) : waitingDeveloper >= 0 ? waitingDeveloper : run.stage);
     let settings = run.settings;
+    if (refreshChecks) {
+      const project = new AutomationSettingsValidator().validate(this.settings());
+      const repository = (value: string) => value.trim().replace(/\\/g, '/').replace(/\/$/, '');
+      if (repository(project.repositoryPath) !== repository(settings.repositoryPath) || !project.checks.length) {
+        throw new TrackerError('CONFLICT', 'Сохраните обязательные проверки в настройках того же проекта, что и у этого запуска.');
+      }
+      settings = { ...settings, checks: project.checks };
+    }
     if (replacementProfileId !== undefined || replacementModel !== undefined) {
       if (run.status !== RunStatus.Failed || mergeOnly || !role) throw new TrackerError('CONFLICT', 'Only a failed agent stage can switch profiles.');
       const configured = this.settings();
@@ -545,14 +586,20 @@ export class AutomationService {
       const current = settings.agents.find(agent => agent.id === settings.pipeline[stage])!;
       const profileId = randomUUID();
       const connectionId = randomUUID();
+      const rename = (id: string) => id === current.id ? profileId : id;
       settings = new AutomationSettingsValidator().validate({
         ...settings,
         connections: [...settings.connections, { ...connection, id: connectionId }],
         agents: [...settings.agents, { ...replacement, model: replacementModel ?? replacement.model, id: profileId, connectionId, instructions: current.instructions }],
         pipeline: settings.pipeline.map((agentId, index) => index === stage ? profileId : agentId),
+        pipelineRoutes: settings.pipelineRoutes?.map(route => ({ ...route, from: rename(route.from),
+          passTo: typeof route.passTo === 'string' ? rename(route.passTo) : route.passTo,
+          ...(route.retry ? { retry: { ...route.retry, to: rename(route.retry.to) } } : {}),
+        })),
       });
     }
     const updated: AgentRun = { ...run, settings, stage, status: RunStatus.Queued, proposedFix: null, leaseToken: null, workerId: null, leaseUntil: null, updatedAt: this.clock.now(), finishedAt: undefined };
+    if (manualRetry) updated.revision++;
     if (repairStage !== undefined) {
       updated.revision++;
       updated.doctorRepair = { stage, failedStage: run.stage, revision: updated.revision,
@@ -560,7 +607,8 @@ export class AutomationService {
     }
     this.runs.restore(id);
     this.runs.save(updated);
-    this.runs.event(id, 'resumed', repair ? 'Исправление по диагнозу Pipeline Doctor поставлено в очередь.' : replacementProfileId === undefined
+    this.runs.event(id, 'resumed', refreshChecks ? 'Продолжение в прежней рабочей ветке с обновлёнными проверками проекта.' : repair ? 'Исправление по диагнозу Pipeline Doctor поставлено в очередь.' : manualRetry
+      ? `Пользователь продолжил доработку после исчерпания лимита. Следующий этап: ${stage + 1}.` : replacementProfileId === undefined
       ? 'Продолжение с сохранёнными настройками и checkpoint. Ожидает worker.'
       : 'Текущий этап поставлен в очередь с другим профилем агента. Рабочая ветка сохранена.', this.clock.now());
     return this.publicRun(updated);
@@ -599,7 +647,8 @@ export class AutomationService {
           run.settings.agents.some(agent => agent.id === agentId && WRITABLE_AGENT_ROLES.includes(agent.role)));
         if (stage < 0) throw new TrackerError('CONFLICT', 'В запуске нет этапа для доработки.');
         this.tasks.setStatus({ id: taskId, status: TaskStatus.Ready, actor: 'user', comment: feedback.trim() });
-        const continuation = this.createRun(taskId, { ...run.settings, pipeline: run.settings.pipeline.slice(stage) }, undefined, false);
+        const pipeline = run.settings.pipeline.slice(stage);
+        const continuation = this.createRun(taskId, { ...run.settings, pipeline, pipelineRoutes: PipelinePolicy.routesFor(run.settings, pipeline) }, undefined, false);
         const updated = { ...continuation, restartedFromId: run.id, summary: feedback.trim(), reviewFeedback: feedback.trim() };
         this.runs.save(updated);
         this.runs.event(updated.id, 'resumed', 'Доработка ранее слитого результата от текущей базовой ветки.', this.clock.now());

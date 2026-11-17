@@ -1,0 +1,66 @@
+:host { display: block; min-width: 0; }
+
+.stage-tools { margin-bottom: .75rem; }
+.stage-picker {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: .55rem;
+  margin-top: .55rem;
+}
+.stage-picker label { flex: 1 1 14rem; min-width: 0; }
+
+.route-map { display: block; }
+.route-step { position: relative; min-width: 0; }
+.route-step.editable p-step { padding-inline-end: 2.25rem; }
+.route-step[aria-current="step"] .node-title strong { color: var(--p-primary-color); }
+.node-title, .links { display: grid; gap: .2rem; white-space: normal; overflow-wrap: anywhere; text-align: start; }
+.links { margin-top: .2rem; font-size: .78rem; font-weight: normal; }
+.node-title small, .step-heading small, .flow-note, .pass-edge { color: var(--p-text-muted-color); }
+.node-title .skipped, .return-edge { color: var(--sat-warn); }
+
+.drag-handle {
+  display: grid;
+  position: absolute;
+  z-index: 2;
+  inset-block-start: .4rem;
+  inset-inline-end: .2rem;
+  place-items: center;
+  min-height: 2rem;
+  min-width: 2rem;
+  color: var(--p-text-muted-color);
+  cursor: grab;
+  touch-action: none;
+}
+.drag-handle:active { cursor: grabbing; }
+.drag-preview {
+  padding: .55rem .75rem;
+  border: 1px solid var(--p-primary-color);
+  border-radius: .45rem;
+  background: var(--p-content-background);
+  color: var(--p-text-color);
+  box-shadow: var(--sat-shadow);
+}
+.cdk-drag-placeholder { opacity: .3; }
+.route-map.cdk-drop-list-dragging .route-step:not(.cdk-drag-placeholder), .cdk-drag-animating {
+  transition: transform 150ms ease;
+}
+
+.step-details { min-width: 0; overflow-wrap: anywhere; }
+.step-heading { display: flex; gap: .45rem; align-items: center; justify-content: space-between; }
+.step-heading small { display: block; margin-top: .15rem; }
+.step-details p, .instructions-panel, .last-transition, .flow-note { margin-top: .55rem; }
+.last-transition { margin-bottom: .55rem; }
+.instructions-panel { display: block; }
+.instructions { white-space: pre-wrap; overflow-wrap: anywhere; }
+ul { padding-inline-start: 1.25rem; margin-top: .35rem; }
+
+.route-fields {
+  margin-top: .8rem;
+  display: grid;
+  gap: .65rem;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 14rem), 1fr));
+}
+.route-fields label, .stage-picker label, .position-control { display: grid; gap: .25rem; min-width: 0; font-size: .85rem; }
+.reset-route, .exclude-stage { margin-top: .6rem; margin-inline-end: .4rem; }
+.route-error { color: var(--sat-warn); margin-bottom: .55rem; }

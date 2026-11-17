@@ -64,12 +64,19 @@ export interface AgentProfile {
 export interface CheckCommand { command: string; args: string[]; }
 export interface PostOperation extends CheckCommand { background?: boolean; }
 
+export interface PipelineRoute {
+  from: string;
+  passTo?: string | null;
+  retry?: { to: string; limit: number; exhausted: 'stop' | 'ask' };
+}
+
 export interface AutomationSettings {
   repositoryPath: string;
   baseBranch: string;
   connections: ModelConnection[];
   agents: AgentProfile[];
   pipeline: string[];
+  pipelineRoutes?: PipelineRoute[];
   checks: CheckCommand[];
   setup: CheckCommand[];
   postOperations?: PostOperation[];
@@ -118,6 +125,8 @@ export interface ProposedFix {
 }
 
 export interface AgentRun {
+  routeRetries?: Record<number, number>;
+  lastRoute?: { from: number; to: number; kind: 'pass' | 'retry' | 'exhausted' };
   proposedFix?: ProposedFix | null;
   doctorRepair?: { stage: number; failedStage: number; revision: number; diagnostic: string };
   trustedExecution?: boolean;
@@ -182,6 +191,7 @@ export interface AgentOutcome {
 export interface AgentJob {
   auditAttempt?: { id: string; workspace: string; taskId: string; stage: number; revision: number; handoffBytes: number };
   reviewImageData?: string[];
+  visualArtifactData?: string[];
   /** Worker barrier: source reads/planning may run while dependencies are prepared. */
   waitForPreparation?: () => Promise<void>;
   baseSha?: string;

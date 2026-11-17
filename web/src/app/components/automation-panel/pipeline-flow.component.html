@@ -1,0 +1,169 @@
+@if (editable) {
+  <div class="stage-tools">
+    <button pButton type="button" size="small" icon="pi pi-plus" label="Добавить этап"
+      [attr.aria-expanded]="adding" (click)="adding = !adding"></button>
+    @if (adding) {
+      <div class="stage-picker">
+        <label>Агент для нового этапа
+          <p-select ariaLabel="Агент для нового этапа" [options]="stageOptions" [group]="true"
+            optionLabel="label" optionValue="value" [(ngModel)]="stageChoice"
+            placeholder="Выберите агента или роль" appendTo="body" [fluid]="true" />
+        </label>
+        <button pButton type="button" size="small" label="Добавить в маршрут" [disabled]="!stageChoice" (click)="addStage()"></button>
+      </div>
+    }
+  </div>
+}
+@let nodes = stages;
+@if (!nodes.length) {
+  <p class="flow-note">В маршруте пока нет этапов.</p>
+} @else {
+  @let routePath = path;
+  @let length = nodes.length;
+  @if (problem; as message) {
+    <p class="route-error" role="alert">{{ message }}</p>
+  }
+  @if (moveError) {
+    <p class="route-error" role="alert">{{ moveError }}</p>
+  }
+  @if (run?.lastRoute; as last) {
+    <p class="last-transition" role="status">
+      <strong>{{ nodes[last.from].label }}</strong>
+      @switch (last.kind) {
+        @case ('pass') { → {{ last.to < length ? nodes[last.to].label : 'Ручная приёмка' }} · пройдено }
+        @case ('retry') { ↶ {{ nodes[last.to].label }} · возврат {{ run?.routeRetries?.[last.from] }}/{{ nodes[last.from].route?.retry?.limit }} }
+        @case ('exhausted') { · исчерпан лимит возвратов }
+      }
+    </p>
+    @if (last.kind !== 'pass' && run?.summary) {
+      <p-panel header="Причина перехода" [toggleable]="true" [collapsed]="true">
+        <p class="instructions">{{ run?.summary }}</p>
+      </p-panel>
+    }
+  }
+
+
+  <p-stepper class="route-map" aria-label="Этапы и переходы" cdkDropList
+    [value]="selected + 1" (valueChange)="selected = ($event ?? 0) - 1"
+    [cdkDropListDisabled]="!editable" (cdkDropListDropped)="drop($event)">
+    @for (node of nodes; track node.key) {
+      @let destination = passStage(node.index);
+      @let reachable = routePath.includes(node.index);
+      <p-step-item class="route-step" [class.editable]="editable" [value]="node.index + 1"
+        [attr.aria-current]="run?.stage === node.index ? 'step' : null"
+        cdkDrag [cdkDragDisabled]="!editable">
+          @if (editable) {
+            <span class="drag-handle" cdkDragHandle title="Перетащить этап" aria-hidden="true">
+              <i class="pi pi-bars"></i>
+            </span>
+            <ng-template cdkDragPreview [matchSize]="false">
+              <div class="drag-preview">{{ node.index + 1 }}. {{ node.label }}</div>
+            </ng-template>
+          }
+        <p-step>
+          <span class="node-title">
+            <strong>{{ node.label }}</strong>
+            @if (!reachable) { <small class="skipped">Пропускается</small> }
+            @if (node.child) { <small>{{ node.child.taskId }}</small> }
+            @if (run) {
+              <small>Вызовов: {{ node.calls }} @if (run.stage === node.index) { · текущий этап }</small>
+            }
+            @if (editable && node.agent && !node.agent.model) { <small>Выберите модель в настройках агента</small> }
+          </span>
+          <span class="links">
+            @if (destination > node.index && destination <= length) {
+              <span class="pass-edge">{{ node.gate ? 'При успехе' : 'Дальше' }} → {{ destination === length ? 'Ручная приёмка' : (destination + 1) + '. ' + nodes[destination].label }}</span>
+            }
+            @if (node.route?.retry; as retry) {
+              <span class="return-edge">Правки → {{ settings.pipeline.indexOf(retry.to) + 1 }} · {{ run ? node.returns + '/' : 'до ' }}{{ retry.limit }} возвратов</span>
+            } @else if (node.gate && defaultRetry(node.index, node.writer) >= 0) {
+              <span class="return-edge">Правки → {{ defaultRetry(node.index, node.writer) + 1 }}</span>
+            }
+          </span>
+        </p-step>
+        <p-step-panel>
+          <ng-template #content>
+          <section class="step-details" aria-label="Настройки выбранного этапа">
+            <div class="step-heading">
+              <div>
+                <strong>{{ node.index + 1 }}. {{ node.label }}</strong>
+                @if (node.agent; as agent) { <small>{{ agent.runner }}{{ agent.model ? ' · ' + agent.model : '' }}</small> }
+              </div>
+              @if (editable) {
+                <label class="position-control">Позиция
+                  <p-select ariaLabel="Позиция" [options]="positionOptions" optionLabel="label" optionValue="value"
+                    [ngModel]="node.index" #positionModel="ngModel" (ngModelChange)="move(node.index, $event) || positionModel.reset(node.index)"
+                    appendTo="body" />
+                </label>
+              }
+            </div>
+            @if (node.agent; as agent) {
+              <p>{{ criteria[agent.role] }}</p>
+              <p-panel class="instructions-panel" header="Инструкции агента" [toggleable]="true" [collapsed]="true">
+                <p class="instructions">{{ instructions(agent) }}</p>
+                @if (agent.role === visualRole) {
+                  <p>Входные изображения</p>
+                  <ul>@for (artifact of settings.artifactPaths; track $index) { <li><code>{{ artifact }}</code></li> }</ul>
+                }
+              </p-panel>
+            }
+            @if (node.checks.length) {
+              <p><strong>Worker</strong> запускает команды после успешного ответа агента. Пройдены, если все коды выхода равны 0 и Git-состояние сохранилось.</p>
+              <ul>@for (check of node.checks; track $index) { <li><code>{{ check.command }} {{ check.args.join(' ') }}</code></li> }</ul>
+            }
+            @if (editable && node.gate) {
+              <div class="route-fields">
+                <label>При успехе
+                  <p-select ariaLabel="При успехе" [options]="passOptions" optionLabel="label" optionValue="value"
+                    [ngModel]="node.route?.passTo === null ? review : node.route?.passTo ?? next"
+                    (ngModelChange)="setPass($event)" appendTo="body" [fluid]="true" />
+                </label>
+                <label>{{ node.writer ? 'Если команда упала' : 'Если нужны правки' }}
+                  <p-select [ariaLabel]="node.writer ? 'Если команда упала' : 'Если нужны правки'"
+                    [options]="retryOptions" optionLabel="label" optionValue="value"
+                    [ngModel]="node.route?.retry?.to ?? defaultRoute" (ngModelChange)="setRetry($event)" appendTo="body" [fluid]="true" />
+                </label>
+                @if (node.route?.retry; as retry) {
+                  <label>Максимум возвратов
+                    <p-inputnumber ariaLabel="Максимум возвратов" [min]="0" [max]="10" [step]="1" [useGrouping]="false"
+                      [ngModel]="retry.limit" (ngModelChange)="setLimit($event)" [fluid]="true" />
+                  </label>
+                  <label>Когда лимит исчерпан
+                    <p-select ariaLabel="Когда лимит исчерпан" [options]="exhaustionOptions" optionLabel="label" optionValue="value"
+                      [ngModel]="retry.exhausted" (ngModelChange)="setExhaustion($event)" appendTo="body" [fluid]="true" />
+                  </label>
+                }
+              </div>
+            }
+            @if (node.route?.retry; as retry) {
+              <p>Эта проверка может вернуть задачу на доработку {{ retry.limit }} раз.
+                @if (run) { Использовано {{ node.returns }} из {{ retry.limit }}. }
+                @if (retry.exhausted === 'ask') { Затем запуск ждёт ответа пользователя. }
+                @else { Затем запуск останавливается. }
+              </p>
+            } @else if (node.gate) {
+              @let target = defaultRetry(node.index, node.writer);
+              @if (target >= 0) {
+                <p>По общим правилам правки идут на этап {{ target + 1 }} · {{ nodes[target].label }}.
+                  @if (!run?.trustedExecution || node.checks.length) { Общий лимит доработок — {{ settings.maxRevisions }}. }
+                </p>
+              } @else {
+                <p>Замечания передаются на ручное ревью.</p>
+              }
+            }
+            @if (editable && node.route) {
+              <button pButton severity="secondary" [text]="true" size="small" class="reset-route" type="button" (click)="resetRoute()">Сбросить переходы этапа</button>
+            }
+            @if (editable) {
+              <button pButton severity="secondary" [text]="true" size="small" class="exclude-stage" type="button" (click)="removeStage(node.id)">Убрать из маршрута</button>
+            }
+          </section>
+          </ng-template>
+        </p-step-panel>
+      </p-step-item>
+    }
+  </p-stepper>
+  @if (editable && settings.pipelineRoutes?.length) {
+    <p class="flow-note">Маршрут со своими переходами выполняется для одной задачи. Аналитик предложит подзадачи в плане, если они нужны.</p>
+  }
+}

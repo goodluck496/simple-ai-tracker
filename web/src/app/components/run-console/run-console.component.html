@@ -17,7 +17,7 @@
     } @empty { <p>Нет строк для выбранного фильтра. Запуск может ожидать worker.</p> }
   </div>
   @if (message()) { <p role="status">{{ message() }}</p> }
-  <details (toggle)="rawOpen.set($any($event.target).open)"><summary>Исходные события текущего окна</summary>
+  <p-panel class="raw-panel" header="Исходные события текущего окна" [toggleable]="true" [collapsed]="!rawOpen()" (collapsedChange)="rawOpen.set(!$event)">
     @if (rawOpen()) { <pre class="raw">{{ raw() }}</pre> }
-  </details>
+  </p-panel>
 </section>

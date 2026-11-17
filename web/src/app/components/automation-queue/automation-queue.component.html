@@ -14,14 +14,30 @@
       </div>
 
       <div class="sidebar-status-row">
-        <span class="host-badge" [class.online]="snapshot().host.online" [title]="snapshot().host.online ? 'Worker подключён' : 'Worker не подключён'">
+        @let host = snapshot().host;
+        <span class="host-badge" [class.online]="host.online && host.execution?.state === 'running'">
           <span class="status-dot"></span>
-          <span class="host-badge-text">{{ snapshot().host.online ? (snapshot().host.execution?.state === 'running' ? 'Worker работает' : 'Worker онлайн') : 'Worker оффлайн' }}</span>
+          <span class="host-badge-text">
+            @if (!host.online) {
+              Хост оффлайн
+            } @else {
+              @switch (host.execution?.state) {
+                @case ('running') { Worker работает }
+                @case ('starting') { Worker запускается }
+                @case ('stopping') { Worker останавливается }
+                @case ('stopped') { Worker остановлен }
+                @default { Статус worker неизвестен }
+              }
+            }
+          </span>
         </span>
+        @if (host.online && host.execution?.state === 'stopped') {
+          <button pButton size="small" severity="secondary" [text]="true" (click)="configure.emit()">Управление worker</button>
+        }
         @if (historyTask()) {
           <span class="task-filter-tag" title="Фильтр по задаче">
             {{ historyTask() }}
-            <button type="button" class="tag-remove-btn" (click)="viewHistory('')" title="Сбросить фильтр">×</button>
+            <button pButton type="button" class="tag-remove-btn" (click)="viewHistory('')" title="Сбросить фильтр">×</button>
           </span>
         }
       </div>
@@ -29,9 +45,9 @@
       <div class="sidebar-search-row">
         <div class="search-input-wrap">
           <i class="pi pi-search search-icon"></i>
-          <input type="search" [value]="search()" (input)="search.set($any($event.target).value)" placeholder="Поиск по ID, названию..." aria-label="Поиск запусков" />
+          <input pInputText type="search" [value]="search()" (input)="search.set($any($event.target).value)" placeholder="Поиск по ID, названию..." aria-label="Поиск запусков" />
           @if (search()) {
-            <button type="button" class="clear-search-btn" (click)="clearSearch()" title="Очистить поиск">×</button>
+            <button pButton type="button" class="clear-search-btn" (click)="clearSearch()" title="Очистить поиск">×</button>
           }
         </div>
       </div>
@@ -41,11 +57,11 @@
       @if (notice()) { <p role="status" class="sidebar-alert alert-info">{{ notice() }}</p> }
 
       <div class="lane-chips" role="tablist">
-        <button type="button" class="lane-chip" [class.active]="activeLaneFilter() === 'all'" (click)="activeLaneFilter.set('all')">
+        <button pButton type="button" class="lane-chip" [class.active]="activeLaneFilter() === 'all'" (click)="activeLaneFilter.set('all')">
           Все <span class="chip-count">{{ historyMode() ? snapshot().items.length : totalActive() }}</span>
         </button>
         @for (lane of visibleLanes(); track lane.id) {
-          <button type="button" class="lane-chip" [class.active]="activeLaneFilter() === lane.id" (click)="activeLaneFilter.set(lane.id)">
+          <button pButton type="button" class="lane-chip" [class.active]="activeLaneFilter() === lane.id" (click)="activeLaneFilter.set(lane.id)">
             {{ lane.title }} <span class="chip-count">{{ items(lane.id).length }}</span>
           </button>
         }
@@ -69,7 +85,7 @@
                   <span class="card-status-pill" [attr.data-status]="item.status">{{ statusTitles[item.status] }}</span>
                   @if (item.trustedExecution) { <span class="card-pos">Без лимитов</span> }
                   @if (item.queuePosition) { <span class="card-pos">#{{ item.queuePosition }}</span> }
-                  @if (item.proposedFix) { <button type="button" class="card-fix-badge" (click)="$event.stopPropagation(); openProposedFix(item)" [title]="item.proposedFix.title">🛠️ {{ item.proposedFix.action === 'retry_stage' ? 'Анализ сбоя' : 'ПРОВЕРЬ ИЗМЕНЕНИЯ' }}</button> }
+                  @if (item.proposedFix) { <button pButton type="button" class="card-fix-badge" (click)="$event.stopPropagation(); openProposedFix(item)" [title]="item.proposedFix.title">🛠️ {{ item.proposedFix.action === 'retry_stage' ? 'Анализ сбоя' : 'ПРОВЕРЬ ИЗМЕНЕНИЯ' }}</button> }
                 </div>
                 <div class="card-title">{{ item.title }}</div>
                 <div class="card-stage">Этап {{ item.stage < item.pipeline.length ? item.stage + 1 : item.pipeline.length }}/{{ item.pipeline.length }} · {{ currentRole(item) }}</div>
@@ -211,6 +227,12 @@
             Осталось {{ time.remainingMs / 60000 | number:'1.1-1' }} мин работы агентов. Учитываются все вызовы; подготовка и проверки worker исключены.
             }
           </div>
+          @if (item.status === runStatus.Failed && item.canResume && run.checkout) {
+            <div class="inspector-card">
+              <button pButton type="button" size="small" severity="secondary" [disabled]="busy() || resumeBudgetBlocked(item)"
+                (click)="action(item, runAction.Resume, true)">Продолжить с проверками из настроек проекта</button>
+            </div>
+          }
           @if (item.status === runStatus.Failed || item.status === runStatus.Interrupted || item.status === runStatus.MergeBlocked) {
             <div class="run-stop-reason" role="alert">
               <span>{{ runBudget.stopReason(run) || health(item) }}</span>
@@ -265,6 +287,13 @@
         </section>
       }
       <!-- ЖУРНАЛ ВЫПОЛНЕНИЯ: занимает всё оставшееся пространство -->
+      @if (detail()?.run; as run) {
+        @if (run.id === item.id) {
+          <p-panel class="run-pipeline-flow" header="Схема запуска и критерии проверок" [toggleable]="true" [collapsed]="true">
+            <sat-pipeline-flow [settings]="run.settings" [run]="run" />
+          </p-panel>
+        }
+      }
       <section #executionLog class="run-console-section" aria-label="Консоль и журнал">
         <div class="console-section-header">
           <span class="console-title"><i class="pi pi-terminal"></i> Журнал выполнения</span>
@@ -396,9 +425,9 @@
                   <button pButton type="button" severity="secondary" size="small" [disabled]="busy()" (click)="editBudget(run)">Изменить бюджет запуска</button>
                   @if (budgetEditing()) {
                     <div class="budget-edit-form" aria-label="Изменение бюджета запуска">
-                      <label>Вызовы агентов <input type="number" aria-label="Лимит вызовов" [disabled]="!!run.feature?.callBudget" [value]="budgetCalls" (input)="budgetCalls = +$any($event.target).value" /></label>
-                      <label>Накопленный вход <input type="number" aria-label="Лимит входных токенов" [value]="budgetInput" (input)="budgetInput = +$any($event.target).value" /></label>
-                      <label>Активные минуты <input type="number" aria-label="Лимит минут" [value]="budgetMinutes" (input)="budgetMinutes = +$any($event.target).value" /></label>
+                      <label>Вызовы агентов <p-inputnumber ariaLabel="Лимит вызовов" [disabled]="!!run.feature?.callBudget" [(ngModel)]="budgetCalls" [useGrouping]="false" [fluid]="true" /></label>
+                      <label>Накопленный вход <p-inputnumber ariaLabel="Лимит входных токенов" [(ngModel)]="budgetInput" [useGrouping]="false" [fluid]="true" /></label>
+                      <label>Активные минуты <p-inputnumber ariaLabel="Лимит минут" [(ngModel)]="budgetMinutes" [useGrouping]="false" [fluid]="true" /></label>
                       <p class="muted">Потраченные токены, вызовы и время сохраняются. Лимиты можно только увеличить.</p>
                       <div class="budget-buttons">
                         <button pButton type="button" size="small" [disabled]="busy()" (click)="saveBudget(run)">Сохранить лимиты</button>
