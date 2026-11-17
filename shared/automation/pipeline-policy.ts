@@ -5,12 +5,23 @@ import type { FeatureExecution } from './decomposition.js';
 export class PipelinePolicy {
   public static configurationProblems(settings: AutomationSettings): string[] {
     const problems: string[] = [];
+    const router = this.routerProblem(settings);
+    if (router) problems.push(router);
     if (!settings.repositoryPath.trim()) problems.push('Не указана папка Git-проекта. Выберите её в настройках проекта.');
     if (!settings.pipeline.length) problems.push('Не выбраны этапы запуска. Отметьте нужных агентов.');
     if (this.writes(settings) && !settings.checks.length) problems.push('Для изменения кода нужны команды проверок. Настройте их в проекте; для запуска только аналитика они не требуются.');
     const routeProblem = this.routeProblem(settings);
     if (routeProblem) problems.push(routeProblem);
     return problems;
+  }
+  public static routerProblem(settings: AutomationSettings): string | undefined {
+    if (settings.routingProfileIds !== undefined && (!Array.isArray(settings.routingProfileIds) || settings.routingProfileIds.some(id => !settings.agents.some(a => a.id === id)))) return 'Разрешённые профили роутера должны существовать в команде.';
+    const roles = this.roles(settings);
+    if (!roles.includes(AgentRole.Router)) return;
+    if (roles[0] !== AgentRole.Router || roles.filter(r => r === AgentRole.Router).length !== 1) return 'Роутер должен быть единственным первым этапом.';
+    if (settings.pipelineRoutes?.some(r => r.passTo !== undefined)) return 'Для роутера сохраняйте все этапы проверки: переходы с пропуском этапов запрещены.';
+    if (this.writes(settings) && (!roles.includes(AgentRole.Tester) || !roles.includes(AgentRole.Reviewer))) return 'Для маршрутизации кода нужны тестировщик и ревьюер.';
+    return;
   }
   public static executionPath(settings: AutomationSettings): number[] {
     const path: number[] = [];

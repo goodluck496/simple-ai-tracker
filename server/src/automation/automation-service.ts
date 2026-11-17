@@ -1,3 +1,4 @@
+import { TaskRouting } from '../../../shared/automation/task-routing.js';
 import { PipelineDoctor } from './pipeline-doctor.js';
 import { ProviderKind, type ProposedFix } from '../../../shared/automation/contracts.js';
 import { randomUUID, createHash } from 'node:crypto';
@@ -54,6 +55,7 @@ export class AutomationService {
           ...(value.agents ? { agents: value.agents } : {}),
           ...(value.pipeline ? { pipeline: value.pipeline } : {}),
           pipelineRoutes: value.pipelineRoutes ?? [],
+          ...(value.routingProfileIds !== undefined ? {routingProfileIds: value.routingProfileIds} : {}),
           ...(value.maxStageToolCalls !== undefined ? { maxStageToolCalls: value.maxStageToolCalls } : {}),
           ...(value.maxAgentCalls !== undefined ? { maxAgentCalls: value.maxAgentCalls } : {}),
           ...(value.maxInputTokens !== undefined ? { maxInputTokens: value.maxInputTokens } : {}),
@@ -63,6 +65,7 @@ export class AutomationService {
         });
         const teamPayload: Partial<AutomationSettings> = {
           agents: checked.agents,
+          routingProfileIds: checked.routingProfileIds,
           pipeline: checked.pipeline,
           pipelineRoutes: checked.pipelineRoutes ?? [],
           ...(value.maxStageToolCalls !== undefined ? { maxStageToolCalls: checked.maxStageToolCalls } : {}),
@@ -293,7 +296,7 @@ export class AutomationService {
     if (reason) throw new TrackerError('CONFLICT', reason);
     if (resolver !== (run.status === RunStatus.Integrating)) throw new TrackerError('CONFLICT', 'Execution phase does not match the requested agent.');
     if (!run.trustedExecution && resolver && (run.usageAttempts ?? []).filter(a => a.kind === 'resolver').length >= (run.settings.maxResolverCalls ?? 1)) throw new TrackerError('CONFLICT', 'Conflict resolver call budget exhausted.');
-    const agent = run.settings.agents.find((entry) => resolver ? entry.role === AgentRole.Developer : entry.id === run.settings.pipeline[run.stage]);
+    const agent = resolver ? run.settings.agents.find(entry => entry.role === AgentRole.Developer) : TaskRouting.profile(run.settings, run.stage, run.routing);
     if (!agent) throw new TrackerError('CONFLICT', 'Pipeline has no current stage.');
     if (run.feature) {
       const parent = this.tasks.getTaskCard(run.taskId);
@@ -387,10 +390,29 @@ export class AutomationService {
       const now = this.clock.now();
       let updated: AgentRun = { ...run, branch, commitSha, updatedAt: now, summary: outcome.summary,
         budgetElapsedMs: RunBudget.elapsed(run, Date.parse(now)), budgetUpdatedAt: now };
+      if (run.routing && profile.role !== AgentRole.Router && run.routing.sourceDescription !== (this.tasks.getTaskCard(taskId).description ?? '')) throw new TrackerError('VALIDATION_FAILED', 'Requirements changed after routing; restart the run.');
       updated.budgetApproval = undefined;
       if (WRITABLE_AGENT_ROLES.includes(profile.role) && typeof outcome.commitMessage === 'string') {
         if (child) {
           if (outcome.verdict === AgentVerdict.Pass) updated.feature = { ...run.feature!, children: run.feature!.children.map(c => c.key === child.key ? { ...c, commitMessage: outcome.commitMessage, sourceSha: commitSha, state: 'review' } : c) };
+      if (profile.role === AgentRole.Router && outcome.verdict === AgentVerdict.Pass) {
+        let decision;
+        try { decision = TaskRouting.parse(outcome.plan ?? '', run.settings, run.stage); }
+        catch (error) { throw new TrackerError('VALIDATION_FAILED', String(error)); }
+        if (decision.uncertainty === 'high' && !PipelinePolicy.roles(run.settings).includes(AgentRole.Analyst)) throw new TrackerError('VALIDATION_FAILED', 'High uncertainty requires an analyst or user answers.');
+        updated.routing = { decision, sourceDescription: this.tasks.getTaskCard(taskId).description ?? '', createdAt: now };
+        this.runs.event(id, 'routing', JSON.stringify({complexity: decision.complexity, risk: decision.risk, uncertainty: decision.uncertainty, replacements: decision.assignments.length, criteria: decision.brief.criteria.length}), now);
+      }
+      if (run.routing && profile.role === AgentRole.Tester && outcome.verdict === AgentVerdict.Pass) {
+        try {
+          const results = TaskRouting.acceptance(outcome.plan ?? '', run.routing.decision.brief);
+          updated.acceptance = { sha: commitSha, results };
+          if (results.some(r => r.status === 'failed')) outcome = { ...outcome, verdict: AgentVerdict.ChangesRequested, summary: 'Acceptance criteria failed. ' + outcome.summary };
+          if (results.some(r => r.status === 'manual')) this.tasks.addComment({ id: taskId, text: 'Требуется ручная проверка: ' + results.filter(r => r.status === 'manual').map(r => r.id).join(', '), kind: 'note', actor: 'agent' });
+          this.runs.event(id, 'acceptance', JSON.stringify({sha: commitSha, total: results.length, passed: results.filter(r => r.status === 'passed').length, failed: results.filter(r => r.status === 'failed').length, manual: results.filter(r => r.status === 'manual').length}), now);
+        } catch (error) { throw new TrackerError('VALIDATION_FAILED', String(error)); }
+      }
+      if (run.routing && WRITABLE_AGENT_ROLES.includes(profile.role)) updated.acceptance = undefined;
         }
         else updated.mergeMessage = outcome.commitMessage;
       }
@@ -466,6 +488,8 @@ export class AutomationService {
         if (run.settings.pipelineRoutes?.length) updated.lastRoute = { from: run.stage, to: next, kind: 'pass' };
         if (child && updated.stage === updated.feature?.finalDeveloperStage) updated.stage++;
         if (updated.stage >= updated.settings.pipeline.length) {
+        if (run.routing && PipelinePolicy.writes(run.settings) && next >= run.settings.pipeline.length
+          && (!updated.acceptance || updated.acceptance.sha !== commitSha || updated.acceptance.results.some(r => r.status === 'failed'))) throw new TrackerError('VALIDATION_FAILED', 'Current commit has no passing acceptance report.');
           const writes = PipelinePolicy.writes(run.settings);
           if (writes) {
             const status = this.tasks.getTaskCard(run.taskId).status;
@@ -674,6 +698,7 @@ export class AutomationService {
         if (budgetReason) throw new TrackerError('CONFLICT', budgetReason);
         this.tasks.setStatus({ id: taskId, status: TaskStatus.InProgress, actor: 'user', comment: feedback.trim() });
         updated = { ...updated, acceptedSha: undefined, stage, revision: run.revision + 1, stageMemory: undefined, summary: feedback.trim(), reviewFeedback: feedback.trim() };
+      if (run.routing && run.routing.sourceDescription !== (this.tasks.getTaskCard(taskId).description ?? '')) throw new TrackerError('VALIDATION_FAILED', 'Requirements changed after routing; restart the run.');
       }
       this.runs.restore(run.id);
       this.runs.save(updated);

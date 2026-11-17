@@ -1,3 +1,4 @@
+import { TaskRoutingComponent } from './task-routing.component';
 import { afterNextRender, Component, ElementRef, EventEmitter, Injector, Input, Output } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { CdkDrag, CdkDragHandle, CdkDragPreview, CdkDropList, moveItemInArray, type CdkDragDrop } from '@angular/cdk/drag-drop';
@@ -15,7 +16,7 @@ import { DEFAULT_ROLE_INSTRUCTIONS } from '../../../../../shared/automation/team
 @Component({
   selector: 'sat-pipeline-flow',
   standalone: true,
-  imports: [FormsModule, ButtonModule, InputNumberModule, PanelModule, SelectModule, StepperModule, CdkDrag, CdkDragHandle, CdkDragPreview, CdkDropList],
+  imports: [TaskRoutingComponent, FormsModule, ButtonModule, InputNumberModule, PanelModule, SelectModule, StepperModule, CdkDrag, CdkDragHandle, CdkDragPreview, CdkDropList],
   templateUrl: './pipeline-flow.component.html',
   styleUrl: './pipeline-flow.component.scss',
 })
@@ -24,6 +25,7 @@ export class PipelineFlowComponent {
   @Input({ required: true }) public settings!: AutomationSettings;
   @Input() public run?: AgentRun;
   @Input() public editable = false;
+  @Input() public browserEditable = true;
   @Output() public readonly reorder = new EventEmitter<{ from: number; to: number }>();
   @Output() public readonly includeAgent = new EventEmitter<string>();
   @Output() public readonly createAgent = new EventEmitter<AgentRole>();
@@ -39,6 +41,7 @@ export class PipelineFlowComponent {
   public readonly exhaustionOptions = [{ label: 'Остановить запуск', value: 'stop' }, { label: 'Спросить пользователя и ждать', value: 'ask' }];
   public readonly visualRole = AgentRole.VisualValidator;
   public readonly criteria: Record<AgentRole, string> = {
+    router: 'Оценивает сложность и риск, готовит критерии и выбирает разрешённые модели.',
     analyst: 'Изучает требования и готовит план.',
     developer: 'Реализует план и добавляет тесты.',
     designer: 'Реализует интерфейс по плану и референсам.',

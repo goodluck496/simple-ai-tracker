@@ -1,5 +1,6 @@
 import { AgentRole, ProviderKind, RunnerId, type ModelConnection } from './contracts.js';
 export const ROLE_OPTIONS = [
+  { label: 'Роутер — сложность, критерии и модели', value: AgentRole.Router },
   { label: 'Аналитик — план', value: AgentRole.Analyst }, { label: 'Разработчик — анализ, код, юнит-тесты', value: AgentRole.Developer },
   { label: 'Тестировщик — ревью и проверки', value: AgentRole.Tester }, { label: 'Ревьюер — оценка кода', value: AgentRole.Reviewer },
   { label: 'Дизайнер — интерфейс', value: AgentRole.Designer }, { label: 'Визуальный валидатор — скриншоты', value: AgentRole.VisualValidator },

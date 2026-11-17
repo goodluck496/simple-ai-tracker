@@ -1,6 +1,7 @@
 <div class="panel-layout" [class.sidebar-collapsed]="sidebarCollapsed">
   <!-- LEFT SIDEBAR: НАВИГАЦИЯ И УПРАВЛЕНИЕ -->
   <aside class="panel-sidebar" [class.collapsed]="sidebarCollapsed" aria-label="Навигация настроек">
+    <p-button class="mobile-navigation-close" label="Показать содержимое" icon="pi pi-times" severity="secondary" (onClick)="toggleSidebar()" />
     <div class="sidebar-top">
       <!-- Переключатель области настроек -->
       <div class="scope-box">
@@ -369,7 +370,7 @@
               <h4>Маршрут запуска</h4>
             </div>
             <div class="card-body">
-              <sat-pipeline-flow [settings]="settings" [editable]="!busy" (reorder)="moveStage($event.from, $event.to)"
+              <sat-pipeline-flow [settings]="settings" [editable]="!busy" [browserEditable]="settingsScope === 'project'" (reorder)="moveStage($event.from, $event.to)"
                 (includeAgent)="toggleStage($event, true)" (createAgent)="addAgent($event)" (excludeAgent)="toggleStage($event, false)" />
             </div>
           </div>

@@ -23,9 +23,21 @@ export class ProjectMcpTools {
       this.clients.set(server.name, client);
     }
     const response = await client.callTool({ name: toolName, arguments: args as Record<string, unknown> }, undefined, { signal: this.job.signal });
-    const text = (response.content as { type: string; text?: string }[]).filter(content => content.type === 'text').map(content => content.text ?? '').join('\n');
-    return { error: response.isError === true, content: text.slice(0, 6000), limited: text.length > 6000,
-      omittedNonText: (response.content as { type: string }[]).some(content => content.type !== 'text') };
+    if (!('content' in response) || !Array.isArray(response.content)) throw new Error('MCP returned no content.');
+    return ProjectMcpTools.result({content:response.content,isError:response.isError === true});
+  }
+  public static result(response: { content: unknown; isError?: boolean }) {
+    const blocks = response.content as { type: string; text?: string; mimeType?: string; data?: string }[];
+    const text = blocks.filter(b => b.type === 'text').map(b => b.text ?? '').join('\n');
+    const images: string[] = [];
+    let omittedNonText = false;
+    for (const block of blocks.filter(b => b.type !== 'text')) {
+      if (block.type === 'image' && /^image\/(png|jpeg|webp)$/.test(block.mimeType ?? '')
+        && typeof block.data === 'string' && block.data.length <= 2800000 && /^[A-Za-z0-9+/]*={0,2}$/.test(block.data)
+        && images.length < 4) images.push(`data:${block.mimeType};base64,${block.data}`);
+      else omittedNonText = true;
+    }
+    return { error: response.isError === true, content: text.slice(0, 6000), limited: text.length > 6000, images, omittedNonText };
   }
   public async close(): Promise<void> { await Promise.allSettled([...this.clients.values()].map(client => client.close())); this.clients.clear(); }
 }

@@ -67,6 +67,10 @@ export class AutomationSettingsValidator {
     if (!settings.pipeline.every((id) => text(id) && profiles.has(id))) return fail('Pipeline references an unknown agent.');
     if (!settings.checks.every((check) => check && text(check.command) && check.command && Array.isArray(check.args) && check.args.every(text))) return fail('Invalid check command.');
     if (settings.pipelineRoutes !== undefined && !Array.isArray(settings.pipelineRoutes)) return fail('Invalid pipeline routes.');
+    if (settings.browser && (!text(settings.browser.command) || !settings.browser.command.trim() || !Array.isArray(settings.browser.args)
+      || !settings.browser.args.every(text) || !/^\/(?!\/)[^\s\\]*$/.test(settings.browser.readyPath))) return fail('Invalid browser server command or readiness path.');
+    const routerProblem = PipelinePolicy.routerProblem(settings);
+    if (routerProblem) return fail(routerProblem);
     const routeProblem = PipelinePolicy.routeProblem(settings);
     if (routeProblem) return fail(routeProblem);
     if (!settings.setup.every((check) => check && text(check.command) && check.command && Array.isArray(check.args) && check.args.every(text))) return fail('Invalid setup command.');
@@ -103,6 +107,8 @@ export class AutomationSettingsValidator {
       repositoryPath: settings.repositoryPath, baseBranch: settings.baseBranch,
       connections: settings.connections.map(({ id, label, kind, baseUrl, credentialEnv, supportsImages, reasoningEffort, nativeRunner, isLocal }) => ({ id, label, kind, baseUrl, credentialEnv, supportsImages, reasoningEffort, ...(isLocal !== undefined ? { isLocal } : (kind === ProviderKind.Ollama ? { isLocal: true } : {})), ...(kind === ProviderKind.Native && nativeRunner ? { nativeRunner } : {}) })),
       agents: settings.agents.map(({ id, role, runner, connectionId, model, instructions, nativeProfile, command, args }) => ({ id, role, runner, connectionId, model, instructions, nativeProfile, command, args })),
+      ...(settings.browser ? { browser: { command: settings.browser.command, args: [...settings.browser.args], readyPath: settings.browser.readyPath } } : {}),
+      ...(settings.routingProfileIds !== undefined ? {routingProfileIds: [...settings.routingProfileIds]} : {}),
       pipeline: settings.pipeline, checks: settings.checks.map(({ command, args }) => ({ command, args })), setup: settings.setup.map(({ command, args }) => ({ command, args })), postOperations: postOperations.map(({ command, args, background }) => ({ command, args, ...(background ? { background } : {}) })), artifactPaths: settings.artifactPaths,
       ...(settings.pipelineRoutes?.length ? { pipelineRoutes: settings.pipelineRoutes.map(({ from, passTo, retry }) => ({
         from, passTo, ...(retry ? { retry: { to: retry.to, limit: retry.limit, exhausted: retry.exhausted } } : {}),

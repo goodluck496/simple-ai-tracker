@@ -49,7 +49,7 @@ export class AutomationPanelComponent implements OnInit {
   public sidebarCollapsed = false;
   public toggleSidebar(): void { this.sidebarCollapsed = !this.sidebarCollapsed; }
   public isTabDisabled(value: AutomationTab): boolean { return this.settingsScope === 'task' && (value === AutomationTab.Project || value === AutomationTab.Models); }
-  public selectTab(value: AutomationTab): void { if (!this.isTabDisabled(value)) this.activeTab = value; }
+  public selectTab(value: AutomationTab): void { if (!this.isTabDisabled(value)) { this.activeTab = value; if (window.matchMedia('(max-width: 700px)').matches) this.sidebarCollapsed = true; } }
   @Input() public initialMessage = '';
   @Input() public set initialBatch(value: boolean) { if (value) { this.batchMode = true; this.activeTab = AutomationTab.Launch; } }
   public batchMode = false;
@@ -115,13 +115,13 @@ export class AutomationPanelComponent implements OnInit {
       else this.taskDrafts.set(this.loadedTask, { settings: structuredClone(this.settings), overridden: this.taskOverridden });
     }
   }
-  private teamSignature(settings: AutomationSettings): string { return JSON.stringify([settings.agents, settings.pipeline, settings.pipelineRoutes, settings.maxStageToolCalls, settings.maxAgentCalls, settings.maxInputTokens, settings.maxRunMinutes, settings.timeoutMinutes, settings.maxRevisions]); }
+  private teamSignature(settings: AutomationSettings): string { return JSON.stringify([settings.agents, settings.routingProfileIds, settings.browser, settings.pipeline, settings.pipelineRoutes, settings.maxStageToolCalls, settings.maxAgentCalls, settings.maxInputTokens, settings.maxRunMinutes, settings.timeoutMinutes, settings.maxRevisions]); }
   private async loadTaskTeam(id: string): Promise<void> {
     const value = await firstValueFrom(this.http.get<{ settings: AutomationSettings; overridden: boolean }>(`/api/automation/tasks/${encodeURIComponent(id)}/team`));
     if (this.settingsScope !== 'task' || id !== this.selectedTask) return;
     this.loadedTeamSignature = this.teamSignature(value.settings);
     const draft = this.taskDrafts.get(id)?.settings;
-    this.settings = structuredClone(draft ? { ...value.settings, agents: draft.agents, pipeline: draft.pipeline, pipelineRoutes: draft.pipelineRoutes, maxStageToolCalls: draft.maxStageToolCalls, maxAgentCalls: draft.maxAgentCalls, maxInputTokens: draft.maxInputTokens, maxRunMinutes: draft.maxRunMinutes, timeoutMinutes: draft.timeoutMinutes, maxRevisions: draft.maxRevisions } : value.settings);
+    this.settings = structuredClone(draft ? { ...value.settings, agents: draft.agents, routingProfileIds: draft.routingProfileIds, browser: draft.browser, pipeline: draft.pipeline, pipelineRoutes: draft.pipelineRoutes, maxStageToolCalls: draft.maxStageToolCalls, maxAgentCalls: draft.maxAgentCalls, maxInputTokens: draft.maxInputTokens, maxRunMinutes: draft.maxRunMinutes, timeoutMinutes: draft.timeoutMinutes, maxRevisions: draft.maxRevisions } : value.settings);
     this.taskOverridden = value.overridden; this.loadedTask = id;
   }
   public changeScope(scope: 'project' | 'task'): void {
@@ -825,7 +825,7 @@ export class AutomationPanelComponent implements OnInit {
     if (preset) agent.runner = preset.runner;
     else if (agent.runner === RunnerId.ModelApi) agent.runner = RunnerId.Codex;
   }
-  public removeAgent(id: string): void { this.settings.agents = this.settings.agents.filter((entry) => entry.id !== id); this.toggleStage(id, false); }
+  public removeAgent(id: string): void { this.settings.routingProfileIds = this.settings.routingProfileIds?.filter(profileId => profileId !== id); this.settings.agents = this.settings.agents.filter((entry) => entry.id !== id); this.toggleStage(id, false); }
   public moveStage(index: number, target: number): void {
     if (index < 0 || index >= this.settings.pipeline.length || target < 0 || target >= this.settings.pipeline.length) return;
     const [stage] = this.settings.pipeline.splice(index, 1);
