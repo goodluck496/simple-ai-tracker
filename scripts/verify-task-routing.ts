@@ -16,7 +16,8 @@ const roles=['router','analyst','developer','tester','reviewer'] as const;
 app.automationService.configure({...structuredClone(DEFAULT_AUTOMATION_SETTINGS),repositoryPath:'/fixture',
   connections:[{id:'native',label:'Fixture',kind:'native',nativeRunner:'codex',supportsImages:false}],
   agents:roles.map(role=>({id:role,role,runner:'codex',connectionId:'native',model:'fixture-model',instructions:''})),
-  pipeline:[...roles],checks:[{command:'node',args:['--version']}]});
+  pipeline:roles.filter(role=>role!=='router'),checks:[{command:'node',args:['--version']}],
+  pipelineRoutes:[{from:'tester',passTo:'reviewer',retry:{to:'developer',limit:1,exhausted:'stop'}},{from:'reviewer',passTo:null}]});
 const server=createApiServer(app);const browser=await chromium.launch({headless:true});
 const started=Date.now();
 try {
@@ -28,6 +29,12 @@ try {
   const expand=page.getByRole('button',{name:'Развернуть',exact:true}); if(await expand.isVisible()) await expand.click();
   await page.locator('sat-sidebar').getByText('Команда агентов',{exact:true}).click();
   await page.getByRole('dialog',{name:'Команда агентов'}).getByText('Команда и этапы',{exact:true}).click();
+  await page.getByRole('button',{name:'Добавить этап',exact:true}).click();
+  await page.getByRole('combobox',{name:'Агент для нового этапа',exact:true}).click();
+  await page.getByRole('option',{name:'Роутер · fixture-model',exact:true}).click();
+  await page.getByRole('button',{name:'Добавить в маршрут',exact:true}).click();
+  await page.locator('.route-step').first().getByText('Роутер',{exact:true}).waitFor();
+  assert.equal(await page.locator('.route-error').count(),0);
   await page.getByText('Разрешённые профили моделей',{exact:true}).waitFor();
   const select=page.getByRole('combobox',{name:'Разрешённые профили моделей'});
   await page.locator('sat-task-routing p-multiselect').click();
@@ -40,7 +47,32 @@ try {
   await page.getByRole('button',{name:'Сохранить настройки проекта',exact:true}).click();
   await page.getByText('Настройки проекта сохранены.',{exact:true}).waitFor();
   assert.deepEqual(app.automationService.settings().routingProfileIds,['developer']);
+  assert.equal(app.automationService.settings().pipeline[0],'router');
+  assert.equal(app.automationService.settings().pipelineRoutes?.find(r=>r.from==='reviewer')?.passTo,null);
+  assert.equal(app.automationService.settings().pipelineRoutes?.find(r=>r.from==='tester')?.retry?.to,'developer');
   assert.equal(app.automationService.settings().browser?.readyPath,'/health');
+
+  // Reproduce the old in-memory draft: trailing router and reviewer -> router terminal link.
+  const legacy=structuredClone(app.automationService.settings());
+  legacy.pipeline=[...legacy.pipeline.filter(id=>id!=='router'),'router'];
+  legacy.pipelineRoutes!.find(r=>r.from==='reviewer')!.passTo='router';
+  await page.route('**/api/automation/settings',async route=>{
+    if(route.request().method()==='GET') await route.fulfill({json:legacy}); else await route.continue();
+  });
+  await page.reload();
+  await page.locator('sat-sidebar').getByText('Команда агентов',{exact:true}).click();
+  await page.getByRole('dialog',{name:'Команда агентов'}).getByText('Команда и этапы',{exact:true}).click();
+  await page.locator('.route-step').last().locator('.p-step-header').click();
+  await page.getByRole('combobox',{name:'Позиция',exact:true}).click();
+  await page.getByRole('option',{name:'1',exact:true}).click();
+  await page.locator('.route-step').first().getByText('Роутер',{exact:true}).waitFor();
+  assert.equal(await page.locator('.route-error').count(),0);
+  await page.getByRole('button',{name:'Сохранить настройки проекта',exact:true}).click();
+  await page.getByText('Настройки проекта сохранены.',{exact:true}).waitFor();
+  assert.equal(app.automationService.settings().pipeline[0],'router');
+  assert.equal(app.automationService.settings().pipelineRoutes?.find(r=>r.from==='reviewer')?.passTo,undefined);
+  assert.equal(app.automationService.settings().pipelineRoutes?.find(r=>r.from==='tester')?.retry?.to,'developer');
+
   await page.screenshot({path:path.join(output,'routing-desktop.png'),fullPage:true});
   await page.setViewportSize({width:390,height:844});
   const closeNav=page.getByText('Показать содержимое',{exact:true}); await closeNav.waitFor({state:'visible'}); await closeNav.click(); await page.locator('sat-automation-panel .panel-sidebar.collapsed').waitFor({state:'hidden'});

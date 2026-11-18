@@ -1,7 +1,7 @@
 import { TaskRoutingComponent } from './task-routing.component';
 import { afterNextRender, Component, ElementRef, EventEmitter, Injector, Input, Output } from '@angular/core';
 import { FormsModule } from '@angular/forms';
-import { CdkDrag, CdkDragHandle, CdkDragPreview, CdkDropList, moveItemInArray, type CdkDragDrop } from '@angular/cdk/drag-drop';
+import { CdkDrag, CdkDragHandle, CdkDragPreview, CdkDropList, type CdkDragDrop } from '@angular/cdk/drag-drop';
 import { ButtonModule } from 'primeng/button';
 import { InputNumberModule } from 'primeng/inputnumber';
 import { PanelModule } from 'primeng/panel';
@@ -72,7 +72,7 @@ export class PipelineFlowComponent {
     return PipelinePolicy.executionPath(this.settings);
   }
 
-  public get problem() { return PipelinePolicy.routeProblem(this.settings); }
+  public get problem() { return PipelinePolicy.routeProblem(this.settings) ?? PipelinePolicy.routerProblem(this.settings); }
   public get stageOptions() {
     const existing = this.settings.agents.filter(agent => !this.settings.pipeline.includes(agent.id)).map(agent => ({
       label: `${this.roleLabel(agent.role)} · ${agent.model || 'модель не выбрана'}`, value: `profile:${agent.id}`,
@@ -87,17 +87,10 @@ export class PipelineFlowComponent {
   public addStage(): void {
     if (!this.stageChoice) return;
     const [kind, id] = this.stageChoice.split(':');
-    const index = this.settings.pipeline.length;
-    const last = this.path.at(-1);
-    const terminal = last !== undefined ? PipelinePolicy.route(this.settings, last) : undefined;
+    const previous = new Set(this.settings.pipeline);
     if (kind === 'profile') this.includeAgent.emit(id);
     else this.createAgent.emit(id as AgentRole);
-    const added = this.settings.pipeline[index];
-    if (added && terminal?.passTo === null) {
-      this.settings.pipelineRoutes = this.settings.pipelineRoutes?.map(route =>
-        route.from === terminal.from ? { ...route, passTo: added } : route);
-    }
-    this.selected = index;
+    this.selected = this.settings.pipeline.findIndex(stage => !previous.has(stage));
     this.moveError = '';
     this.stageChoice = '';
     this.adding = false;
@@ -151,11 +144,9 @@ export class PipelineFlowComponent {
   public move(from: number, to: number): boolean {
     this.moveError = '';
     if (!this.editable || from === to || from < 0 || to < 0 || to >= this.settings.pipeline.length) return false;
-    const pipeline = [...this.settings.pipeline];
-    moveItemInArray(pipeline, from, to);
-    const problem = PipelinePolicy.routeProblem({ ...this.settings, pipeline });
-    if (problem) {
-      this.moveError = `Порядок не изменён. ${problem}`;
+    try { PipelinePolicy.reorder(this.settings, from, to); }
+    catch (error) {
+      this.moveError = `Порядок не изменён. ${error instanceof Error ? error.message : String(error)}`;
       return false;
     }
     this.reorder.emit({ from, to });

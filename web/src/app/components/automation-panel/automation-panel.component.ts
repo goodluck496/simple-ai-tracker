@@ -140,7 +140,7 @@ export class AutomationPanelComponent implements OnInit {
   public toggleStage(id: string, selected: boolean): void {
     const index = this.settings.pipeline.indexOf(id);
     if (selected) {
-      if (index < 0) this.settings.pipeline = [...this.settings.pipeline, id];
+      if (index < 0) Object.assign(this.settings, PipelinePolicy.includeStage(this.settings, id));
       return;
     }
     if (index < 0) return;
@@ -803,7 +803,7 @@ export class AutomationPanelComponent implements OnInit {
   public addConnection(): void { this.settings.connections.push({ id: `connection-${crypto.randomUUID()}`, label: 'Подключение', kind: ProviderKind.Native, supportsImages: false }); }
   public addAgent(role: AgentRole = AgentRole.Developer): void {
     const agent = this.teamProfiles.create(role, this.settings.connections[0]?.id ?? '');
-    this.settings.agents.push(agent); this.settings.pipeline.push(agent.id);
+    this.settings.agents.push(agent); this.toggleStage(agent.id, true);
     this.selectConnection(agent);
   }
   public addStandardTeam(): void {
@@ -828,8 +828,7 @@ export class AutomationPanelComponent implements OnInit {
   public removeAgent(id: string): void { this.settings.routingProfileIds = this.settings.routingProfileIds?.filter(profileId => profileId !== id); this.settings.agents = this.settings.agents.filter((entry) => entry.id !== id); this.toggleStage(id, false); }
   public moveStage(index: number, target: number): void {
     if (index < 0 || index >= this.settings.pipeline.length || target < 0 || target >= this.settings.pipeline.length) return;
-    const [stage] = this.settings.pipeline.splice(index, 1);
-    this.settings.pipeline.splice(target, 0, stage);
+    Object.assign(this.settings, PipelinePolicy.reorder(this.settings, index, target));
   }
   public roleLabel(role: AgentRole): string { return ROLE_OPTIONS.find((option) => option.value === role)?.label ?? role; }
   public changeRole(agent: AgentProfile, role: AgentRole): void { this.teamProfiles.changeRole(agent, role); }
