@@ -342,7 +342,7 @@
                             [disabled]="store.busy() || commentUploading() || !!acceptance()" (onClick)="returnWithFeedback(reviewFeedbackInput)" />
                           <p-button [label]="acceptance()?.status === 'queued' ? 'Слияние в очереди' : acceptance()?.status === 'integrating' ? 'Выполняется слияние' : 'Принять и слить'"
                             icon="pi pi-check" severity="success" size="small"
-                            [disabled]="store.busy() || !!acceptance()" (onClick)="acceptAutomation()" />
+                            [disabled]="store.busy() || acceptanceBusy()" (onClick)="acceptAutomation()" />
                         </div>
                         @if (acceptance(); as merge) {
                           <p class="subform-hint" role="status">
@@ -705,6 +705,10 @@
       ></p-button>
     }
     <div class="footer-right">
+      @if (canResumeRun() && !openQuestions()) {
+        <p-button label="Продолжить запуск" icon="pi pi-play" severity="success" size="small"
+          [disabled]="store.busy()" [loading]="resumeRunBusy()" (onClick)="resumeRun.emit()" />
+      }
       <p-button label="Закрыть" severity="secondary" [text]="true" size="small" (onClick)="close()"></p-button>
       <p-button
         [label]="isCreate() ? 'Создать' : 'Сохранить'"
@@ -716,6 +720,9 @@
         (onClick)="save()"
       ></p-button>
     </div>
+    @if (resumeRunError()) {
+      <small class="resume-run-error" role="alert">{{ resumeRunError() }}</small>
+    }
   </footer>
   <!-- Просмотр вложения: markdown-рендер или текст -->
   <p-dialog

@@ -81,3 +81,26 @@ test('ignored local files are not overwritten during squash publication', async 
     assert.equal(await readFile(path.join(f.repository, 'local.txt'), 'utf8'), 'user data');
   } finally { await f.dispose(); }
 });
+
+test('check output that only rewrites normalized line endings preserves the tested candidate', async () => {
+  const f = await gitFixture();
+  try {
+    await f.git(['config', 'core.autocrlf', 'true']);
+    const source = await f.branch('task1', 'a.txt', ['1\n']);
+    source.job.checks = async cwd => { await writeFile(path.join(cwd, 'b.txt'), '0\r\n'); };
+    const result = await new SquashIntegration().run(source.job);
+    assert.equal(result.state, 'publishing');
+    assert.equal((await f.git(['rev-parse', 'HEAD'])).trim(), result.candidateSha);
+  } finally { await f.dispose(); }
+});
+
+test('checks that edit tracked content cannot publish', async () => {
+  const f = await gitFixture();
+  try {
+    const source = await f.branch('task1', 'a.txt', ['1\n']);
+    const before = (await f.git(['rev-parse', 'HEAD'])).trim();
+    source.job.checks = async cwd => { await writeFile(path.join(cwd, 'b.txt'), 'changed\n'); };
+    await assert.rejects(new SquashIntegration().run(source.job), /changed the tested tree/);
+    assert.equal((await f.git(['rev-parse', 'HEAD'])).trim(), before);
+  } finally { await f.dispose(); }
+});

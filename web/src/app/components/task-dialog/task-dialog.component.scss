@@ -518,6 +518,7 @@
 /* Подвал */
 .sidebar-footer {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
   gap: 10px;
@@ -529,9 +530,15 @@
 
 .footer-right {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 8px;
   margin-left: auto;
+}
+
+.resume-run-error {
+  flex-basis: 100%;
+  color: var(--sat-danger);
 }
 
 .empty-hint {

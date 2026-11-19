@@ -119,8 +119,13 @@ export class TaskDialogComponent {
   public readonly createType = input<TaskType>('task');
   public readonly createStatus = input<TaskStatus>('backlog');
   public readonly parentId = input<string | null>(null);
+  public readonly canResumeRun = input(false);
+  public readonly resumeRunBusy = input(false);
+  public readonly resumeRunError = input('');
 
   public readonly closed = output<void>();
+  public readonly questionUpdated = output<void>();
+  public readonly resumeRun = output<void>();
 
   public readonly tab = signal<DialogTab>('overview');
 
@@ -152,6 +157,10 @@ export class TaskDialogComponent {
   public readonly hasCommentDraft = computed(() => !!this.commentDraft().trim() || this.commentImages().length > 0);
   public readonly stoppedRework = signal(false);
   public readonly acceptance = signal<{ status: RunStatus; summary: string } | null>(null);
+  public readonly acceptanceBusy = computed(() => {
+    const state = this.acceptance()?.status;
+    return state === 'queued' || state === 'integrating' || state === 'running' || state === 'merged';
+  });
   private readonly api = inject(TrackerApiService);
   public deployPreviewPatch = false;
   public readonly patchNotice = signal('');
@@ -452,10 +461,10 @@ export class TaskDialogComponent {
 
   public async acceptAutomation(): Promise<void> {
     const card = this.task();
-    if (card?.status === 'review' && !this.acceptance() && !this.store.busy()
+    if (card?.status === 'review' && !this.acceptanceBusy() && !this.store.busy()
       && await this.store.reviewAutomation(card.id, 'accept') && this.task()?.id === card.id) {
       this.status.set(this.task()!.status);
-      if (this.task()!.status === 'review' && !this.acceptance()) this.acceptance.set({ status: 'queued', summary: 'Слияние поставлено в очередь.' });
+      if (this.task()!.status === 'review') this.acceptance.set({ status: 'queued', summary: 'Слияние поставлено в очередь.' });
     }
   }
   public async previewPatch(rollback: boolean, deploy = false): Promise<void> {
@@ -544,12 +553,14 @@ export class TaskDialogComponent {
     const card = this.task();
     if (!card) return;
     await this.store.deleteQuestion(card.id, questionId);
+    this.questionUpdated.emit();
   }
 
   public async answerQuestion(event: { questionId: number; answer: string }): Promise<void> {
     const card = this.task();
     if (!card) return;
     await this.store.answerQuestion(card.id, event.questionId, event.answer);
+    this.questionUpdated.emit();
   }
 
   public async link(): Promise<void> {
