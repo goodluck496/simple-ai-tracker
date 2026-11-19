@@ -314,7 +314,7 @@ export class AutomationService {
     const attempt: UsageAttempt = { id: randomUUID(), kind: resolver ? 'resolver' : 'pipeline', stage: run.stage, revision: run.revision, role: agent.role, runner: agent.runner, model: agent.model,
       startedAt: now, updatedAt: now, finished: false };
     const legacyUsageMissing = run.usageAttempts === undefined && (run.stage > 0 || run.revision > 0 || this.runs.events(id).some((event) => event.kind === 'stage'));
-    this.runs.save({ ...run, phase: RunPhase.Agent, phaseStartedAt: now, updatedAt: now, lastMessage: '',
+    this.runs.save({ ...run, ...(agent.role === AgentRole.Router ? {routingInputDescription: task.description ?? ''} : {}), phase: RunPhase.Agent, phaseStartedAt: now, updatedAt: now, lastMessage: '',
       budgetElapsedMs: RunBudget.elapsed(run, Date.parse(now)), budgetUpdatedAt: now,
       usageIncomplete: run.usageIncomplete || legacyUsageMissing, usageAttempts: [...(run.usageAttempts ?? []), attempt] });
     this.runs.event(id, 'stage', `${agent.role}: ${agent.runner} / ${agent.model}`, this.clock.now());
@@ -390,16 +390,18 @@ export class AutomationService {
       const child = Decomposition.child(run);
       const taskId = child?.taskId ?? run.taskId;
       if (outcome.questions?.some(q => typeof q === 'string' && q.trim())) outcome = { ...outcome, verdict: AgentVerdict.Questions };
-      if (run.routing && profile.role !== AgentRole.Router && run.routing.sourceDescription !== (this.tasks.getTaskCard(taskId).description ?? '')) throw new TrackerError('VALIDATION_FAILED', 'Requirements changed after routing; restart the run.');
+      if (run.routing && profile.role !== AgentRole.Router && run.routing.sourceDescription !== (this.tasks.getTaskCard(taskId).description ?? '')) throw new TrackerError('VALIDATION_FAILED', 'Requirements changed after routing; resume the run to refresh routing in the saved worktree.');
       const now = this.clock.now();
       let updated: AgentRun = { ...run, branch, commitSha, updatedAt: now, summary: outcome.summary,
         budgetElapsedMs: RunBudget.elapsed(run, Date.parse(now)), budgetUpdatedAt: now };
       updated.budgetApproval = undefined;
       if (profile.role === AgentRole.Router && outcome.verdict === AgentVerdict.Pass) {
+        if (run.routingInputDescription !== undefined && run.routingInputDescription !== (this.tasks.getTaskCard(taskId).description ?? '')) throw new TrackerError('VALIDATION_FAILED', 'Requirements changed after routing; resume the router with the latest task.');
         let decision;
         try { decision = TaskRouting.parse(outcome.plan ?? '', run.settings, run.stage); }
         catch (error) { throw new TrackerError('VALIDATION_FAILED', String(error)); }
         if (decision.uncertainty === 'high' && !PipelinePolicy.roles(run.settings).includes(AgentRole.Analyst)) throw new TrackerError('VALIDATION_FAILED', 'High uncertainty requires an analyst or user answers.');
+        decision.assignments = decision.assignments.filter(a => !run.profileOverrides?.includes(a.stage));
         updated.routing = { decision, sourceDescription: this.tasks.getTaskCard(taskId).description ?? '', createdAt: now };
         this.runs.event(id, 'routing', JSON.stringify({complexity: decision.complexity, risk: decision.risk, uncertainty: decision.uncertainty, replacements: decision.assignments.length, criteria: decision.brief.criteria.length}), now);
       }
@@ -569,6 +571,43 @@ export class AutomationService {
       this.runs.event(id, RunStatus.Cancelled, 'Убрано из очереди пользователем. Задача и журнал сохранены.', now);
     });
   }
+  public changeStageProfile(id: string, stage: unknown, profileId: unknown, model?: unknown, expectedProfileId?: unknown): AgentRun {
+    return this.runs.db.transaction(() => {
+      const run = this.requireRun(id);
+      if (!Number.isSafeInteger(stage) || typeof stage !== 'number' || stage < run.stage || stage >= run.settings.pipeline.length)
+        throw new TrackerError('CONFLICT', 'Можно менять только текущий или будущий этап. Обновите сведения о запуске.');
+      if (run.cleanup || run.feature || this.projects.hasPreviewPatch(run.id) || ![RunStatus.Queued, RunStatus.Running, ...RESUMABLE_RUN_STATUSES].includes(run.status))
+        throw new TrackerError('CONFLICT', 'Для этого состояния смена профиля недоступна.');
+      if (run.status === RunStatus.Running && stage === run.stage) throw new TrackerError('CONFLICT', 'Сначала остановите текущий этап. Будущие этапы можно менять во время работы.');
+      const original = run.settings.agents.find(a => a.id === run.settings.pipeline[stage])!;
+      if (expectedProfileId !== undefined && expectedProfileId !== original.id) throw new TrackerError('CONFLICT', 'Профиль этапа уже изменился. Обновите запуск.');
+      const configured = this.settings();
+      const replacement = configured.agents.find(a => a.id === profileId && a.role === original.role);
+      const connection = configured.connections.find(c => c.id === replacement?.connectionId);
+      if (!replacement || !connection) throw new TrackerError('VALIDATION_FAILED', 'Выберите профиль той же роли из настроек проекта.');
+      const selectedModel = model ?? replacement.model;
+      if (typeof selectedModel !== 'string' || !selectedModel.trim() || selectedModel.length > 300 || /[\x00-\x1f]/.test(selectedModel)) throw new TrackerError('VALIDATION_FAILED', 'Invalid replacement model.');
+      const newId = randomUUID(), connectionId = randomUUID();
+      const rename = (value: string) => value === original.id ? newId : value;
+      const settings = new AutomationSettingsValidator().validate({ ...run.settings,
+        agents: [...run.settings.agents, { ...replacement, id: newId, connectionId, model: selectedModel }],
+        connections: [...run.settings.connections, { ...connection, id: connectionId }],
+        pipeline: run.settings.pipeline.map((value, index) => index === stage ? newId : value),
+        pipelineRoutes: run.settings.pipelineRoutes?.map(r => ({...r, from: rename(r.from), passTo: typeof r.passTo === 'string' ? rename(r.passTo) : r.passTo,
+          ...(r.retry ? {retry: {...r.retry, to: rename(r.retry.to)}} : {})})),
+      });
+      const now = this.clock.now();
+      const updated: AgentRun = { ...run, settings, updatedAt: now, profileOverrides: [...new Set([...(run.profileOverrides ?? []), stage])],
+        routing: run.routing ? {...run.routing, decision: {...run.routing.decision, assignments: run.routing.decision.assignments.filter(a => a.stage !== stage)}} : undefined };
+      if (stage === run.stage) {
+        updated.revision++; updated.stageMemory = undefined; updated.workPlan = undefined;
+        updated.acceptance = undefined; updated.manualAcceptance = undefined; updated.doctorRepair = undefined;
+      }
+      this.runs.save(updated);
+      this.runs.event(id, 'profile', `Профиль этапа ${stage + 1} (${original.role}) изменён пользователем: ${replacement.runner} · ${selectedModel}. Рабочая ветка и потраченный бюджет сохранены.`, now);
+      return this.publicRun(updated);
+    });
+  }
   public resume(id: string, replacementProfileId?: unknown, replacementModel?: unknown, repair = false, refreshChecks = false, retryCurrent = false): AgentRun {
     return this.runs.db.transaction(() => {
     const run = this.requireRun(id);
@@ -586,14 +625,17 @@ export class AutomationService {
     if (task.status === TaskStatus.Done || (task.status === TaskStatus.Review && !mergeOnly)) throw new TrackerError('CONFLICT', 'Task is already complete or in review.');
     if (this.runs.hasActive(run.taskId) && run.status !== RunStatus.Waiting) throw new TrackerError('CONFLICT', 'Task already has another active run.');
     if (run.feature?.children.some(c => this.runs.hasActive(c.taskId))) throw new TrackerError('CONFLICT', 'A child has an independent active run; stop it before resuming the feature.');
+    const reroute = !!run.routing && run.routing.sourceDescription !== (task.description ?? '');
+    if (reroute && run.feature) throw new TrackerError('CONFLICT', 'Изменились требования декомпозированной фичи: перепроверьте дочерние планы перед продолжением. Рабочие копии сохранены.');
+    if (reroute && (replacementProfileId !== undefined || replacementModel !== undefined || retryCurrent)) throw new TrackerError('CONFLICT', 'Изменились требования. Сначала используйте обычное продолжение для повторной маршрутизации.');
     const role = run.settings.agents.find((agent) => agent.id === run.settings.pipeline[run.stage])?.role;
     if (retryCurrent && (!role || !EVIDENCE_AGENT_ROLES.includes(role) || repair || refreshChecks
       || replacementProfileId !== undefined || replacementModel !== undefined)) {
       throw new TrackerError('CONFLICT', 'Повтор доступен только для текущего этапа проверки.');
     }
-    const repairStage = repair ? this.doctorRepairStage(run) : undefined;
-    if (repair && (repairStage === undefined || run.proposedFix?.action !== 'repair_stage')) throw new TrackerError('CONFLICT', 'Нет доступного этапа для исправления.');
-    if (repair) {
+    const repairStage = repair && !reroute ? this.doctorRepairStage(run) : undefined;
+    if (repair && !reroute && (repairStage === undefined || run.proposedFix?.action !== 'repair_stage')) throw new TrackerError('CONFLICT', 'Нет доступного этапа для исправления.');
+    if (repair && !reroute) {
       const reason = RunBudget.reason(run, Date.parse(this.clock.now()), true);
       if (reason) throw new TrackerError('CONFLICT', reason);
     }
@@ -601,7 +643,8 @@ export class AutomationService {
     const manualRetry = !retryCurrent && run.status === RunStatus.Waiting && run.lastRoute?.kind === 'exhausted' && run.lastRoute.from === run.stage && retry;
     const waitingDeveloper = run.status === RunStatus.Waiting && role && EVIDENCE_AGENT_ROLES.includes(role)
       ? Decomposition.child(run)?.developerStage ?? run.feature?.finalDeveloperStage ?? run.settings.pipeline.findIndex((id) => run.settings.agents.find((agent) => agent.id === id)?.role === AgentRole.Developer) : -1;
-    const stage = retryCurrent ? run.stage : repairStage ?? (manualRetry ? run.settings.pipeline.indexOf(manualRetry.to) : waitingDeveloper >= 0 ? waitingDeveloper : run.stage);
+    const stage = reroute ? run.settings.pipeline.findIndex(id => run.settings.agents.find(a => a.id === id)?.role === AgentRole.Router) : retryCurrent ? run.stage : repairStage ?? (manualRetry ? run.settings.pipeline.indexOf(manualRetry.to) : waitingDeveloper >= 0 ? waitingDeveloper : run.stage);
+    if (stage < 0) throw new TrackerError('CONFLICT', 'Для обновления требований нужен этап роутера. Рабочая копия сохранена.');
     let settings = run.settings;
     if (refreshChecks) {
       const project = new AutomationSettingsValidator().validate(this.settings());
@@ -635,12 +678,25 @@ export class AutomationService {
       });
     }
     const updated: AgentRun = { ...run, settings, stage, status: RunStatus.Queued, proposedFix: null, leaseToken: null, workerId: null, leaseUntil: null, updatedAt: this.clock.now(), finishedAt: undefined };
+    if (reroute) {
+      updated.revision++;
+      updated.routing = undefined;
+      updated.acceptance = undefined;
+      updated.manualAcceptance = undefined;
+      updated.stageMemory = undefined;
+      updated.workPlan = undefined;
+      updated.doctorRepair = undefined;
+      updated.routeRetries = undefined;
+      updated.lastRoute = undefined;
+      updated.acceptedSha = undefined;
+      updated.summary = 'Требования изменились: повторная маршрутизация и анализ в сохранённой рабочей ветке.';
+    }
     updated.retryCurrentStage = retryCurrent ? stage : undefined;
     if (retryCurrent) {
       updated.revision++;
       updated.stageMemory = undefined;
     }
-    if (manualRetry) updated.revision++;
+    if (manualRetry && !reroute) updated.revision++;
     if (repairStage !== undefined) {
       updated.revision++;
       updated.doctorRepair = { stage, failedStage: run.stage, revision: updated.revision,
@@ -648,7 +704,7 @@ export class AutomationService {
     }
     this.runs.restore(id);
     this.runs.save(updated);
-    this.runs.event(id, 'resumed', retryCurrent ? `Повтор только текущей проверки: этап ${stage + 1}. При замечаниях запуск остановится для решения пользователя.` : refreshChecks ? 'Продолжение в прежней рабочей ветке с обновлёнными проверками проекта.' : repair ? 'Исправление по диагнозу Pipeline Doctor поставлено в очередь.' : manualRetry
+    this.runs.event(id, 'resumed', reroute ? 'Требования изменились: запуск возвращён к роутеру. Коммиты, рабочая копия и израсходованный бюджет сохранены; прежняя приёмка сброшена.' : retryCurrent ? `Повтор только текущей проверки: этап ${stage + 1}. При замечаниях запуск остановится для решения пользователя.` : refreshChecks ? 'Продолжение в прежней рабочей ветке с обновлёнными проверками проекта.' : repair ? 'Исправление по диагнозу Pipeline Doctor поставлено в очередь.' : manualRetry
       ? `Пользователь продолжил доработку после исчерпания лимита. Следующий этап: ${stage + 1}.` : replacementProfileId === undefined
       ? 'Продолжение с сохранёнными настройками и checkpoint. Ожидает worker.'
       : 'Текущий этап поставлен в очередь с другим профилем агента. Рабочая ветка сохранена.', this.clock.now());
@@ -735,7 +791,7 @@ export class AutomationService {
         || task.openQuestionsCount || this.runs.hasActive(taskId)) {
         throw new TrackerError('CONFLICT', 'Нет завершённого агентского запуска, ожидающего приёмки.');
       }
-      if (run.routing && run.routing.sourceDescription !== (this.tasks.getTaskCard(taskId).description ?? '')) throw new TrackerError('VALIDATION_FAILED', 'Requirements changed after routing; restart the run.');
+      if (run.routing && run.routing.sourceDescription !== (this.tasks.getTaskCard(taskId).description ?? '')) throw new TrackerError('VALIDATION_FAILED', 'Requirements changed after routing; resume the run to refresh routing in the saved worktree.');
       const now = this.clock.now();
       let updated: AgentRun = { ...run, status: RunStatus.Queued, finishedAt: undefined, updatedAt: now,
         workerId: null, leaseUntil: null, leaseToken: null, proposedFix: null };
@@ -958,7 +1014,7 @@ export class AutomationService {
     if (!RESUMABLE_RUN_STATUSES.includes(run.status)) throw new TrackerError('CONFLICT', 'Анализ доступен после остановки запуска.');
     const events = this.runs.events(id).map(e => e.text);
     const fix = await this.doctor.diagnose(run, events);
-    if ((fix.action === 'advice_only' || fix.action === 'retry_stage') && this.doctorRepairStage(run) !== undefined) fix.action = 'repair_stage';
+    if (fix.diagnosis?.confidence !== 'unknown' && fix.action === 'advice_only' && this.doctorRepairStage(run) !== undefined) fix.action = 'repair_stage';
     const current = this.requireRun(id);
     if (current.status !== run.status || current.updatedAt !== run.updatedAt) throw new TrackerError('CONFLICT', 'Запуск изменился во время диагностики.');
     this.runs.save({ ...current, proposedFix: fix });

@@ -260,6 +260,7 @@
               </section>
             }
           }
+          <sat-run-profile-editor [run]="run" (changed)="profileChanged()" />
           @let time = runBudget.time(run, now());
           <div class="run-budget-summary" role="status">
             @if (time.disabled) {
@@ -611,9 +612,17 @@
           </div>
         </div>
         <p class="fix-explanation">{{ fix.explanation }}</p>
+        @if (fix.diagnosis; as diagnosis) {
+          <p-panel [header]="diagnosis.confidence === 'confirmed' ? 'Причина подтверждена' : diagnosis.confidence === 'hypothesis' ? 'Гипотеза — требует проверки' : 'Причина не установлена'">
+            @for (evidence of diagnosis.evidence; track $index) { <p>{{ evidence }}</p> }
+          </p-panel>
+          <p-panel header="План восстановления">
+            <ol>@for (step of diagnosis.steps; track $index) { <li>{{ step }}</li> }</ol>
+          </p-panel>
+        }
       </div>
 
-      <div class="fix-files-section">
+      @if (fix.files.length) { <div class="fix-files-section">
         <strong>Затронутые файлы:</strong>
         <div class="fix-files-tags">
           @for (file of fix.files; track file) {
@@ -622,10 +631,11 @@
         </div>
       </div>
 
-      <div class="fix-diff-section">
+      }
+      @if (fix.diff) { <div class="fix-diff-section">
         <strong>Diff изменений:</strong>
         <pre class="fix-diff-view"><code>{{ fix.diff }}</code></pre>
-      </div>
+      </div> }
     </div>
   }
   <ng-template pTemplate="footer">
@@ -633,7 +643,7 @@
       @if (error()) { <p role="alert">{{ error() }}</p> }
       @if (currentFix()?.action === 'repair_stage' || currentFix()?.action === 'retry_stage' || currentFix()?.action === 'commit_dirty_repo' || currentFix()?.action === 'switch_branch') {
         <button pButton severity="success" icon="pi pi-check" [disabled]="busy()" (click)="applyFix()">
-          {{ currentFix()?.action === 'repair_stage' ? 'Запустить исправление' : currentFix()?.action === 'retry_stage' ? 'Повторить этап' : 'Применить и продолжить' }}
+          {{ currentFix()?.applyLabel || (currentFix()?.action === 'repair_stage' ? 'Запустить исправление' : currentFix()?.action === 'retry_stage' ? 'Повторить этап' : 'Применить и продолжить') }}
         </button>
       }
       <button pButton severity="danger" [text]="true" icon="pi pi-trash" [disabled]="busy()" (click)="discardFix()">

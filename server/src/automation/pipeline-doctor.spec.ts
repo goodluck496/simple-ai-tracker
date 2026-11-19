@@ -3,6 +3,30 @@ import { test } from 'node:test';
 import { createContainer } from '../bootstrap/container.js';
 import { SilentLogger } from '../core/logger.js';
 import { DEFAULT_AUTOMATION_SETTINGS, ProviderKind } from '../../../shared/automation/contracts.js';
+import {PipelineDoctor} from './pipeline-doctor.js';
+import type {AgentRun} from '../../../shared/automation/contracts.js';
+
+test('changed requirements diagnosis is deterministic despite old npm/build logs and never calls a model',async()=>{
+  const doctor=new PipelineDoctor(undefined,async()=>{assert.fail('Routing state must not use a model');});
+  const run={summary:'Requirements changed after routing; restart the run.',settings:{...DEFAULT_AUTOMATION_SETTINGS}} as AgentRun;
+  const fix=await doctor.diagnose(run,['npm ci completed','old TypeScript build warning']);
+  assert.equal(fix.action,'retry_stage');assert.equal(fix.diagnosis?.confidence,'confirmed');
+  assert.match(fix.applyLabel!,/Обновить требования/);assert.equal(fix.diff,'');assert.equal(fix.diagnosis?.steps.length,3);
+});
+test('unexplained failure is labelled unknown and gives investigation steps without an invented patch',async()=>{
+  const doctor=new PipelineDoctor();
+  const run={summary:'Agent stopped unexpectedly',stage:1,settings:{...DEFAULT_AUTOMATION_SETTINGS}} as AgentRun;
+  const fix=await doctor.diagnose(run,[]);
+  assert.equal(fix.diagnosis?.confidence,'unknown');assert.equal(fix.action,'advice_only');assert.equal(fix.diff,'');
+  assert.ok(fix.diagnosis!.steps.length>0);assert.match(fix.title,/не установлена/);
+});
+test('provider usage limit gives an access recovery plan instead of a code repair',async()=>{
+  const doctor=new PipelineDoctor(undefined,async()=>assert.fail('No model needed for usage limits'));
+  const run={summary:'designer/codex failed: подробности доступны у исполнителя',settings:{...DEFAULT_AUTOMATION_SETTINGS}} as AgentRun;
+  const fix=await doctor.diagnose(run,["Error: You've hit your usage limit. Try again at 6:20 PM."]);
+  assert.equal(fix.action,'retry_stage');assert.equal(fix.diagnosis?.confidence,'confirmed');
+  assert.match(fix.title,/лимитом/);assert.equal(fix.diff,'');
+});
 
 test('pipeline doctor creates proposed fix and handles apply/discard', async () => {
   const app = createContainer({ config: { dbPath: ':memory:' }, logger: new SilentLogger() });

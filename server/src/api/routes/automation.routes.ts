@@ -7,6 +7,7 @@ import { TASK_SELECTION_LIMIT } from '../../../../shared/automation/task-readine
 import { RunLogDownload } from '../../automation/run-log-download.js';
 
 export function registerAutomationRoutes(router: Router, app: AppContainer): void {
+  router.post('/api/automation/runs/:id/profile', ({params, body, res}) => sendJson(res, 200, {run: app.automationService.changeStageProfile(params.id, bodyField(body, 'stage'), bodyField(body, 'profileId'), bodyField(body, 'model'), bodyField(body, 'expectedProfileId'))}));
   router.post('/api/automation/runs/:id/accept-manually', ({ params, res }) =>
     sendJson(res, 200, { run: app.automationService.acceptManually(params.id) }));
   router.get('/api/automation/tasks/:id/preview-patch', ({ params, res }) =>

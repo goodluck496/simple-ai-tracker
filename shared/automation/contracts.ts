@@ -116,6 +116,8 @@ export const DEFAULT_SETUP_COMMAND: CheckCommand = { command: 'npm', args: ['ci'
 export const DEFAULT_POST_OPERATION: CheckCommand = { command: 'npm', args: ['run', 'build'] };
 
 export interface ProposedFix {
+  diagnosis?: { confidence: 'confirmed' | 'hypothesis' | 'unknown'; evidence: string[]; steps: string[] };
+  applyLabel?: string;
   id: string;
   title: string;
   explanation: string;
@@ -130,6 +132,8 @@ export interface ProposedFix {
 export interface AgentRun {
   manualAcceptance?: { at: string; sha: string; stage: number };
   routing?: import('./task-routing.js').RoutingSnapshot;
+  routingInputDescription?: string;
+  profileOverrides?: number[];
   acceptance?: { sha: string; results: import('./task-routing.js').AcceptanceResult[] };
 
   /** A user-requested single check retry must stop on failure instead of routing back to a writer. */

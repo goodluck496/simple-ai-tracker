@@ -1,3 +1,4 @@
+import { RunProfileEditorComponent } from './run-profile-editor.component';
 import { DialogModule } from 'primeng/dialog';
 import type { ProposedFix } from '../../../../../shared/automation/contracts';
 import { ChangeDetectionStrategy, Component, DestroyRef, EventEmitter, Input, Output, computed, effect, inject, signal } from '@angular/core';
@@ -32,7 +33,7 @@ import { formatQueueDate, sortRunHistory } from './queue-dates';
 
 import { PipelineFlowComponent } from '../automation-panel/pipeline-flow.component';
 
-@Component({ selector: 'sat-automation-queue', standalone: true, imports: [DatePipe, DecimalPipe, RunConsoleComponent, RunActivityComponent, TableModule, ButtonModule, FormsModule, CheckboxModule, DialogModule, SelectModule, PanelModule, InputTextModule, InputNumberModule, PipelineFlowComponent],
+@Component({ selector: 'sat-automation-queue', standalone: true, imports: [RunProfileEditorComponent, DatePipe, DecimalPipe, RunConsoleComponent, RunActivityComponent, TableModule, ButtonModule, FormsModule, CheckboxModule, DialogModule, SelectModule, PanelModule, InputTextModule, InputNumberModule, PipelineFlowComponent],
   changeDetection: ChangeDetectionStrategy.OnPush, templateUrl: './automation-queue.component.html', styleUrl: './automation-queue.component.scss' })
 export class AutomationQueueComponent {
   private readonly http = inject(HttpClient);
@@ -84,6 +85,7 @@ export class AutomationQueueComponent {
         error: (error: unknown) => this.error.set(this.message(error)),
       });
   }
+  public profileChanged(): void { this.refresh.next(); this.notice.set('Профиль этапа обновлён в этом запуске. Рабочая ветка сохранена.'); }
   public readonly search = signal('');
   public readonly statusTitles = RUN_STATUS_TITLES;
   public readonly taskTitles = TASK_STATUS_TITLES;

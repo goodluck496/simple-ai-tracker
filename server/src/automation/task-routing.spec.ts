@@ -64,3 +64,64 @@ test('router lifecycle persists decisions, actual usage model and acceptance met
     assert.equal(app.taskService.getTaskCard(task.id).status,'review');
   } finally {app.close();}
 });
+
+test('changed requirements resume through router in the same checkout, including an obsolete Doctor repair request', async () => {
+  for (const repair of [false, true]) {
+    const app=createContainer({config:{dbPath:':memory:'},logger:new SilentLogger()});
+    try {
+      const service=app.automationService;service.configure(settings());
+      const task=app.taskService.createTask({title:'Clarified while writing',description:'Original scope'});
+      const queued=service.enqueue(task.id);const run=service.claim('fixture')!;const token=run.leaseToken!;
+      const checkout={repositoryRoot:'/project',worktreePath:'/saved-worktree',baseSha:'b'.repeat(40),dependencyMode:'isolated'};
+      service.checkout(run.id,token,checkout);
+      const finish=(plan='')=>service.completeStage(run.id,token,{verdict:'pass',summary:'Stage complete',plan},`sat/${run.id}`,'a'.repeat(40));
+      service.beginStage(run.id,token);finish(JSON.stringify(decision()));
+      service.beginStage(run.id,token);finish('# Original plan');
+      service.beginStage(run.id,token);
+      app.taskService.updateTask({id:task.id,description:'Original scope plus evidence requirement',actor:'user'});
+      assert.throws(()=>finish(),/Requirements changed after routing/);
+      service.fail(run.id,token,'Requirements changed after routing; restart the run.');
+      const before=service.detail(run.id).run;
+      const fix=await service.diagnoseFix(run.id);
+      assert.equal(fix.action,'retry_stage');assert.match(fix.title,/маршрутизацию/);
+      const resumed=repair ? service.resume(run.id,undefined,undefined,true) : await service.applyFix(run.id);
+      assert.equal(resumed.id,queued.id);assert.equal(resumed.stage,0);assert.equal(resumed.revision,before.revision+1);
+      assert.equal(resumed.routing,undefined);assert.equal(resumed.acceptance,undefined);assert.equal(resumed.doctorRepair,undefined);
+      assert.deepEqual(resumed.checkout,before.checkout);assert.equal(resumed.branch,before.branch);assert.equal(resumed.commitSha,before.commitSha);
+      assert.deepEqual(resumed.usageAttempts,before.usageAttempts);assert.deepEqual(resumed.settings,before.settings);
+      const current=service.claim('fixture')!;
+      service.beginStage(run.id,current.leaseToken!);
+      const rerouted=service.completeStage(run.id,current.leaseToken!,{verdict:'pass',summary:'Rerouted',plan:JSON.stringify(decision())},`sat/${run.id}`,'c'.repeat(40));
+      assert.equal(rerouted.routing?.sourceDescription,'Original scope plus evidence requirement');
+      assert.equal(rerouted.stage,1);
+      service.beginStage(run.id,current.leaseToken!);
+      service.completeStage(run.id,current.leaseToken!,{verdict:'pass',summary:'Replanned',plan:'# Updated plan including evidence'},`sat/${run.id}`,'c'.repeat(40));
+      service.beginStage(run.id,current.leaseToken!);
+      assert.equal(service.detail(run.id).run.stage,2);
+    } finally { app.close(); }
+  }
+});
+
+test('manual future profile choice during router execution wins over the router proposal',()=>{
+  const app=createContainer({config:{dbPath:':memory:'},logger:new SilentLogger()});
+  try {
+    const service=app.automationService;service.configure(settings());
+    const task=app.taskService.createTask({title:'Manual model choice',description:'Fixed requirements'});
+    service.enqueue(task.id);const run=service.claim('fixture')!;const token=run.leaseToken!;
+    service.beginStage(run.id,token);
+    service.changeStageProfile(run.id,2,'alternate','human-selected-model');
+    const result=service.completeStage(run.id,token,{verdict:'pass',summary:'Routed',plan:JSON.stringify(decision())},`sat/${run.id}`,'a'.repeat(40));
+    assert.deepEqual(result.routing?.decision.assignments,[]);
+    assert.equal(TaskRouting.profile(result.settings,2,result.routing).model,'human-selected-model');
+  } finally {app.close();}
+});
+test('requirements changed while router is running cannot be published as a current decision',()=>{
+  const app=createContainer({config:{dbPath:':memory:'},logger:new SilentLogger()});
+  try {
+    const service=app.automationService;service.configure(settings());
+    const task=app.taskService.createTask({title:'Race with clarification',description:'Old scope'});
+    service.enqueue(task.id);const run=service.claim('fixture')!;service.beginStage(run.id,run.leaseToken!);
+    app.taskService.updateTask({id:task.id,description:'New scope',actor:'user'});
+    assert.throws(()=>service.completeStage(run.id,run.leaseToken!,{verdict:'pass',summary:'Old proposal',plan:JSON.stringify(decision())},`sat/${run.id}`,'a'.repeat(40)),/Requirements changed/);
+  } finally {app.close();}
+});

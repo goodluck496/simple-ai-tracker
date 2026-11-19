@@ -27,7 +27,7 @@ export class StageJournal {
     await this.flush();
     if (this.failure) throw this.failure;
     await RunWorkspace.atomic(path.join(this.cwd, '.sat', 'stage-context.json'), { key: this.key,
-      noteFile: '.sat/stage-note.json', noteSchema: { summary: 'short prose', implementationPlan: ['exact file/symbol, change, focused check; required before source edits when no plan exists'], findings: ['confirmed fact'], completedSteps: ['S1'], nextStep: 'one concrete action', files: ['path#symbol'], checks: ['command: exit/count/result'] },
+      noteFile: '.sat/stage-note.json', noteLimits: {textChars: STAGE_NOTE_LIMITS.textChars, listItems: 6, encoding: 'UTF-8 JSON; write temporary file then atomic rename'}, noteSchema: { summary: 'short prose', implementationPlan: ['exact file/symbol, change, focused check; required before source edits when no plan exists'], findings: ['confirmed fact'], completedSteps: ['S1'], nextStep: 'one concrete action', files: ['path#symbol'], checks: ['command: exit/count/result'] },
       currentNote: this.note ?? (memory?.key === this.key ? memory.note : undefined) });
     this.timer = setInterval(() => { void this.flush().catch(error => { this.failure = error; this.onError(); }); }, STAGE_NOTE_LIMITS.pollMs);
   }
@@ -65,7 +65,7 @@ export class StageJournal {
     }
     if (text === this.seen || text === this.rejected) return;
     try {
-      const value = JSON.parse(text) as { key?: unknown; note?: unknown };
+      const value = JSON.parse(text.replace(/^\uFEFF/, '')) as { key?: unknown; note?: unknown };
       if (value && typeof value.key === 'string' && /^[a-f0-9]{64}$/.test(value.key) && value.key !== this.key) { this.seen = text; return; }
       if (!value || value.key !== this.key || Object.keys(value).some(key => !['key', 'note'].includes(key))) throw new Error('Wrong checkpoint context.');
       const note = StageNotes.parse(value.note);

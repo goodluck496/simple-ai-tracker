@@ -17,6 +17,21 @@ export class PipelineDoctor {
    * and prepares a proposed fix with a readable explanation and Git diff.
    */
   public async diagnose(run: AgentRun, errorLogs: string[]): Promise<ProposedFix> {
+    // A stale routing contract is control-flow state, not a source/dependency failure.
+    if (/Requirements changed after routing/i.test(run.summary)) return {
+      id: randomUUID(), title: 'Обновить маршрутизацию после уточнения требований',
+      explanation: 'Описание задачи изменилось после решения роутера. Продолжение повторит роутер и последующие этапы в той же рабочей ветке. Сделанные изменения и потраченный бюджет сохраняются; старые критерии и приёмка будут пересмотрены.',
+      diff: '', files: [], createdAt: new Date().toISOString(), scope: 'worktree', action: 'retry_stage',
+      applyLabel: 'Обновить требования и продолжить', diagnosis: {confidence:'confirmed',evidence:[run.summary],steps:['Повторить роутер на актуальном описании задачи.', 'Пересмотреть план и критерии приёмки с учётом уточнений.', 'Продолжить в сохранённой ветке и заново проверить результат.']},
+    };
+    const accessEvidence = /подробности доступны у исполнителя/i.test(run.summary)
+      ? run.summary + '\n' + errorLogs.slice(-3).join('\n') : run.summary;
+    if (/usage limit|insufficient_quota|quota exceeded|you.ve hit your|rate.limit|too many requests/i.test(accessEvidence)) return {
+      id: randomUUID(), title: 'Исполнитель ограничен лимитом провайдера',
+      explanation: 'Провайдер отказал в доступе к модели из-за лимита использования. Проверьте срок восстановления доступа или выберите доступный профиль для оставшихся этапов этого запуска.',
+      diff:'', files:[], createdAt:new Date().toISOString(), scope:'worktree', action:'retry_stage', applyLabel:'Повторить после восстановления доступа',
+      diagnosis:{confidence:'confirmed',evidence:[accessEvidence.slice(-2400)],steps:['Проверить лимит и время восстановления в аккаунте провайдера.', 'При необходимости сменить профиль текущего остановленного этапа через редактор агентов.', 'Продолжить тот же запуск после восстановления доступа; рабочая ветка сохранена.']},
+    };
     const wtCwd = run.checkout?.worktreePath;
     const repoCwd = run.settings?.repositoryPath;
 
@@ -54,7 +69,7 @@ export class PipelineDoctor {
     const isBranchError = /target branch must be checked out|not on target branch/i.test(combinedLog);
     const isBuildError = /build|compile|syntax|typescript|ts\(\d+\)/i.test(combinedLog);
     const isTestError = /test|jest|vitest|playwright|assert/i.test(combinedLog);
-    const isDepError = /dependency|module|cannot find module|npm/i.test(combinedLog);
+    const isDepError = /cannot find module|ERR_MODULE_NOT_FOUND|MODULE_NOT_FOUND|ERESOLVE|npm ERR!|missing dependenc/i.test(combinedLog);
 
     // Default rule-based diagnosis
     let title = 'Исправление сбоя конвейера';
@@ -146,9 +161,16 @@ export class PipelineDoctor {
       }
     }
 
+    const known = !!failure || isCleanCheckoutError || isBranchError || isBuildError || isTestError || isDepError;
     return {
+      diagnosis: {confidence: failure || isCleanCheckoutError || isBranchError ? 'confirmed' : known || modelBadge ? 'hypothesis' : 'unknown',
+        evidence: [failureSummary.slice(0,2400)],
+        steps: failure ? ['Устранить указанное ограничение среды или выбрать доступный профиль модели.', 'Повторить этап в сохранённой рабочей ветке.']
+          : isBuildError || isTestError || isDepError ? ['Открыть диагностику конкретной команды и проверить ожидаемый и фактический результат.', 'Исправить подтверждённую причину в рабочей ветке.', 'Повторить упавшую проверку, затем обязательные проверки проекта.']
+          : isCleanCheckoutError || isBranchError ? ['Проверить состояние и ветку основного репозитория.', 'Применить показанное действие только после просмотра изменений.']
+          : ['Причина не установлена: открыть stderr и последнее событие исполнителя.', 'Проверить доступность CLI, модели и проектных инструментов.', 'После установления причины выбрать восстановление или смену профиля.']},
       id: randomUUID(),
-      title,
+      title: !known && !modelBadge ? 'Причина сбоя не установлена' : title,
       explanation,
       diff: action === 'advice_only' ? '' : diff,
       files,

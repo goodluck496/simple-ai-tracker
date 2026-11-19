@@ -272,7 +272,7 @@ export class PipelineWorker {
         const previous = await handoff.read(run.stage, run.revision, requirementsKey, priorSha);
         const stepIds = WorkOrder.from(pack.plan)?.steps.filter(s => s.kind === 'step').map(s => s.id) ?? [];
         const workProgress = [AgentRole.Developer, AgentRole.Designer].includes(profile.role as 'developer' | 'designer') ? await handoff.progress(requirementsKey, stepIds) : undefined;
-        if (run.routing && run.routing.sourceDescription !== String(pack.description ?? '')) throw new Error('Requirements changed after routing; restart routing before continuing.');
+        if (run.routing && run.routing.sourceDescription !== String(pack.description ?? '')) throw new Error('Requirements changed after routing; resume the run to refresh routing in the saved worktree.');
         const rolePacket = JSON.parse(AgentHandoff.forRole(profile.role, context, changedFiles, previous, workProgress));
         if (run.stageMemory?.note && run.stageMemory.taskId === pack.id) {
           delete rolePacket.task.progressNotes;
@@ -282,7 +282,7 @@ export class PipelineWorker {
         if (run.feature && !child) rolePacket.featureDeliveries = run.feature.children.map(c => ({ taskId: c.taskId, key: c.key, state: c.state, sourceSha: c.sourceSha, mergedSha: c.mergedSha }));
         if (run.routing) { rolePacket.preparedTask = run.routing.decision.brief; rolePacket.acceptance = run.acceptance; }
         if (profile.role === AgentRole.Router) rolePacket.routingOptions = {
-          stages: run.settings.pipeline.map((id, stage) => ({ stage, role: run.settings.agents.find(a => a.id === id)?.role })),
+          stages: run.settings.pipeline.map((id, stage) => ({ stage, role: run.settings.agents.find(a => a.id === id)?.role, manuallySelected: run.profileOverrides?.includes(stage) ?? false })),
           profiles: run.settings.agents.filter(a => run.settings.routingProfileIds?.includes(a.id)).map(a => ({id:a.id, role:a.role, model:a.model, runner:a.runner,
             supportsImages: run.settings.connections.find(c => c.id === a.connectionId)?.supportsImages ?? false})) };
         const packet = JSON.stringify(rolePacket);

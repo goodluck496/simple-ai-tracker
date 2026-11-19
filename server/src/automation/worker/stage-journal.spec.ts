@@ -51,3 +51,17 @@ test('a new worker recovers unpublished mail from a hard crash before starting i
     await journal.close(); assert.equal(updates.length, 1);
   } finally { await journal.close(); await fs.rm(cwd, { recursive: true, force: true }); }
 });
+
+test('malformed checkpoint is nonfatal; a following UTF-8 BOM note is recovered without publishing invalid data', async () => {
+  const cwd=await fs.mkdtemp(path.join(os.tmpdir(),'sat-journal-json-'));
+  const updates:CheckpointUpdate[]=[];const logs:string[]=[];const key='a'.repeat(64);
+  const journal=new StageJournal(cwd,key,async value=>{updates.push(value);},text=>logs.push(text),()=>assert.fail('Invalid JSON must not abort the agent'));
+  try {
+    await journal.start();const file=path.join(cwd,'.sat/stage-note.json');
+    await fs.writeFile(file,'{"key":');await journal.flush();await journal.flush();
+    assert.equal(updates.length,0);assert.equal(logs.length,1);assert.match(logs[0],/некорректный JSON/);
+    const note={summary:'A real result',nextStep:'Verify the implementation'};
+    await fs.writeFile(file,'\uFEFF'+JSON.stringify({key,note}));await journal.close();
+    assert.deepEqual(updates,[{key,note}]);
+  } finally {await journal.close();await fs.rm(cwd,{recursive:true,force:true});}
+});
