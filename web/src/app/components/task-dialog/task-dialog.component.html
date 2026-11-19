@@ -306,7 +306,7 @@
                       <div class="comment-previews">
                         @for (image of commentImages(); track $index) {
                           <div class="comment-preview">
-                            <p-image [src]="imageUrl(image)" [preview]="true" alt="Скриншот комментария" width="80"></p-image>
+                            <p-image [src]="imageUrl(image)" [preview]="true" appendTo="body" alt="Скриншот комментария" width="80"></p-image>
                             <p-button icon="pi pi-times" ariaLabel="Удалить скриншот из комментария" size="small" [text]="true"
                               (onClick)="removeCommentImage($index)" />
                           </div>
@@ -383,7 +383,7 @@
                                 </header>
                                 <p>{{ commentText(comment.text) }}</p>
                                 @for (image of commentScreenshots(comment.text); track $index) {
-                                  <p-image [src]="imageUrl(image)" [preview]="true" alt="Скриншот комментария" width="120"></p-image>
+                                  <p-image [src]="imageUrl(image)" [preview]="true" appendTo="body" alt="Скриншот комментария" width="120"></p-image>
                                 }
                               </li>
                             }
@@ -602,7 +602,7 @@
               <div class="image-gallery">
                 @for (image of images(); track image; let index = $index) {
                   <div class="image-thumb">
-                    <p-image [src]="imageUrl(image)" [preview]="true" alt="Скриншот" width="120"></p-image>
+                    <p-image [src]="imageUrl(image)" [preview]="true" appendTo="body" alt="Скриншот" width="120"></p-image>
                     <button pButton severity="secondary"
                       type="button"
                       class="image-remove"

@@ -666,7 +666,7 @@
   overflow: hidden;
   border: 1px solid var(--sat-border);
 
-  ::ng-deep img {
+  ::ng-deep .p-image > img {
     display: block;
     width: 120px;
     height: auto;
