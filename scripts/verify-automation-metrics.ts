@@ -32,7 +32,7 @@ try {
     period: { from: new Date(Date.now() - 30 * 86400000).toISOString(), to: now }, asOf: now,
     runs: 2, tasks: 1, technical: { numerator: 1, denominator: 2 }, acceptance: { numerator: 0, denominator: 1 },
     awaitingAcceptance: 1, acceptedFirstAttempt: 0, active: 0, stopped: 0, noRequiredChecks: 0, unknown: 0,
-    occurrences: [{ id: 'fixture-occurrence', runId: run.id, eventId: 987654, taskId: task.id, at: now, phase: 'analyst', executor: 'OpenCode',
+    occurrences: [{ id: 'fixture-occurrence', runId: run.id, eventId: 987654, taskId: task.id, at: now, phase: 'analyst', executor: 'OpenCode', attempt: 2, sha: 'a'.repeat(40),
       fact: 'Исполнитель завершил этап без результата.', recommendation: 'Проверить журнал исполнителя на следующем сопоставимом запуске.', improvementTaskId: improvement.id, reviewState: 'new' },
       { id: 'fixture-unlinked', runId: run.id, eventId: 987655, taskId: task.id, at: now, phase: 'checks', fact: 'Команда проверки завершилась с ошибкой.', reviewState: 'repeated_after_done' }],
   };
@@ -41,6 +41,8 @@ try {
   const errors: string[] = []; page.on('pageerror', error => errors.push(error.message));
   let responseMode: 'data' | 'empty' | 'error' | 'slow' = 'data';
   let releaseSlow: (() => void) | undefined;
+  let evidenceMode: 'data' | 'error' | 'slow' = 'data';
+  let releaseEvidence: (() => void) | undefined;
   const periods: URL[] = [];
   await page.route('**/api/automation/metrics?*', async route => {
     periods.push(new URL(route.request().url()));
@@ -51,6 +53,9 @@ try {
     await route.fulfill({ json: payload }).catch(() => {});
   });
   await page.route(`**/api/automation/runs/${run.id}?eventId=*`, async route => {
+    const mode = evidenceMode;
+    if (mode === 'slow') await new Promise<void>(resolve => { releaseEvidence = resolve; });
+    if (mode === 'error') { await route.fulfill({ status: 503, json: { error: { message: 'Source unavailable' } } }); return; }
     const response = await route.fetch(); const body = await response.json();
     assert.ok(!body.events.some((event: { id: number }) => event.id === 987654), 'Evidence must be outside the current event page');
     await route.fulfill({ json: { ...body, selectedEvent: { id: 987654, runId: run.id, at: now, kind: 'failed', text: 'Исходное CLI-событие за пределами страницы журнала.' } } });
@@ -64,11 +69,31 @@ try {
   assert.equal(await metrics.getByText('0 / 1', { exact: true }).count(), 1);
   assert.equal(Date.parse(periods[0].searchParams.get('to')!) - Date.parse(periods[0].searchParams.get('from')!), 30 * 86400000);
   assert.equal(await metrics.getByRole('button', { name: 'Подзадача ещё не создана' }).isDisabled(), true); checks++;
+  await metrics.getByRole('button', { name: 'Применить', exact: true }).click();
+  await metrics.getByText('1 / 2', { exact: true }).waitFor();
+  const appliedPeriod = periods.at(-1)!.search;
   await page.screenshot({ path: path.join(screenshots, 'sat55-metrics-desktop.png') });
   await metrics.getByRole('button', { name: `Открыть событие 987654 задачи ${task.id}` }).focus(); await page.keyboard.press('Enter');
   await queue.getByText('Исходное CLI-событие за пределами страницы журнала.', { exact: true }).waitFor();
   assert.equal(await queue.getByText('Причина не установлена', { exact: true }).count(), 1); checks++;
+  assert.equal(await queue.locator('.evidence-context').getByText('2', { exact: true }).count(), 1);
+  assert.equal(await queue.locator('.evidence-context').getByText('a'.repeat(40), { exact: true }).count(), 1);
+  assert.equal(await queue.locator('#evidence-heading').evaluate(el => el === document.activeElement), true); checks++;
   await page.screenshot({ path: path.join(screenshots, 'sat55-evidence-desktop.png') });
+  await queue.getByRole('button', { name: 'К метрикам', exact: true }).click();
+  await metrics.getByText('1 / 2', { exact: true }).waitFor();
+  assert.equal(periods.at(-1)!.search, appliedPeriod, 'Returning from an event must preserve the applied period'); checks++;
+  evidenceMode = 'error';
+  await metrics.getByRole('button', { name: `Открыть событие 987655 задачи ${task.id}` }).click();
+  await queue.getByText(/Не удалось открыть исходное событие/).waitFor();
+  assert.equal(await queue.getByText('Не записана', { exact: true }).count(), 1);
+  assert.equal(await queue.getByText('Не записан', { exact: true }).count(), 1); checks++;
+  evidenceMode = 'slow';
+  await queue.getByRole('button', { name: 'Повторить загрузку события', exact: true }).click();
+  await queue.getByText('Загрузка исходного события…', { exact: true }).waitFor(); checks++;
+  evidenceMode = 'data'; releaseEvidence?.();
+  await queue.getByText(/Исходное событие недоступно/).waitFor();
+  assert.equal(await queue.locator('.evidence-fact').count(), 0, 'A different event must never be presented as evidence'); checks++;
   await queue.getByRole('button', { name: 'К метрикам', exact: true }).click();
   await metrics.getByText('1 / 2', { exact: true }).waitFor();
   await metrics.getByRole('button', { name: `Открыть подзадачу ${improvement.id}` }).click();
@@ -91,6 +116,7 @@ try {
   await metrics.getByText('1 / 2', { exact: true }).waitFor();
   await page.setViewportSize({ width: 390, height: 844 });
   assert.equal(await metrics.evaluate(el => el.scrollWidth <= el.clientWidth), true, 'Dashboard must not overflow horizontally');
+  await metrics.locator('.ratio-grid').scrollIntoViewIfNeeded();
   await page.screenshot({ path: path.join(screenshots, 'sat55-metrics-mobile.png') }); checks++;
   await metrics.getByRole('button', { name: `Открыть событие 987654 задачи ${task.id}` }).click();
   await queue.getByText('Исходное CLI-событие за пределами страницы журнала.', { exact: true }).waitFor();

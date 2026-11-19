@@ -1,4 +1,4 @@
-import { ChangeDetectionStrategy, Component, ElementRef, EventEmitter, Output, afterNextRender, inject, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, ElementRef, EventEmitter, Input, Output, afterNextRender, inject, signal } from '@angular/core';
 import { DatePipe, DecimalPipe } from '@angular/common';
 import { HttpClient } from '@angular/common/http';
 import { toObservable, toSignal } from '@angular/core/rxjs-interop';
@@ -28,10 +28,15 @@ export class AutomationMetricsComponent {
   @Output() public readonly navigate = new EventEmitter<'queue' | 'history'>();
   @Output() public readonly inspect = new EventEmitter<ImprovementOccurrence>();
   @Output() public readonly openTask = new EventEmitter<{ taskId: string; runId: string }>();
-  @Output() public readonly periodChanged = new EventEmitter<void>();
+  @Output() public readonly periodChanged = new EventEmitter<ImprovementPeriod>();
   private readonly initialTo = new Date();
   public dates: Date[] = [new Date(this.initialTo.getTime() - 30 * 86400000), this.initialTo];
   public readonly period = signal<ImprovementPeriod>({ from: this.dates[0].toISOString(), to: this.dates[1].toISOString() });
+  @Input() public set savedPeriod(value: ImprovementPeriod | null) {
+    if (!value) return;
+    this.period.set(value);
+    this.dates = [new Date(value.from), new Date(Date.parse(value.to) - 1)];
+  }
   private readonly refresh = signal(0);
   public readonly validationError = signal('');
   public readonly state = toSignal(combineLatest([
@@ -52,8 +57,10 @@ export class AutomationMetricsComponent {
     // The date picker selects inclusive local calendar dates; the API uses [from, to).
     const start = new Date(from); start.setHours(0, 0, 0, 0);
     const to = new Date(last); to.setHours(0, 0, 0, 0); to.setDate(to.getDate() + 1);
-    this.validationError.set(''); this.periodChanged.emit();
-    this.period.set({ from: start.toISOString(), to: to.toISOString() });
+    this.validationError.set('');
+    const period = { from: start.toISOString(), to: to.toISOString() };
+    this.period.set(period);
+    this.periodChanged.emit(period);
   }
 
   public retry(): void { this.refresh.update(value => value + 1); }

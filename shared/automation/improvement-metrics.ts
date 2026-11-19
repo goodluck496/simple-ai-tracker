@@ -8,6 +8,9 @@ export interface ImprovementOccurrence {
   id: string;
   runId: string;
   eventId: number;
+  /** Context of the source event, never inferred from the run's current revision. */
+  attempt?: number;
+  sha?: string;
   taskId: string;
   at: string;
   phase: string;

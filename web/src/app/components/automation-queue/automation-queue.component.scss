@@ -18,8 +18,15 @@
 .selected-evidence p { line-height: 1.6; }
 .evidence-meta { color: var(--p-text-muted-color); }
 .evidence-fact { white-space: pre-wrap; }
+.evidence-context { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr) minmax(0, 2fr); gap: 1rem; padding: 1rem; border: 1px solid var(--p-content-border-color); border-radius: 6px; }
+.evidence-context dt { color: var(--p-text-muted-color); font-size: 0.875rem; }
+.evidence-context dd { margin: 0.5rem 0 0; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.selected-evidence :is(button, a):focus-visible { outline: 2px solid var(--p-primary-color); outline-offset: 3px; }
 .evidence-analysis { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; margin: 1rem 0; }
-@media (max-width: 700px) { .evidence-analysis { grid-template-columns: 1fr; } }
+@media (max-width: 700px) {
+  .evidence-analysis, .evidence-context { grid-template-columns: 1fr; }
+  .selected-evidence button { min-height: 2.75rem; }
+}
 
 .run-budget-summary, .run-stop-reason {
   flex: 0 0 auto;

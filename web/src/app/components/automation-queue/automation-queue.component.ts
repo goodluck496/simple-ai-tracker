@@ -20,7 +20,7 @@ import { RunActivityComponent } from './run-activity.component';
 import { ACTIVITY_TIMING } from '../../../../../shared/automation/queue-activity';
 import { HttpClient } from '@angular/common/http';
 import { takeUntilDestroyed, toObservable, toSignal } from '@angular/core/rxjs-interop';
-import { EMPTY, Subject, catchError, combineLatest, exhaustMap, filter, finalize, map, merge, of, switchMap, take, tap, timeout, timer, type Observable } from 'rxjs';
+import { EMPTY, Subject, catchError, combineLatest, defer, exhaustMap, filter, finalize, map, merge, of, switchMap, take, tap, timeout, timer, type Observable } from 'rxjs';
 import { AUTOMATION_TIMING, EVIDENCE_AGENT_ROLES, RESUMABLE_RUN_STATUSES, RunStatus, RunAction, type AgentRun, type AutomationSettings, type RunEvent } from '../../../../../shared/automation/contracts';
 import { QUEUE_LANES, QUEUE_LIMITS, RUN_EVENT_TITLES, RUN_PHASE_TITLES, RUN_STATUS_TITLES, INTEGRATION_STATE_TITLES, QueuePresentation, RunProgressText,
   type QueueItem, type QueueSnapshot, type QueueLane } from '../../../../../shared/automation/queue';
@@ -32,7 +32,7 @@ import { formatQueueDate, sortRunHistory } from './queue-dates';
 
 import { PipelineFlowComponent } from '../automation-panel/pipeline-flow.component';
 import { AutomationMetricsComponent } from './automation-metrics.component';
-import type { ImprovementOccurrence } from '../../../../../shared/automation/improvement-metrics';
+import type { ImprovementOccurrence, ImprovementPeriod } from '../../../../../shared/automation/improvement-metrics';
 
 @Component({ selector: 'sat-automation-queue', standalone: true, imports: [DatePipe, DecimalPipe, RunConsoleComponent, RunActivityComponent, TableModule, ButtonModule, FormsModule, CheckboxModule, DialogModule, SelectModule, PanelModule, InputTextModule, InputNumberModule, PipelineFlowComponent, AutomationMetricsComponent],
   changeDetection: ChangeDetectionStrategy.OnPush, templateUrl: './automation-queue.component.html', styleUrl: './automation-queue.component.scss' })
@@ -47,6 +47,9 @@ export class AutomationQueueComponent {
   public readonly historyMode = signal(false);
   public readonly metricsMode = signal(false);
   public readonly selectedOccurrence = signal<ImprovementOccurrence | null>(null);
+  public readonly metricsPeriod = signal<ImprovementPeriod | null>(null);
+  public readonly evidenceLoading = signal(false);
+  public readonly evidenceError = signal('');
   private readonly selectedEventId = computed(() => this.selectedOccurrence()?.eventId ?? null);
   public readonly historyTask = signal('');
   public readonly showDetails = signal(false);
@@ -132,10 +135,18 @@ export class AutomationQueueComponent {
     return snapshot ?? (this.selectedCache()?.id === id ? this.selectedCache() : undefined);
   });
   public readonly detail = toSignal(combineLatest([toObservable(this.selectedId), toObservable(this.selectedEventId), toObservable(this.workspace.current), merge(timer(0, AUTOMATION_TIMING.pollMs), this.refresh)]).pipe(
-    switchMap(([id, eventId]) => id ? this.http.get<{ run: AgentRun; item?: QueueItem; events: RunEvent[]; selectedEvent?: RunEvent;
+    switchMap(([id, eventId]) => id ? defer(() => {
+      this.evidenceLoading.set(true);
+      this.evidenceError.set('');
+      return this.http.get<{ run: AgentRun; item?: QueueItem; events: RunEvent[]; selectedEvent?: RunEvent;
       previewPatch: { available: boolean; active: boolean; pending: boolean } }>(`/api/automation/runs/${encodeURIComponent(id)}${eventId === null ? '' : '?eventId=' + eventId}`).pipe(
-      catchError((error: unknown) => { this.error.set(this.message(error)); return of(null); }),
-    ) : of(null)),
+      catchError((error: unknown) => {
+        this.evidenceError.set(this.message(error));
+        if (eventId === null) this.error.set(this.message(error));
+        return of(null);
+      }),
+      finalize(() => this.evidenceLoading.set(false)),
+    ); }) : of(null)),
   ), { initialValue: null });
   public readonly selectedEvidence = computed(() => {
     const occurrence = this.selectedOccurrence(); const detail = this.detail();
@@ -356,7 +367,7 @@ export class AutomationQueueComponent {
     let current = this.workspace.current();
     effect(() => {
       const next = this.workspace.current();
-      if (next !== current) { current = next; this.search.set(''); this.clearMetricSelection(); this.archived.set(null); this.historyTask.set(''); this.historyMode.set(false); }
+      if (next !== current) { current = next; this.search.set(''); this.clearMetricSelection(); this.metricsPeriod.set(null); this.archived.set(null); this.historyTask.set(''); this.historyMode.set(false); }
     });
     effect(() => {
       const run = this.detail()?.run;
