@@ -6,6 +6,21 @@
   min-height: 0;
 }
 
+.queue-layout.metrics-open, .queue-layout.evidence-open {
+  > .queue-sidebar { display: none; }
+  > .queue-main { min-width: 0; width: 100%; overflow: auto; }
+}
+.queue-layout.metrics-open .queue-main > sat-automation-metrics { flex: 1; min-height: 0; }
+.mode-toggles { flex-wrap: wrap; }
+.selected-evidence { padding: clamp(1rem, 2vw, 2rem); border-bottom: 2px solid var(--p-primary-color); flex: 0 0 auto; overflow-wrap: anywhere; }
+.selected-evidence nav { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+.selected-evidence h2 { font-size: 1.25rem; }
+.selected-evidence p { line-height: 1.6; }
+.evidence-meta { color: var(--p-text-muted-color); }
+.evidence-fact { white-space: pre-wrap; }
+.evidence-analysis { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; margin: 1rem 0; }
+@media (max-width: 700px) { .evidence-analysis { grid-template-columns: 1fr; } }
+
 .run-budget-summary, .run-stop-reason {
   flex: 0 0 auto;
   padding: 0.65rem 1rem;

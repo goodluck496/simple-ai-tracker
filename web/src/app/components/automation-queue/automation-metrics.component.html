@@ -1,0 +1,70 @@
+<section class="metrics" aria-labelledby="metrics-heading" [attr.aria-busy]="state().loading">
+  <header class="metrics-header">
+    <div><h2 id="metrics-heading" tabindex="-1">Метрики автоматизации</h2><p>Успешность проверок и пользовательская приёмка</p></div>
+    <nav aria-label="Представления очереди">
+      <button pButton type="button" severity="secondary" [outlined]="true" (click)="navigate.emit('queue')">Рабочая очередь</button>
+      <button pButton type="button" severity="secondary" [text]="true" (click)="navigate.emit('history')">История</button>
+    </nav>
+  </header>
+  <div class="period-controls">
+    <div class="period-field">
+      <label for="metrics-period">Период первого старта</label>
+      <p-datepicker inputId="metrics-period" [(ngModel)]="dates" selectionMode="range" dateFormat="dd.mm.yy" [showIcon]="true" [readonlyInput]="true" appendTo="body" [showButtonBar]="true" aria-describedby="metrics-period-hint" />
+    </div>
+    <button pButton type="button" (click)="applyPeriod()">Применить</button>
+    <button pButton type="button" severity="secondary" [text]="true" [disabled]="state().loading" (click)="retry()" aria-label="Обновить метрики" icon="pi pi-refresh"></button>
+  </div>
+  <p id="metrics-period-hint" class="hint">По умолчанию — последние 30 дней. Учитываются запуски, впервые начатые в периоде; состояние задач — на момент просмотра.</p>
+  @if (validationError()) { <p-message severity="warn">{{ validationError() }}</p-message> }
+  @if (state().loading) {
+    <div role="status" aria-live="polite"><p>Загрузка метрик…</p><div class="ratio-grid"><p-skeleton height="12rem" /><p-skeleton height="12rem" /></div></div>
+  } @else if (state().error) {
+    <p-message severity="error">{{ state().error }}</p-message>
+    <button pButton type="button" severity="secondary" (click)="retry()">Повторить загрузку</button>
+  }
+  @if (state().data; as data) {
+    <div class="cohort"><span><strong>{{ data.runs }}</strong> запусков · <strong>{{ data.tasks }}</strong> уникальных задач</span><span>Обновлено {{ data.asOf | date:'dd.MM.yyyy HH:mm' }}</span></div>
+    @if (data.runs === 0) {
+      <p-message severity="info">За этот период нет начатых запусков. Выберите другой период.</p-message>
+    }
+    <div class="ratio-grid">
+      <p-panel header="Обязательные проверки">
+        <div class="ratio-value">@if (data.technical.denominator) { {{ 100 * data.technical.numerator / data.technical.denominator | number:'1.0-1' }}<span>%</span> } @else { <span class="no-data">Нет данных</span> }</div>
+        <p class="ratio-count"><strong>{{ data.technical.numerator }} / {{ data.technical.denominator }}</strong> завершённых запусков с известным исходом</p>
+        <p class="hint">Все применимые проверки итоговой ревизии и squash-кандидата подтверждены. Сбой до проверок считается неуспехом.</p>
+      </p-panel>
+      <p-panel header="Пользовательская приёмка">
+        <div class="ratio-value">@if (data.acceptance.denominator) { {{ 100 * data.acceptance.numerator / data.acceptance.denominator | number:'1.0-1' }}<span>%</span> } @else { <span class="no-data">Нет данных</span> }</div>
+        <p class="ratio-count"><strong>{{ data.acceptance.numerator }} / {{ data.acceptance.denominator }}</strong> уникальных задач когорты</p>
+        <p class="hint">Задачи сейчас в done после приёмки пользователем. Успешный запуск сам по себе не означает приёмку.</p>
+      </p-panel>
+    </div>
+    <dl class="counters" aria-label="Отдельные показатели">
+      <div><dt>Ожидают приёмки</dt><dd>{{ data.awaitingAcceptance }} <span>задач</span></dd></div>
+      <div><dt>Приняты с первой попытки</dt><dd>{{ data.acceptedFirstAttempt }} <span>задач</span></dd><p>По всей истории, включая исправления внутри запуска</p></div>
+      <div><dt>Активные</dt><dd>{{ data.active }} <span>запусков</span></dd></div>
+      <div><dt>Остановлены пользователем</dt><dd>{{ data.stopped }} <span>запусков</span></dd></div>
+      <div><dt>Без обязательных команд</dt><dd>{{ data.noRequiredChecks }} <span>запусков</span></dd></div>
+      <div><dt>Недостаточно сведений</dt><dd>{{ data.unknown }} <span>запусков</span></dd></div>
+    </dl>
+    <p class="hint">Активные, остановленные, без обязательных команд и с недостаточными сведениями исключены из технической доли.</p>
+    <section aria-labelledby="occurrences-heading">
+      <h3 id="occurrences-heading">Сбои и улучшения</h3>
+      <p class="hint">Наблюдаемый факт, доказанная причина и рекомендация доступны в инспекторе события.</p>
+      <p-table [value]="data.occurrences" [paginator]="data.occurrences.length > 10" [rows]="10" [rowHover]="true" styleClass="metrics-table">
+        <ng-template #header><tr><th scope="col">Случай</th><th scope="col">Наблюдаемый факт</th><th scope="col">Действия</th></tr></ng-template>
+        <ng-template #body let-occurrence>
+          <tr>
+            <td><strong>{{ occurrence.taskId }}</strong><span class="cell-line">{{ occurrence.at | date:'dd.MM.yyyy HH:mm' }}</span><span class="cell-line">{{ occurrence.phase }}@if (occurrence.role) { · {{ occurrence.role }} }</span></td>
+            <td><span>{{ occurrence.fact }}</span><span class="cell-line review-state">{{ reviewLabel(occurrence.reviewState) }}</span></td>
+            <td><div class="row-actions">
+              <button pButton type="button" size="small" [outlined]="true" (click)="inspect.emit(occurrence)" [attr.aria-label]="'Открыть событие ' + occurrence.eventId + ' задачи ' + occurrence.taskId">Событие</button>
+              <button pButton type="button" size="small" severity="secondary" [text]="true" [disabled]="!occurrence.improvementTaskId" (click)="openTask.emit({ taskId: occurrence.improvementTaskId, runId: '' })" [attr.aria-label]="occurrence.improvementTaskId ? 'Открыть подзадачу ' + occurrence.improvementTaskId : 'Подзадача ещё не создана'">{{ occurrence.improvementTaskId || 'Подзадача ещё не создана' }}</button>
+            </div></td>
+          </tr>
+        </ng-template>
+        <ng-template #emptymessage><tr><td colspan="3">В выбранной когорте нет зарегистрированных сбоев.</td></tr></ng-template>
+      </p-table>
+    </section>
+  }
+</section>

@@ -1,4 +1,4 @@
-<div class="queue-layout" [class.left-collapsed]="!leftSidebarOpen()" [class.inspector-open]="showDetails()">
+<div class="queue-layout" [class.left-collapsed]="!leftSidebarOpen()" [class.inspector-open]="showDetails()" [class.metrics-open]="metricsMode()" [class.evidence-open]="selectedOccurrence()">
   <!-- LEFT SIDEBAR: Очередь и список запусков -->
   <aside class="queue-sidebar" [class.collapsed]="!leftSidebarOpen()" aria-label="Очередь запусков">
     <div class="sidebar-top">
@@ -6,6 +6,7 @@
         <div class="mode-toggles">
           <button pButton size="small" [severity]="!historyMode() ? 'primary' : 'secondary'" [text]="historyMode()" (click)="switchMode(false)">Рабочая очередь</button>
           <button pButton size="small" [severity]="historyMode() ? 'primary' : 'secondary'" [text]="!historyMode()" (click)="viewHistory()">История</button>
+          <button pButton type="button" size="small" severity="secondary" [text]="true" (click)="viewMetrics()">Метрики</button>
         </div>
         <div class="mode-actions">
           <button pButton size="small" severity="secondary" [text]="true" icon="pi pi-cog" (click)="configure.emit()" title="Настройки команды и worker"></button>
@@ -117,7 +118,34 @@
   </aside>
 
   <!-- MAIN AREA: Заголовок запуска + Полноэкранный журнал -->
-  <main class="queue-main" aria-label="Выбранный запуск">
+  <main class="queue-main" [attr.aria-label]="metricsMode() ? 'Метрики автоматизации' : 'Выбранный запуск'">
+    @if (metricsMode()) {
+      <sat-automation-metrics (navigate)="$event === 'history' ? viewHistory() : switchMode(false)" (inspect)="inspectOccurrence($event)" (openTask)="openTask.emit($event)" (periodChanged)="clearMetricSelection()" />
+    } @else {
+    @if (selectedOccurrence(); as occurrence) {
+      <section class="selected-evidence" aria-labelledby="evidence-heading" tabindex="0">
+        <nav aria-label="Вернуться к представлению">
+          <button pButton type="button" size="small" severity="secondary" [outlined]="true" (click)="viewMetrics()" icon="pi pi-arrow-left">К метрикам</button>
+          <button pButton type="button" size="small" severity="secondary" [text]="true" (click)="switchMode(false)">Рабочая очередь</button>
+          <button pButton type="button" size="small" severity="secondary" [text]="true" (click)="viewHistory()">История</button>
+        </nav>
+        <h2 id="evidence-heading" tabindex="-1">Событие №{{ occurrence.eventId }} · {{ occurrence.taskId }}</h2>
+        <p class="evidence-meta">{{ occurrence.at | date:'dd.MM.yyyy HH:mm:ss' }} · {{ occurrence.phase }}@if (occurrence.role) { · {{ occurrence.role }} }@if (occurrence.executor) { · {{ occurrence.executor }} }</p>
+        @if (selectedEvidence(); as event) {
+          <p-panel header="Наблюдаемый факт"><p class="evidence-fact">{{ event.text }}</p></p-panel>
+        } @else if (error()) {
+          <p role="alert">Не удалось открыть исходное событие. {{ error() }}</p>
+          <button pButton type="button" size="small" (click)="refreshRun()">Повторить загрузку события</button>
+        } @else if (detail()?.run?.id === occurrence.runId) {
+          <p role="status">Исходное событие недоступно. Факт из списка: {{ occurrence.fact }}</p>
+        } @else { <p role="status">Загрузка исходного события…</p> }
+        <div class="evidence-analysis">
+          <p-panel header="Подтверждённая причина"><p>{{ occurrence.confirmedCause || 'Причина не установлена' }}</p></p-panel>
+          <p-panel header="Рекомендация"><p>{{ occurrence.recommendation || 'Рекомендация пока не сформирована' }}</p></p-panel>
+        </div>
+        <button pButton type="button" size="small" severity="secondary" [outlined]="true" [disabled]="!occurrence.improvementTaskId" (click)="openTask.emit({ taskId: occurrence.improvementTaskId!, runId: '' })">{{ occurrence.improvementTaskId ? 'Открыть подзадачу ' + occurrence.improvementTaskId : 'Подзадача ещё не создана' }}</button>
+      </section>
+    }
     @if (selected(); as item) {
       <header class="run-header">
         <div class="run-header-top">
@@ -345,12 +373,13 @@
         </div>
         <sat-run-console #runConsole class="embedded-console" [runId]="item.id" [events]="detail()?.run?.id === item.id ? (detail()?.events ?? []) : []" />
       </section>
-    } @else {
+    } @else if (!selectedOccurrence()) {
       <div class="empty-selection-placeholder">
         <i class="pi pi-desktop placeholder-icon"></i>
         <h3>Запуск не выбран</h3>
         <p>Выберите запуск из списка очереди слева, чтобы просмотреть подробности, этапы и живой журнал выполнения.</p>
       </div>
+    }
     }
   </main>
 
