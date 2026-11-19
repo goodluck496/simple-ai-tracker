@@ -147,7 +147,7 @@ export class PipelineWorker {
         });
         await new SquashIntegration(this.executor).run({ runId: run!.id, taskId: run!.taskId, repository, common,
           sourceSha: run!.commitSha!, targetBranch: run!.settings.baseBranch, directory: cwd,
-          message: run!.mergeMessage ?? '', contextKey: StageCheckpoint.key(context), maxAttempts: run!.trustedExecution ? undefined : run!.settings.maxMergeAttempts ?? 2,
+          message: CommitMessage.forTask(run!.mergeMessage, run!.taskId, String((context as { title?: string }).title ?? run!.taskId)), contextKey: StageCheckpoint.key(context), maxAttempts: run!.trustedExecution ? undefined : run!.settings.maxMergeAttempts ?? 2,
           signal: controller.signal, recoveryOnly,
           authorize: async () => { run = await this.channel.call<AgentRun>(AutomationTool.Heartbeat, { id: run!.id, leaseToken: token, phase: recoveryOnly ? 'recovery' : undefined }); },
           record: async info => { publishing = info.state === 'publishing'; await this.channel.call(AutomationTool.Integration, { id: run!.id, leaseToken: token, result: info }); },

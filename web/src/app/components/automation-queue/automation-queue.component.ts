@@ -21,7 +21,7 @@ import { ACTIVITY_TIMING } from '../../../../../shared/automation/queue-activity
 import { HttpClient } from '@angular/common/http';
 import { takeUntilDestroyed, toObservable, toSignal } from '@angular/core/rxjs-interop';
 import { EMPTY, Subject, catchError, combineLatest, exhaustMap, filter, finalize, map, merge, of, switchMap, take, tap, timeout, timer, type Observable } from 'rxjs';
-import { AUTOMATION_TIMING, RunStatus, RunAction, type AgentRun, type AutomationSettings, type RunEvent } from '../../../../../shared/automation/contracts';
+import { AUTOMATION_TIMING, EVIDENCE_AGENT_ROLES, RESUMABLE_RUN_STATUSES, RunStatus, RunAction, type AgentRun, type AutomationSettings, type RunEvent } from '../../../../../shared/automation/contracts';
 import { QUEUE_LANES, QUEUE_LIMITS, RUN_EVENT_TITLES, RUN_PHASE_TITLES, RUN_STATUS_TITLES, INTEGRATION_STATE_TITLES, QueuePresentation, RunProgressText,
   type QueueItem, type QueueSnapshot, type QueueLane } from '../../../../../shared/automation/queue';
 import { ROLE_OPTIONS } from '../../../../../shared/automation/presets';
@@ -51,7 +51,8 @@ export class AutomationQueueComponent {
   public readonly confirmation = signal<'cleanup' | 'delete' | null>(null);
   public discard = false;
   private readonly selectedCache = signal<QueueItem | undefined>(undefined);
-  @Output() public readonly openTask = new EventEmitter<string>();
+  @Output() public readonly openTask = new EventEmitter<{ taskId: string; runId: string }>();
+  @Output() public readonly resumedFromCard = new EventEmitter<void>();
   @Output() public readonly configure = new EventEmitter<void>();
   @Output() public readonly changed = new EventEmitter<void>();
   public readonly error = signal('');
@@ -66,6 +67,7 @@ export class AutomationQueueComponent {
   public readonly currentFix = signal<ProposedFix | null>(null);
   public readonly fixingRunId = signal<string | null>(null);
   public readonly budgetEditing = signal(false);
+  public deployPreviewPatch = false;
   public budgetCalls = 6;
   public budgetInput = 500000;
   public budgetMinutes = 20;
@@ -124,7 +126,8 @@ export class AutomationQueueComponent {
     return snapshot ?? (this.selectedCache()?.id === id ? this.selectedCache() : undefined);
   });
   public readonly detail = toSignal(combineLatest([toObservable(this.selectedId), merge(timer(0, AUTOMATION_TIMING.pollMs), this.refresh)]).pipe(
-    switchMap(([id]) => id ? this.http.get<{ run: AgentRun; item?: QueueItem; events: RunEvent[] }>(`/api/automation/runs/${id}`).pipe(
+    switchMap(([id]) => id ? this.http.get<{ run: AgentRun; item?: QueueItem; events: RunEvent[];
+      previewPatch: { available: boolean; active: boolean; pending: boolean } }>(`/api/automation/runs/${id}`).pipe(
       catchError((error: unknown) => { this.error.set(this.message(error)); return of(null); }),
     ) : of(null)),
   ), { initialValue: null });
@@ -201,12 +204,12 @@ export class AutomationQueueComponent {
       error: error => { if (this.replacement() === choice) this.replacementError.set(this.message(error)); },
     });
   }
-  private awaitProject(request: Observable<ProjectRequest>) {
+  private awaitProject(request: Observable<ProjectRequest>, timeoutMs: number = PROJECT_LIMITS.requestMs) {
     return request.pipe(switchMap(created => timer(0, PROJECT_LIMITS.pollMs).pipe(
       exhaustMap(() => this.http.get<ProjectRequest>(`/api/automation/project-requests/${created.id}`)),
       filter(result => result.status === ProjectRequestStatus.Completed || result.status === ProjectRequestStatus.Failed),
       take(1),
-    )), timeout(PROJECT_LIMITS.requestMs + PROJECT_LIMITS.pollMs));
+    )), timeout(timeoutMs + PROJECT_LIMITS.pollMs));
   }
   public readonly runDiff = signal<{ id: string; wholeRun: boolean; loading?: boolean; result?: ProjectDiff; error?: string } | null>(null);
   public readonly diffRows = computed(() => {
@@ -352,14 +355,72 @@ export class AutomationQueueComponent {
       }
     });
   }
-  public action(item: QueueItem, action: RunAction, refreshChecks = false): void {
+  public refreshRun(): void { this.refresh.next(); }
+  public canResumeFromCard(id: string): boolean {
+    const item = this.selected();
+    return !!item && item.id === id && item.canResume && !this.resumeBudgetBlocked(item);
+  }
+  public resumeFromCard(id: string): void {
+    const item = this.selected();
+    if (item && this.canResumeFromCard(id)) this.action(item, RunAction.Resume, false, () => this.resumedFromCard.emit());
+  }
+  public action(item: QueueItem, action: RunAction, refreshChecks = false, onSuccess?: () => void): void {
     if (this.busy()) return;
     this.busy.set(true); this.error.set(''); this.notice.set('');
     this.http.post<{ run?: AgentRun }>(`/api/automation/runs/${item.id}/${action}`, refreshChecks ? { refreshChecks: true } : {}).pipe(
-      tap((result) => { if (result.run) this.selectedId.set(result.run.id); this.refresh.next(); this.changed.emit(); }),
+      tap((result) => { if (result.run) this.selectedId.set(result.run.id); this.refresh.next(); this.changed.emit(); onSuccess?.(); }),
       catchError((error: unknown) => { this.error.set(this.message(error)); return EMPTY; }),
       finalize(() => this.busy.set(false)), takeUntilDestroyed(this.destroyRef),
     ).subscribe();
+  }
+  public canRetryCurrent(item: QueueItem): boolean {
+    const role = item.pipeline[item.stage]?.role;
+    return RESUMABLE_RUN_STATUSES.includes(item.status) && !!role && EVIDENCE_AGENT_ROLES.includes(role);
+  }
+  public canAcceptManually(item: QueueItem): boolean {
+    const run = this.detail()?.run;
+    return RESUMABLE_RUN_STATUSES.includes(item.status) && !!run && run.id === item.id && !!run.commitSha && !!run.checkout && !run.cleanup;
+  }
+  public acceptManually(item: QueueItem): void {
+    if (this.busy()) return;
+    this.busy.set(true); this.error.set(''); this.notice.set('');
+    this.http.post(`/api/automation/runs/${item.id}/accept-manually`, {}).pipe(
+      finalize(() => this.busy.set(false)), takeUntilDestroyed(this.destroyRef),
+    ).subscribe({
+      next: () => {
+        this.notice.set('Результат принят вручную. Запуск завершён, журнал и замечания агентов сохранены.');
+        this.historyMode.set(true); this.refresh.next(); this.changed.emit();
+      },
+      error: error => this.error.set(this.message(error)),
+    });
+  }
+  public retryCurrent(item: QueueItem): void {
+    if (this.busy()) return;
+    this.busy.set(true); this.error.set(''); this.notice.set('');
+    this.http.post(`/api/automation/runs/${item.id}/resume`, { retryCurrent: true }).pipe(
+      finalize(() => this.busy.set(false)), takeUntilDestroyed(this.destroyRef),
+    ).subscribe({
+      next: () => { this.notice.set('Текущая проверка поставлена в очередь.'); this.refresh.next(); this.changed.emit(); },
+      error: error => this.error.set(this.message(error)),
+    });
+  }
+  public previewPatch(item: QueueItem, rollback: boolean): void {
+    if (this.busy()) return;
+    const deploy = this.deployPreviewPatch;
+    this.busy.set(true); this.error.set(''); this.notice.set('');
+    this.awaitProject(this.http.post<ProjectRequest>(`/api/automation/runs/${item.id}/preview-patch`, { rollback, deploy }),
+      deploy ? PROJECT_LIMITS.deploymentMs : PROJECT_LIMITS.requestMs).pipe(
+      finalize(() => { this.busy.set(false); this.refresh.next(); }), takeUntilDestroyed(this.destroyRef),
+    ).subscribe({
+      next: result => {
+        if (result.status === ProjectRequestStatus.Failed) { this.error.set(result.error ?? 'Операция с патчем завершилась ошибкой.'); return; }
+        const message = rollback ? 'Патч снят. Можно продолжать запуск.' : 'Изменения применены для проверки в базовой рабочей копии.';
+        this.notice.set(message + (deploy && !result.result?.deploymentError ? ' Пост-операции выполнены.' : ' Пересоберите приложение для проверки.'));
+        if (result.result?.deploymentError) this.error.set(result.result.deploymentError);
+        this.changed.emit();
+      },
+      error: error => this.error.set(this.message(error)),
+    });
   }
   public dequeue(item: QueueItem): void {
     if (this.busy()) return;

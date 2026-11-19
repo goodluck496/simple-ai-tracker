@@ -58,6 +58,24 @@ test('human rework keeps the branch, run history and prior agent usage', () => {
   } finally { f.app.close(); }
 });
 
+test('failed accepted integration can be retried and manual acceptance clears the stale merge request', () => {
+  const f = fixture();
+  try {
+    f.finish();
+    f.service.fail(f.run.id, f.token, 'Commit message rejected');
+    assert.equal(f.service.acceptanceState(f.task.id)?.status, 'merge_blocked');
+    const retried = f.service.reviewTask(f.task.id, 'accept');
+    assert.equal(retried.status, 'queued');
+    assert.equal(retried.stage, retried.settings.pipeline.length);
+    const claimed = f.service.claim('retry')!;
+    f.service.fail(f.run.id, claimed.leaseToken!, 'Another recoverable merge failure');
+    const accepted = f.service.acceptManually(f.run.id);
+    assert.equal(accepted.acceptedSha, undefined);
+    assert.equal(f.service.acceptanceState(f.task.id), null);
+    assert.equal(f.service.reviewTask(f.task.id, 'accept').status, 'queued');
+  } finally { f.app.close(); }
+});
+
 test('integration keeps its lease, fences publication cancellation and acknowledges a verified SHA after the budget deadline', () => {
   const f = fixture();
   try {

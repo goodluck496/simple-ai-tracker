@@ -128,9 +128,12 @@ export interface ProposedFix {
 }
 
 export interface AgentRun {
+  manualAcceptance?: { at: string; sha: string; stage: number };
   routing?: import('./task-routing.js').RoutingSnapshot;
   acceptance?: { sha: string; results: import('./task-routing.js').AcceptanceResult[] };
 
+  /** A user-requested single check retry must stop on failure instead of routing back to a writer. */
+  retryCurrentStage?: number;
   routeRetries?: Record<number, number>;
   lastRoute?: { from: number; to: number; kind: 'pass' | 'retry' | 'exhausted' };
   proposedFix?: ProposedFix | null;

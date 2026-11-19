@@ -7,11 +7,17 @@ import { TASK_SELECTION_LIMIT } from '../../../../shared/automation/task-readine
 import { RunLogDownload } from '../../automation/run-log-download.js';
 
 export function registerAutomationRoutes(router: Router, app: AppContainer): void {
+  router.post('/api/automation/runs/:id/accept-manually', ({ params, res }) =>
+    sendJson(res, 200, { run: app.automationService.acceptManually(params.id) }));
   router.get('/api/automation/tasks/:id/preview-patch', ({ params, res }) =>
     sendJson(res, 200, { active: app.automationService.previewPatchActive(params.id), canResumeRework: app.automationService.canResumeRework(params.id),
       acceptance: app.automationService.acceptanceState(params.id) }));
   router.post('/api/automation/tasks/:id/preview-patch', ({ params, body, res }) =>
     sendJson(res, 201, app.automationService.requestPreviewPatch(params.id, bodyField(body, 'rollback') === true, bodyField(body, 'deploy') === true)));
+  router.post('/api/automation/runs/:id/preview-patch', ({ params, body, res }) => {
+    const run = app.automationService.detail(params.id).run;
+    sendJson(res, 201, app.automationService.requestPreviewPatch(run.taskId, bodyField(body, 'rollback') === true, bodyField(body, 'deploy') === true, run.id));
+  });
   router.post('/api/automation/runs/:id/diff', ({ params, body, res }) =>
     sendJson(res, 201, app.automationService.requestDiff(params.id, bodyField(body, 'wholeRun') === true)));
   router.post('/api/automation/tasks/:id/review/accept', ({ params, res }) =>
@@ -47,7 +53,7 @@ export function registerAutomationRoutes(router: Router, app: AppContainer): voi
   router.post('/api/automation/runs/:id/cancel', ({ params, res }) => { app.automationService.cancel(params.id); sendJson(res, 200, { ok: true }); });
   router.post('/api/automation/runs/:id/budget', ({ params, body, res }) => sendJson(res, 200, { run: app.automationService.extendBudget(params.id, body) }));
   router.post('/api/automation/runs/:id/dequeue', ({ params, res }) => { app.automationService.dequeue(params.id); sendJson(res, 200, { ok: true }); });
-  router.post('/api/automation/runs/:id/resume', ({ params, body, res }) => sendJson(res, 200, { run: app.automationService.resume(params.id, bodyField(body, 'replacementProfileId'), bodyField(body, 'replacementModel'), false, bodyField(body, 'refreshChecks') === true) }));
+  router.post('/api/automation/runs/:id/resume', ({ params, body, res }) => sendJson(res, 200, { run: app.automationService.resume(params.id, bodyField(body, 'replacementProfileId'), bodyField(body, 'replacementModel'), false, bodyField(body, 'refreshChecks') === true, bodyField(body, 'retryCurrent') === true) }));
   router.post('/api/automation/runs/:id/fix/diagnose', async ({ params, res }) => sendJson(res, 200, { fix: await app.automationService.diagnoseFix(params.id) }));
   router.post('/api/automation/runs/:id/fix/apply', async ({ params, res }) => sendJson(res, 200, { run: await app.automationService.applyFix(params.id) }));
   router.post('/api/automation/runs/:id/fix/discard', async ({ params, res }) => sendJson(res, 200, { run: await app.automationService.discardFix(params.id) }));

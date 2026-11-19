@@ -36,6 +36,11 @@ export class SquashIntegration {
     await RunWorkspace.ignoreRuntime(job.common);
     const git = (args: string[], cwd = job.repository) => this.executor.run({ command: 'git', args, cwd, signal: job.signal });
     const head = () => git(['rev-parse', '--verify', `refs/heads/${job.targetBranch}^{commit}`]).then(s => s.trim());
+    const candidateUnchanged = async (cwd: string, sha: string) =>
+      (await git(['rev-parse', 'HEAD'], cwd)).trim() === sha
+      && !(await git(['diff', '--name-only'], cwd)).trim()
+      && !(await git(['diff', '--cached', '--name-only', sha], cwd)).trim()
+      && !(await git(['ls-files', '--others', '--exclude-standard'], cwd)).trim();
     const receiptFile = path.join(job.common, 'sat-runtime', 'integrations', `${job.runId}.json`);
     const sourceFile = path.join(job.common, 'sat-runtime', 'integrations', 'by-source', createHash('sha256').update(`${job.targetBranch}\0${job.sourceSha}`).digest('hex') + '.json');
     let receipt: Receipt | undefined;
@@ -84,7 +89,7 @@ export class SquashIntegration {
       if (receipt!.worktreePath !== cwd || (await git(['branch', '--show-current'], cwd)).trim() !== branch)
         throw new Error('Integration worktree identity changed.');
       if (receipt!.candidateSha) {
-        if ((await git(['rev-parse', 'HEAD'], cwd)).trim() !== receipt!.candidateSha || (await git(['status', '--porcelain'], cwd)).trim())
+        if (!await candidateUnchanged(cwd, receipt!.candidateSha))
           throw new Error('Integration candidate changed after checkpoint; preserve and inspect its files.');
       } else {
         if (!receipt!.squashed) {
@@ -122,7 +127,7 @@ export class SquashIntegration {
       if (!receipt!.checked) {
         await job.prepare(cwd);
         await job.checks(cwd);
-        if ((await git(['rev-parse', 'HEAD'], cwd)).trim() !== receipt!.candidateSha || (await git(['status', '--porcelain'], cwd)).trim())
+        if (!await candidateUnchanged(cwd, receipt!.candidateSha!))
           throw new Error('Integration checks changed the tested tree.');
         await write({ ...receipt!, state: 'ready', checked: true });
       }

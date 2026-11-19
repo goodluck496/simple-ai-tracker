@@ -76,8 +76,19 @@ export class AppComponent implements OnInit {
   }
   public showQueue = false;
   public queueRunId: string | null = null;
+  public readonly queueTask = signal<{ taskId: string; runId: string } | null>(null);
   public openQueue(id: string | null): void { if (this.automationTaskId) this.showAutomation = false; this.queueRunId = id; this.showQueue = true; }
-  public openQueueTask(id: string): void { this.showQueue = false; this.showAutomation = false; void this.store.openCard(id); }
+  public async openQueueTask(context: { taskId: string; runId: string }): Promise<void> {
+    this.store.closeCard();
+    this.queueTask.set(context);
+    await this.store.openCard(context.taskId);
+    if (this.queueTask() === context && !this.store.openTask()) this.queueTask.set(null);
+  }
+  public closeQueueTask(): void {
+    if (!this.queueTask()) return;
+    this.queueTask.set(null);
+    this.store.closeCard();
+  }
   public readonly createMode = signal(false);
   public readonly createType = signal<TaskType>('task');
   public readonly createStatus = signal<TaskStatus>('backlog');

@@ -12,7 +12,7 @@ export const RUN_STATUS_TITLES: Record<RunStatus, string> = { queued: 'В оче
 export const QUEUE_LIMITS = { recent: 100, quietMs: 120000, previewChars: 1200 } as const;
 export const INTEGRATION_STATE_TITLES = { preparing: 'Подготовка squash', resolving: 'Разрешение конфликтов', checking: 'Проверка объединённого результата',
   ready: 'Кандидат проверен', publishing: 'Применение в целевую ветку', merged: 'Squash применён', blocked: 'Нужна проверка слияния' } as const;
-export const RUN_EVENT_TITLES: Record<string, string> = { queued: 'Поставлен в очередь', stage: 'Начало этапа', phase: 'Операция worker',
+export const RUN_EVENT_TITLES: Record<string, string> = { manual_acceptance: 'Принято пользователем', queued: 'Поставлен в очередь', stage: 'Начало этапа', phase: 'Операция worker',
   progress: 'Прогресс', pass: 'Этап пройден', changes_requested: 'Нужны исправления', questions: 'Нужен ответ', failed: 'Ошибка',
   resumed: 'Продолжение', restarted: 'Новый запуск', cancelled: 'Остановка', interrupted: 'Связь потеряна' };
 export const QueueLane = { Queued: 'queued', Running: 'running', Attention: 'attention', Finished: 'finished' } as const;
@@ -22,6 +22,7 @@ export const QUEUE_LANES = [
   { id: QueueLane.Attention, title: 'Требуют внимания' }, { id: QueueLane.Finished, title: 'Завершены' },
 ] as const;
 export interface QueueItem {
+  manualAcceptance?: import('./contracts.js').AgentRun['manualAcceptance'];
   proposedFix?: import('./contracts.js').ProposedFix | null;
   trustedExecution?: boolean;
   cleanup?: import('./cleanup.js').CleanupState;

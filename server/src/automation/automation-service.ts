@@ -98,7 +98,8 @@ export class AutomationService {
   public restore(id: string): void { this.runs.db.transaction(() => { this.requireRun(id); this.runs.restore(id); }); }
   public logPage(id: string, after = 0) { this.requireRun(id); return this.runs.eventPage(id, after); }
   public detail(id: string) {
-    return this.runs.db.transaction(() => { this.expireLeases(); const run = this.requireRun(id); return { run: this.publicRun(run), item: this.queueItem(run, this.runs.list()), events: this.runs.events(id) }; });
+    return this.runs.db.transaction(() => { this.expireLeases(); const run = this.requireRun(id); return { run: this.publicRun(run), item: this.queueItem(run, this.runs.list()), events: this.runs.events(id),
+      previewPatch: { available: this.canPreviewPatch(run), active: this.projects.hasPreviewPatch(run.id), pending: this.projects.previewPatchPending(run.id) } }; });
   }
 
   public activeTaskIds(): string[] {
@@ -227,10 +228,12 @@ export class AutomationService {
     const otherActive = runs.some((other) => other.taskId === run.taskId && other.id !== run.id && ACTIVE_RUN_STATUSES.includes(other.status));
     const scope = Decomposition.child(run);
     const pendingQuestions = scope ? this.tasks.getTaskCard(scope.taskId).openQuestionsCount : task.openQuestionsCount;
-    const actionReason = run.cleanup ? 'Рабочая копия очищается или уже очищена; продолжение этого запуска недоступно.' : pendingQuestions ? `Ответьте на вопросы в карточке ${scope?.taskId ?? task.id}.` : otherActive ? 'У задачи есть другой активный запуск.'
+    const actionReason = run.cleanup ? 'Рабочая копия очищается или уже очищена; продолжение этого запуска недоступно.'
+      : this.projects.hasPreviewPatch(run.id) ? 'Перед продолжением откатите патч проверки.'
+      : pendingQuestions ? `Ответьте на вопросы в карточке ${scope?.taskId ?? task.id}.` : otherActive ? 'У задачи есть другой активный запуск.'
       : task.status === TaskStatus.Done || (task.status === TaskStatus.Review && !(run.stage >= run.settings.pipeline.length && run.settings.mergePolicy === MergePolicy.Local)) ? 'Задача уже на проверке или завершена.' : '';
     const resumable = RESUMABLE_RUN_STATUSES.includes(run.status) && (run.stage < run.settings.pipeline.length || run.settings.mergePolicy === MergePolicy.Local);
-    return { id: run.id, proposedFix: run.proposedFix, trustedExecution: run.trustedExecution === true, taskId: run.taskId, title: task.title, cleanup: run.cleanup, taskStatus: task.status, status: run.status, stage: run.stage, revision: run.revision,
+    return { id: run.id, manualAcceptance: run.manualAcceptance, proposedFix: run.proposedFix, trustedExecution: run.trustedExecution === true, taskId: run.taskId, title: task.title, cleanup: run.cleanup, taskStatus: task.status, status: run.status, stage: run.stage, revision: run.revision,
       pipeline: run.settings.pipeline.map((id) => { const agent = run.settings.agents.find((a) => a.id === id)!; return { role: agent.role, runner: agent.runner, model: agent.model }; }),
       phase: run.phase, phaseStartedAt: run.phaseStartedAt, heartbeatAt: run.heartbeatAt ?? (run.leaseUntil ? new Date(Date.parse(run.leaseUntil) - LEASE_MS).toISOString() : undefined),
       progressAt: run.progressAt, lastMessage: run.lastMessage ?? '', createdAt: run.createdAt, startedAt: run.startedAt,
@@ -387,14 +390,11 @@ export class AutomationService {
       const child = Decomposition.child(run);
       const taskId = child?.taskId ?? run.taskId;
       if (outcome.questions?.some(q => typeof q === 'string' && q.trim())) outcome = { ...outcome, verdict: AgentVerdict.Questions };
+      if (run.routing && profile.role !== AgentRole.Router && run.routing.sourceDescription !== (this.tasks.getTaskCard(taskId).description ?? '')) throw new TrackerError('VALIDATION_FAILED', 'Requirements changed after routing; restart the run.');
       const now = this.clock.now();
       let updated: AgentRun = { ...run, branch, commitSha, updatedAt: now, summary: outcome.summary,
         budgetElapsedMs: RunBudget.elapsed(run, Date.parse(now)), budgetUpdatedAt: now };
-      if (run.routing && profile.role !== AgentRole.Router && run.routing.sourceDescription !== (this.tasks.getTaskCard(taskId).description ?? '')) throw new TrackerError('VALIDATION_FAILED', 'Requirements changed after routing; restart the run.');
       updated.budgetApproval = undefined;
-      if (WRITABLE_AGENT_ROLES.includes(profile.role) && typeof outcome.commitMessage === 'string') {
-        if (child) {
-          if (outcome.verdict === AgentVerdict.Pass) updated.feature = { ...run.feature!, children: run.feature!.children.map(c => c.key === child.key ? { ...c, commitMessage: outcome.commitMessage, sourceSha: commitSha, state: 'review' } : c) };
       if (profile.role === AgentRole.Router && outcome.verdict === AgentVerdict.Pass) {
         let decision;
         try { decision = TaskRouting.parse(outcome.plan ?? '', run.settings, run.stage); }
@@ -413,6 +413,9 @@ export class AutomationService {
         } catch (error) { throw new TrackerError('VALIDATION_FAILED', String(error)); }
       }
       if (run.routing && WRITABLE_AGENT_ROLES.includes(profile.role)) updated.acceptance = undefined;
+      if (WRITABLE_AGENT_ROLES.includes(profile.role) && typeof outcome.commitMessage === 'string') {
+        if (child) {
+          if (outcome.verdict === AgentVerdict.Pass) updated.feature = { ...run.feature!, children: run.feature!.children.map(c => c.key === child.key ? { ...c, commitMessage: outcome.commitMessage, sourceSha: commitSha, state: 'review' } : c) };
         }
         else updated.mergeMessage = outcome.commitMessage;
       }
@@ -426,6 +429,7 @@ export class AutomationService {
       if (doctorRepair && (outcome.verdict !== AgentVerdict.Pass || run.stage >= doctorRepair.failedStage)) updated.doctorRepair = undefined;
       if ((budgetReason && outcome.verdict !== AgentVerdict.Questions) || outcome.verdict === AgentVerdict.Blocked
         || (doctorRepair && outcome.verdict === AgentVerdict.ChangesRequested)
+        || (run.retryCurrentStage === run.stage && outcome.verdict === AgentVerdict.ChangesRequested)
         || (outcome.verdict === AgentVerdict.ChangesRequested && WRITABLE_AGENT_ROLES.includes(profile.role) && !retryWriterCheck)) {
         updated = { ...updated, status: RunStatus.Failed, leaseToken: null,
           summary: budgetReason ?? `Execution blocked; no automatic retry: ${outcome.summary}` };
@@ -484,12 +488,12 @@ export class AutomationService {
           this.tasks.setStatus({ id: taskId, status: TaskStatus.Review, actor: 'agent' });
         }
         const next = PipelinePolicy.passStage(run.settings, run.stage);
+        if (run.routing && PipelinePolicy.writes(run.settings) && next >= run.settings.pipeline.length
+          && (!updated.acceptance || updated.acceptance.sha !== commitSha || updated.acceptance.results.some(r => r.status === 'failed'))) throw new TrackerError('VALIDATION_FAILED', 'Current commit has no passing acceptance report.');
         updated = { ...updated, stage: next };
         if (run.settings.pipelineRoutes?.length) updated.lastRoute = { from: run.stage, to: next, kind: 'pass' };
         if (child && updated.stage === updated.feature?.finalDeveloperStage) updated.stage++;
         if (updated.stage >= updated.settings.pipeline.length) {
-        if (run.routing && PipelinePolicy.writes(run.settings) && next >= run.settings.pipeline.length
-          && (!updated.acceptance || updated.acceptance.sha !== commitSha || updated.acceptance.results.some(r => r.status === 'failed'))) throw new TrackerError('VALIDATION_FAILED', 'Current commit has no passing acceptance report.');
           const writes = PipelinePolicy.writes(run.settings);
           if (writes) {
             const status = this.tasks.getTaskCard(run.taskId).status;
@@ -500,6 +504,7 @@ export class AutomationService {
           updated = { ...updated, status: RunStatus.Review, leaseToken: null };
         }
       }
+      if (run.retryCurrentStage === run.stage) updated.retryCurrentStage = undefined;
       if (updated.status === RunStatus.Failed || updated.status === RunStatus.Review) updated = { ...updated, finishedAt: now };
       this.runs.save(updated);
       if (updated.lastRoute && updated.lastRoute !== run.lastRoute) {
@@ -564,11 +569,14 @@ export class AutomationService {
       this.runs.event(id, RunStatus.Cancelled, 'Убрано из очереди пользователем. Задача и журнал сохранены.', now);
     });
   }
-  public resume(id: string, replacementProfileId?: unknown, replacementModel?: unknown, repair = false, refreshChecks = false): AgentRun {
+  public resume(id: string, replacementProfileId?: unknown, replacementModel?: unknown, repair = false, refreshChecks = false, retryCurrent = false): AgentRun {
     return this.runs.db.transaction(() => {
     const run = this.requireRun(id);
     if (run.cleanup) throw new TrackerError('CONFLICT', 'Рабочая копия очищается или уже очищена. Создайте новый запуск.');
-    if (!RESUMABLE_RUN_STATUSES.includes(run.status)) throw new TrackerError('CONFLICT', 'Run cannot be resumed.');
+    const acceptedMerge = run.status === RunStatus.Review && !!run.acceptedSha && run.acceptedSha === run.commitSha
+      && run.stage >= run.settings.pipeline.length && run.settings.mergePolicy === MergePolicy.Local;
+    if (!RESUMABLE_RUN_STATUSES.includes(run.status) && !acceptedMerge) throw new TrackerError('CONFLICT', 'Run cannot be resumed.');
+    if (this.projects.hasPreviewPatch(run.id)) throw new TrackerError('CONFLICT', 'Сначала откатите патч проверки.');
     const mergeOnly = run.stage >= run.settings.pipeline.length && run.settings.mergePolicy === MergePolicy.Local;
     const budgetReason = RunBudget.reason(run, Date.parse(this.clock.now()));
     if (budgetReason && !mergeOnly) throw new TrackerError('CONFLICT', `${budgetReason} Increase this run budget explicitly, then resume. Spent usage is retained.`);
@@ -579,6 +587,10 @@ export class AutomationService {
     if (this.runs.hasActive(run.taskId) && run.status !== RunStatus.Waiting) throw new TrackerError('CONFLICT', 'Task already has another active run.');
     if (run.feature?.children.some(c => this.runs.hasActive(c.taskId))) throw new TrackerError('CONFLICT', 'A child has an independent active run; stop it before resuming the feature.');
     const role = run.settings.agents.find((agent) => agent.id === run.settings.pipeline[run.stage])?.role;
+    if (retryCurrent && (!role || !EVIDENCE_AGENT_ROLES.includes(role) || repair || refreshChecks
+      || replacementProfileId !== undefined || replacementModel !== undefined)) {
+      throw new TrackerError('CONFLICT', 'Повтор доступен только для текущего этапа проверки.');
+    }
     const repairStage = repair ? this.doctorRepairStage(run) : undefined;
     if (repair && (repairStage === undefined || run.proposedFix?.action !== 'repair_stage')) throw new TrackerError('CONFLICT', 'Нет доступного этапа для исправления.');
     if (repair) {
@@ -586,10 +598,10 @@ export class AutomationService {
       if (reason) throw new TrackerError('CONFLICT', reason);
     }
     const retry = PipelinePolicy.route(run.settings, run.stage)?.retry;
-    const manualRetry = run.status === RunStatus.Waiting && run.lastRoute?.kind === 'exhausted' && run.lastRoute.from === run.stage && retry;
+    const manualRetry = !retryCurrent && run.status === RunStatus.Waiting && run.lastRoute?.kind === 'exhausted' && run.lastRoute.from === run.stage && retry;
     const waitingDeveloper = run.status === RunStatus.Waiting && role && EVIDENCE_AGENT_ROLES.includes(role)
       ? Decomposition.child(run)?.developerStage ?? run.feature?.finalDeveloperStage ?? run.settings.pipeline.findIndex((id) => run.settings.agents.find((agent) => agent.id === id)?.role === AgentRole.Developer) : -1;
-    const stage = repairStage ?? (manualRetry ? run.settings.pipeline.indexOf(manualRetry.to) : waitingDeveloper >= 0 ? waitingDeveloper : run.stage);
+    const stage = retryCurrent ? run.stage : repairStage ?? (manualRetry ? run.settings.pipeline.indexOf(manualRetry.to) : waitingDeveloper >= 0 ? waitingDeveloper : run.stage);
     let settings = run.settings;
     if (refreshChecks) {
       const project = new AutomationSettingsValidator().validate(this.settings());
@@ -623,6 +635,11 @@ export class AutomationService {
       });
     }
     const updated: AgentRun = { ...run, settings, stage, status: RunStatus.Queued, proposedFix: null, leaseToken: null, workerId: null, leaseUntil: null, updatedAt: this.clock.now(), finishedAt: undefined };
+    updated.retryCurrentStage = retryCurrent ? stage : undefined;
+    if (retryCurrent) {
+      updated.revision++;
+      updated.stageMemory = undefined;
+    }
     if (manualRetry) updated.revision++;
     if (repairStage !== undefined) {
       updated.revision++;
@@ -631,11 +648,42 @@ export class AutomationService {
     }
     this.runs.restore(id);
     this.runs.save(updated);
-    this.runs.event(id, 'resumed', refreshChecks ? 'Продолжение в прежней рабочей ветке с обновлёнными проверками проекта.' : repair ? 'Исправление по диагнозу Pipeline Doctor поставлено в очередь.' : manualRetry
+    this.runs.event(id, 'resumed', retryCurrent ? `Повтор только текущей проверки: этап ${stage + 1}. При замечаниях запуск остановится для решения пользователя.` : refreshChecks ? 'Продолжение в прежней рабочей ветке с обновлёнными проверками проекта.' : repair ? 'Исправление по диагнозу Pipeline Doctor поставлено в очередь.' : manualRetry
       ? `Пользователь продолжил доработку после исчерпания лимита. Следующий этап: ${stage + 1}.` : replacementProfileId === undefined
       ? 'Продолжение с сохранёнными настройками и checkpoint. Ожидает worker.'
       : 'Текущий этап поставлен в очередь с другим профилем агента. Рабочая ветка сохранена.', this.clock.now());
     return this.publicRun(updated);
+    });
+  }
+
+  public acceptManually(id: string): AgentRun {
+    return this.runs.db.transaction(() => {
+      const run = this.requireRun(id);
+      if (run.manualAcceptance?.sha === run.commitSha && run.status === RunStatus.Review) return this.publicRun(run);
+      const task = this.tasks.getTaskCard(run.taskId);
+      if (!RESUMABLE_RUN_STATUSES.includes(run.status) || !run.commitSha || !run.checkout || run.cleanup
+        || task.status === TaskStatus.Done || task.openQuestionsCount
+        || this.runs.list(run.taskId).some(other => other.id !== run.id && ACTIVE_RUN_STATUSES.includes(other.status))) {
+        throw new TrackerError('CONFLICT', 'Для ручной приёмки нужен остановленный запуск с сохранённым результатом и отвеченными вопросами.');
+      }
+      if (task.status !== TaskStatus.Review) {
+        if (task.status !== TaskStatus.InProgress && task.status !== TaskStatus.Testing) {
+          this.tasks.setStatus({ id: task.id, status: TaskStatus.InProgress, actor: 'user' });
+        }
+        if (this.tasks.getTaskCard(task.id).status === TaskStatus.InProgress) {
+          this.tasks.setStatus({ id: task.id, status: TaskStatus.Testing, actor: 'user' });
+        }
+        this.tasks.setStatus({ id: task.id, status: TaskStatus.Review, actor: 'user' });
+      }
+      const now = this.clock.now();
+      const summary = 'Результат проверен и принят пользователем вручную. Замечания и непройденные этапы агентов сохранены в журнале.';
+      const updated: AgentRun = { ...run, status: RunStatus.Review, manualAcceptance: { at: now, sha: run.commitSha, stage: run.stage },
+        summary, acceptedSha: undefined, updatedAt: now, finishedAt: now, workerId: null, leaseToken: null, leaseUntil: null, proposedFix: null, retryCurrentStage: undefined };
+      this.tasks.addComment({ id: task.id, text: `${summary} Коммит: ${run.commitSha}. Запуск: ${run.id}.`, actor: 'user' });
+      this.runs.restore(id);
+      this.runs.save(updated);
+      this.runs.event(id, 'manual_acceptance', summary, now);
+      return this.publicRun(updated);
     });
   }
 
@@ -644,6 +692,10 @@ export class AutomationService {
       const task = this.tasks.getTaskCard(taskId);
       const run = this.runs.list(taskId)[0];
       if (run && this.projects.hasPreviewPatch(run.id)) throw new TrackerError('CONFLICT', 'Сначала откатите патч проверки.');
+      if (decision === 'accept' && run?.acceptedSha === run?.commitSha && run?.acceptedSha
+        && RESUMABLE_RUN_STATUSES.includes(run.status) && run.stage >= run.settings.pipeline.length) {
+        return this.resume(run.id);
+      }
       if (decision === 'rework' && run && task.status === TaskStatus.InProgress && this.stoppedRework(run)
         && !task.openQuestionsCount && !this.runs.hasActive(taskId)) {
         if (typeof feedback !== 'string' || !feedback.trim()) throw new TrackerError('VALIDATION_FAILED', 'Опишите, что нужно исправить.');
@@ -679,16 +731,17 @@ export class AutomationService {
         return this.publicRun(updated);
       }
       if (task.status !== TaskStatus.Review || !run || run.status !== RunStatus.Review || !run.checkout || run.cleanup
-        || !run.commitSha || run.stage < run.settings.pipeline.length || !PipelinePolicy.writes(run.settings)
+        || !run.commitSha || (run.stage < run.settings.pipeline.length && run.manualAcceptance?.sha !== run.commitSha) || !PipelinePolicy.writes(run.settings)
         || task.openQuestionsCount || this.runs.hasActive(taskId)) {
         throw new TrackerError('CONFLICT', 'Нет завершённого агентского запуска, ожидающего приёмки.');
       }
+      if (run.routing && run.routing.sourceDescription !== (this.tasks.getTaskCard(taskId).description ?? '')) throw new TrackerError('VALIDATION_FAILED', 'Requirements changed after routing; restart the run.');
       const now = this.clock.now();
       let updated: AgentRun = { ...run, status: RunStatus.Queued, finishedAt: undefined, updatedAt: now,
         workerId: null, leaseUntil: null, leaseToken: null, proposedFix: null };
       if (decision === 'accept') {
         updated = { ...updated, settings: { ...run.settings, mergePolicy: MergePolicy.Local },
-          acceptedSha: run.commitSha, summary: 'Результат принят пользователем. Ожидает слияния.' };
+          stage: run.settings.pipeline.length, acceptedSha: run.commitSha, summary: 'Результат принят пользователем. Ожидает слияния.' };
       } else {
         if (typeof feedback !== 'string' || !feedback.trim()) throw new TrackerError('VALIDATION_FAILED', 'Опишите, что нужно исправить.');
         const stage = run.feature?.finalDeveloperStage ?? run.settings.pipeline.findIndex(agentId =>
@@ -697,8 +750,7 @@ export class AutomationService {
         const budgetReason = RunBudget.reason(run, Date.parse(now), true);
         if (budgetReason) throw new TrackerError('CONFLICT', budgetReason);
         this.tasks.setStatus({ id: taskId, status: TaskStatus.InProgress, actor: 'user', comment: feedback.trim() });
-        updated = { ...updated, acceptedSha: undefined, stage, revision: run.revision + 1, stageMemory: undefined, summary: feedback.trim(), reviewFeedback: feedback.trim() };
-      if (run.routing && run.routing.sourceDescription !== (this.tasks.getTaskCard(taskId).description ?? '')) throw new TrackerError('VALIDATION_FAILED', 'Requirements changed after routing; restart the run.');
+        updated = { ...updated, manualAcceptance: undefined, acceptedSha: undefined, stage, revision: run.revision + 1, stageMemory: undefined, summary: feedback.trim(), reviewFeedback: feedback.trim() };
       }
       this.runs.restore(run.id);
       this.runs.save(updated);
@@ -726,12 +778,19 @@ export class AutomationService {
     return this.projects.enqueue({ action: ProjectAction.Diff, path: run.checkout?.repositoryRoot ?? run.settings.repositoryPath, diff: { head, base } }, true);
   }
 
-  public requestPreviewPatch(taskId: string, rollback: boolean, deploy = false) {
+  private canPreviewPatch(run: AgentRun): boolean {
+    return !!run.commitSha && !!run.checkout && run.commitSha !== run.checkout.baseSha && !run.cleanup && !run.acceptedSha
+      && (run.status === RunStatus.Review || RESUMABLE_RUN_STATUSES.includes(run.status))
+      && this.tasks.getTaskCard(run.taskId).status !== TaskStatus.Done
+      && !this.runs.list(run.taskId).some(other => other.id !== run.id && ACTIVE_RUN_STATUSES.includes(other.status));
+  }
+
+  public requestPreviewPatch(taskId: string, rollback: boolean, deploy = false, runId?: string) {
     return this.runs.db.transaction(() => {
-      const run = this.runs.list(taskId)[0];
-      if (!run?.commitSha || !run.checkout || run.status !== RunStatus.Review || run.stage < run.settings.pipeline.length
-        || this.tasks.getTaskCard(taskId).status !== TaskStatus.Review || this.runs.hasActive(taskId)) {
-        throw new TrackerError('CONFLICT', 'Для патча нужен завершённый запуск до слияния.');
+      const run = runId ? this.requireRun(runId) : this.runs.list(taskId)[0];
+      if (!run || run.taskId !== taskId || !run.commitSha || !run.checkout
+        || (!rollback && !this.canPreviewPatch(run))) {
+        throw new TrackerError('CONFLICT', 'Для примерки нужен остановленный запуск с сохранённым коммитом и рабочей копией.');
       }
       const deployment = deploy ? this.settings().postOperations : undefined;
       if (deploy && !deployment?.length) throw new TrackerError('VALIDATION_FAILED', 'Настройте команды в «Проект и проверки → Пост-операции».');
@@ -749,7 +808,7 @@ export class AutomationService {
   }
   public acceptanceState(taskId: string): { status: RunStatus; summary: string } | null {
     const run = this.runs.list(taskId)[0];
-    return run?.acceptedSha && run.acceptedSha === run.commitSha
+    return run?.acceptedSha && run.acceptedSha === run.commitSha && run.status !== RunStatus.Review
       ? { status: run.status, summary: run.summary } : null;
   }
   public canResumeRework(taskId: string): boolean {

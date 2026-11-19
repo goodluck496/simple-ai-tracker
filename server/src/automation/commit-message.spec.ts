@@ -20,7 +20,9 @@ test('worker supplies the accepted task purpose while preserving the actual Russ
   assert.equal(completed, subject + ', чтобы выполнить требование задачи «Параметризация костра»');
   assert.equal(CommitMessage.validate(completed, 'SAT-14'), completed);
   assert.equal(CommitMessage.forTask(completed, 'SAT-14', 'Same task'), completed);
-  assert.throws(() => CommitMessage.forTask('[#OTHER] - developer stage', 'SAT-14', 'Параметризация костра'));
-  assert.throws(() => CommitMessage.forTask('[#SAT-14] - developer stage', 'SAT-14', 'Параметризация костра'));
-  assert.throws(() => CommitMessage.forTask(subject + '\nbody', 'SAT-14', 'Параметризация костра'));
+  for (const invalid of ['[#OTHER] - developer stage', '[#SAT-14] - developer stage', subject + '\nbody']) {
+    const repaired = CommitMessage.forTask(invalid, 'SAT-14', 'Параметризация костра');
+    assert.equal(repaired, CommitMessage.fallback('SAT-14', 'Параметризация костра'));
+    assert.equal(CommitMessage.validate(repaired, 'SAT-14'), repaired);
+  }
 });

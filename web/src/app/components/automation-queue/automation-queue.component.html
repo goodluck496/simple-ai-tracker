@@ -82,7 +82,7 @@
               <div class="run-card" role="button" [attr.aria-label]="'Запуск ' + item.taskId + ' ' + item.id" [class.selected]="selectedId() === item.id" [attr.data-status]="item.status" (click)="select(item.id)" tabindex="0" (keydown.enter)="select(item.id)">
                 <div class="card-header">
                   <span class="card-task-id">{{ item.taskId }}</span>
-                  <span class="card-status-pill" [attr.data-status]="item.status">{{ statusTitles[item.status] }}</span>
+                  <span class="card-status-pill" [attr.data-status]="item.status">{{ item.manualAcceptance ? 'Принято пользователем' : statusTitles[item.status] }}</span>
                   @if (item.trustedExecution) { <span class="card-pos">Без лимитов</span> }
                   @if (item.queuePosition) { <span class="card-pos">#{{ item.queuePosition }}</span> }
                   @if (item.proposedFix) { <button pButton type="button" class="card-fix-badge" (click)="$event.stopPropagation(); openProposedFix(item)" [title]="item.proposedFix.title">🛠️ {{ item.proposedFix.action === 'retry_stage' ? 'Анализ сбоя' : 'ПРОВЕРЬ ИЗМЕНЕНИЯ' }}</button> }
@@ -133,7 +133,7 @@
                 <span class="badge-task-id">{{ item.taskId }}</span>
                 <span class="badge-run-status" [attr.data-status]="item.status">
                   <span class="pulse-dot" [class.active]="item.status === runStatus.Running || item.status === runStatus.Integrating"></span>
-                  {{ statusTitles[item.status] }}
+                  {{ item.manualAcceptance ? 'Принято пользователем' : statusTitles[item.status] }}
                 </span>
                 <span class="badge-task-status">Карточка: {{ taskTitles[item.taskStatus] }}</span>
                 <span class="badge-stage">Этап {{ item.stage < item.pipeline.length ? item.stage + 1 : item.pipeline.length }}/{{ item.pipeline.length }} · {{ currentRole(item) }}</span>
@@ -150,7 +150,7 @@
           </div>
 
           <div class="run-header-actions">
-            <button pButton severity="primary" size="small" icon="pi pi-external-link" (click)="openTask.emit(item.taskId)">
+            <button pButton severity="primary" size="small" icon="pi pi-external-link" (click)="openTask.emit({ taskId: item.taskId, runId: item.id })">
               Открыть задачу {{ item.openQuestions ? 'и ответить' : '' }}
             </button>
             @if (item.status === runStatus.Queued) {
@@ -176,6 +176,16 @@
               <button pButton severity="success" size="small" icon="pi pi-play" [disabled]="busy() || resumeBudgetBlocked(item)" (click)="action(item, runAction.Resume)">
                 Продолжить
               </button>
+            }
+            @if (canRetryCurrent(item)) {
+              <button pButton severity="secondary" size="small" icon="pi pi-replay"
+                [disabled]="busy() || !item.canResume || resumeBudgetBlocked(item) || detail()?.previewPatch?.active"
+                (click)="retryCurrent(item)">Повторить текущую проверку</button>
+            }
+            @if (canAcceptManually(item)) {
+              <button pButton severity="success" size="small" icon="pi pi-check"
+                [disabled]="busy() || item.openQuestions > 0"
+                (click)="acceptManually(item)">Я проверил — принять результат</button>
             }
             @if (item.canRestart) {
               <button pButton severity="secondary" size="small" icon="pi pi-refresh" [disabled]="busy()" (click)="action(item, runAction.Restart)">
@@ -218,6 +228,38 @@
       </header>
       @if (detail()?.run; as run) {
         @if (run.id === item.id) {
+          @if (run.manualAcceptance; as accepted) {
+            <p class="run-budget-summary" role="status">
+              Принято пользователем {{ timestamp(accepted.at) }}. Проверенный коммит {{ accepted.sha.slice(0, 7) }}.
+              На момент приёмки текущим был этап {{ accepted.stage + 1 }}. Замечания агентов доступны в журнале.
+            </p>
+          }
+          @if (detail()?.previewPatch; as patch) {
+            @if (patch.available || patch.active) {
+              <section class="run-budget-summary" aria-label="Проверка сохранённых изменений">
+                <p>Сохранённый результат — {{ run.commitSha?.slice(0, 7) }}.
+                  @if (run.stage < run.settings.pipeline.length) { Текущий этап {{ run.stage + 1 }} из {{ run.settings.pipeline.length }}. }
+                  @else { Этапы конвейера завершены. }
+                </p>
+                @if (run.stage < run.settings.pipeline.length) {
+                  <p>Проверки конвейера ещё не завершены. Примерка применяет сохранённый коммит в базовую рабочую копию. Перед продолжением снимите патч.</p>
+                }
+                <label>
+                  <p-checkbox [binary]="true" [(ngModel)]="deployPreviewPatch" [disabled]="busy() || patch.pending" />
+                  Выполнить пост-операции для сборки и развёртывания
+                </label>
+                <div class="review-action-row">
+                  <button pButton severity="secondary" size="small" icon="pi pi-file-edit"
+                    [disabled]="busy() || !patch.available || patch.active || patch.pending"
+                    (click)="previewPatch(item, false)">Примерить текущие изменения</button>
+                  @if (patch.active) {
+                    <button pButton severity="secondary" size="small" icon="pi pi-undo"
+                      [disabled]="busy() || patch.pending" (click)="previewPatch(item, true)">Откатить патч</button>
+                  }
+                </div>
+              </section>
+            }
+          }
           @let time = runBudget.time(run, now());
           <div class="run-budget-summary" role="status">
             @if (time.disabled) {
@@ -448,7 +490,7 @@
                   <p class="muted">Подзадачи выполняются по зависимостям; бюджет общий. После их ревью — тестирование всей фичи.</p>
                   @for (child of feature.children; track child.key) {
                     <p class="subtask-item">
-                      <button pButton type="button" [text]="true" size="small" (click)="openTask.emit(child.taskId)">{{ child.taskId }} · {{ child.title }}</button>
+                      <button pButton type="button" [text]="true" size="small" (click)="openTask.emit({ taskId: child.taskId, runId: item.id })">{{ child.taskId }} · {{ child.title }}</button>
                       <span class="subtask-badge">{{ child.state === 'merged' ? 'Включена в фичу' : child.state === 'review' ? 'Разработка завершена, ожидает ревью' : 'Готова к разработке' }}</span>
                       @if (child.mergedSha) { <code>{{ child.mergedSha.slice(0, 8) }}</code> }
                     </p>
