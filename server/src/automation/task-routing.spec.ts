@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { test } from 'node:test';
 import { TaskRouting, type RoutingDecision } from '../../../shared/automation/task-routing.js';
+import { checkFingerprint } from './check-evidence.js';
 import { DEFAULT_AUTOMATION_SETTINGS, type AutomationSettings, type AgentRole } from '../../../shared/automation/contracts.js';
 import { createContainer } from '../bootstrap/container.js';
 import { SilentLogger } from '../core/logger.js';
@@ -124,4 +126,84 @@ test('requirements changed while router is running cannot be published as a curr
     app.taskService.updateTask({id:task.id,description:'New scope',actor:'user'});
     assert.throws(()=>service.completeStage(run.id,run.leaseToken!,{verdict:'pass',summary:'Old proposal',plan:JSON.stringify(decision())},`sat/${run.id}`,'a'.repeat(40)),/Requirements changed/);
   } finally {app.close();}
+});
+
+test('acceptance criteria only link verifiable check executions and matching browser PNGs of the same attempt and SHA', () => {
+  const pngBytes = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+X2dIAAAAASUVORK5CYII=', 'base64');
+  const pngDataUrl = `data:image/png;base64,${pngBytes.toString('base64')}`;
+  const digest = createHash('sha256').update(pngDataUrl).digest('hex');
+  const browserDecision = () => ({
+    ...decision(),
+    brief: {
+      goal: 'Verify browser UI',
+      scope: 'One button',
+      criteria: [
+        { id: 'AC-1', requirement: 'Unit passes', method: 'unit' as const },
+        { id: 'AC-2', requirement: 'UI renders', method: 'browser' as const },
+      ],
+    },
+  });
+  const app = createContainer({ config: { dbPath: ':memory:' }, logger: new SilentLogger() });
+  try {
+    const service = app.automationService;
+    const cfg = settings();
+    service.configure(cfg);
+    const task = app.taskService.createTask({ title: 'Evidence check task', description: 'Verify criterion source' });
+    service.enqueue(task.id);
+    const run = service.claim('test-worker')!;
+    const token = run.leaseToken!;
+    const sha = 'c'.repeat(40);
+    const fp = checkFingerprint(cfg.checks);
+    const finish = (plan = '', checkIds?: string[], criterionImages?: string[]) =>
+      service.completeStage(run.id, token, { verdict: 'pass', summary: 'ok', plan }, `sat/${run.id}`, sha, undefined, false, checkIds, criterionImages);
+
+    // router -> analyst -> developer
+    service.beginStage(run.id, token); finish(JSON.stringify(browserDecision()));
+    service.beginStage(run.id, token); finish('# Plan\n1. Build and test.');
+    service.beginStage(run.id, token); finish();
+
+    // tester stage (stage 3)
+    service.beginStage(run.id, token);
+    const recordCheck = (check: {
+      id: string; sha: string; browserResults?: { criterionId: string; action: string; assertion: string; actual: string; screenshot: string; imageDigest: string }[];
+    }) => {
+      const base = {
+        id: check.id, runId: run.id, attempt: 1, stage: 3, phase: 'stage' as const,
+        revision: 0, sha: check.sha, fingerprint: fp, position: 0, command: cfg.checks[0].command, args: cfg.checks[0].args,
+        at: new Date().toISOString(),
+      };
+      service.checkExecution(run.id, token, { ...base, outcome: { kind: 'unknown' } }, true);
+      service.checkExecution(run.id, token, { ...base, outcome: { kind: 'exit', code: 0 }, browserResults: check.browserResults }, false);
+    };
+    // Record check from wrong SHA: must NOT link to criterion
+    recordCheck({ id: '11111111-1111-4111-8111-111111111111', sha: 'd'.repeat(40) });
+    // Record valid check for current SHA with browserResult matching pngBytes
+    const validCheck = {
+      id: '22222222-2222-4222-8222-222222222222', sha,
+      browserResults: [{
+        criterionId: 'AC-2', action: 'click Metrics tab', assertion: 'ratio visible', actual: '1/2 visible',
+        screenshot: '.sat/screenshots/ui.png', imageDigest: digest,
+      }],
+    };
+    recordCheck(validCheck);
+
+    // Complete tester with AC-1 referencing missing/wrong position and AC-2 referencing valid check + missing image first -> AC-2 has no browser source without image, then test with image
+    const afterTester = finish(
+      JSON.stringify({
+        results: [
+          { id: 'AC-1', status: 'passed', evidence: 'text only without checkPosition' },
+          { id: 'AC-2', status: 'passed', evidence: 'clicked tab', checkPosition: 0 },
+        ],
+      }),
+      [validCheck.id],
+      [pngDataUrl],
+    );
+    const ac1 = afterTester.acceptance?.results.find(r => r.id === 'AC-1');
+    const ac2 = afterTester.acceptance?.results.find(r => r.id === 'AC-2');
+    assert.equal(ac1?.source, undefined, 'Text passed without verifiable checkPosition must not produce source');
+    assert.ok(ac2?.source, 'Browser criterion with matching check and PNG must link source');
+    assert.equal(ac2?.source?.checkId, validCheck.id);
+    assert.equal(ac2?.source?.sha, sha);
+    assert.ok(ac2?.source?.browser?.imageUrl, 'Browser criterion source must include saved PNG URL');
+  } finally { app.close(); }
 });

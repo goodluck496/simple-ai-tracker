@@ -1,9 +1,9 @@
-import { TaskRouting } from '../../../shared/automation/task-routing.js';
+import { TaskRouting, type AcceptanceResult } from '../../../shared/automation/task-routing.js';
 import { PipelineDoctor } from './pipeline-doctor.js';
 import { ProviderKind, type ProposedFix } from '../../../shared/automation/contracts.js';
 import { randomUUID, createHash } from 'node:crypto';
 import { readFileSync, statSync } from 'node:fs';
-import { COMMENT_SCREENSHOT, SCREENSHOT_LIMIT, SCREENSHOT_MAX_BYTES, SCREENSHOT_MAX_ENCODED_LENGTH } from '../../../shared/automation/screenshots.js';
+import { COMMENT_SCREENSHOT, SCREENSHOT_LIMIT, SCREENSHOT_MAX_BYTES, SCREENSHOT_MAX_ENCODED_LENGTH, SCREENSHOT_PATH } from '../../../shared/automation/screenshots.js';
 import { DEFAULT_AUTOMATION_SETTINGS, AgentRole, RunStatus, AgentVerdict, AUTOMATION_START_TASK_STATUSES, ACTIVE_RUN_STATUSES,
   RESUMABLE_RUN_STATUSES, OWNED_RUN_STATUSES, WRITABLE_AGENT_ROLES, EVIDENCE_AGENT_ROLES, AGENT_VERDICTS, AUTOMATION_TIMING, MergePolicy,
   type AgentOutcome, type AgentRun, type AutomationSettings, type IntegrationInfo } from '../../../shared/automation/contracts.js';
@@ -23,6 +23,11 @@ import { PipelinePolicy } from '../../../shared/automation/pipeline-policy.js';
 import { BATCH_TASK_LIMIT } from '../../../shared/automation/batch.js';
 import { StageNotes, type StageMemory } from '../../../shared/automation/stage-note.js';
 import { ProjectAction, type ProjectResult } from '../../../shared/automation/project.js';
+import type { CheckExecution, ImprovementPeriod } from '../../../shared/automation/improvement-metrics.js';
+import { checkBelongsToRun, checkFingerprint } from './check-evidence.js';
+import { collectMetrics, verifyRefs } from './improvement-metrics.js';
+import { ImprovementService } from './improvement-service.js';
+import { configuredCheckScripts } from './package-manager.js';
 
 const SETTINGS_KEY = 'automation_settings_v1';
 const LEASE_MS = AUTOMATION_TIMING.leaseMs;
@@ -32,7 +37,8 @@ export class AutomationService {
   public get projects(): ProjectRequests { return new ProjectRequests(this.repos.meta, this.runs.db); }
   public constructor(private readonly runs: AgentRunRepository, private readonly repos: Repositories,
     private readonly tasks: TaskService, private readonly clock: Clock, private readonly workspace = 'default',
-    private readonly images?: import('../services/image-service.js').ImageService) {}
+    private readonly images?: import('../services/image-service.js').ImageService,
+    private readonly improvements = new ImprovementService(runs, tasks, workspace)) {}
 
   public settings(): AutomationSettings {
     const value = this.repos.meta.get(SETTINGS_KEY);
@@ -97,8 +103,30 @@ export class AutomationService {
   }
   public restore(id: string): void { this.runs.db.transaction(() => { this.requireRun(id); this.runs.restore(id); }); }
   public logPage(id: string, after = 0) { this.requireRun(id); return this.runs.eventPage(id, after); }
-  public detail(id: string) {
-    return this.runs.db.transaction(() => { this.expireLeases(); const run = this.requireRun(id); return { run: this.publicRun(run), item: this.queueItem(run, this.runs.list()), events: this.runs.events(id),
+  public metrics(period: Partial<ImprovementPeriod> = {}) {
+    return this.runs.db.transaction(() => {
+      const asOf = this.clock.now();
+      const end = period.to ?? asOf;
+      const from = period.from ?? (Number.isFinite(Date.parse(end)) ? new Date(Date.parse(end) - 30 * 86400000).toISOString() : '');
+      const date = (value: string) => {
+        if (!/^\d{4}-\d{2}-\d{2}(?:T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?(?:Z|[+-]\d{2}:\d{2}))?$/.test(value)) return NaN;
+        const day = new Date(value.slice(0, 10));
+        if (!Number.isFinite(day.valueOf()) || day.toISOString().slice(0, 10) !== value.slice(0, 10)) return NaN;
+        return Date.parse(value);
+      };
+      const startAt = date(from), endAt = date(end);
+      if (!Number.isFinite(startAt) || !Number.isFinite(endAt) || startAt >= endAt)
+        throw new TrackerError('VALIDATION_FAILED', 'Укажите корректные даты начала и конца периода. Начало должно быть раньше конца.');
+      return collectMetrics(this.runs, { from: new Date(startAt).toISOString(), to: new Date(endAt).toISOString() }, asOf);
+    });
+  }
+
+  public detail(id: string, eventId?: number) {
+    return this.runs.db.transaction(() => { this.expireLeases(); const run = this.requireRun(id); return { run: this.runWithAvailableImages(run), item: this.queueItem(run, this.runs.list()), events: this.runs.events(id),
+      selectedEvent: eventId === undefined ? undefined : this.runs.eventById(id, eventId),
+      selectedOccurrence: eventId === undefined ? undefined : this.runs.occurrence(id, eventId),
+      checks: this.runs.checks(id),
+      userAcceptance: this.repos.tasks.findById(run.taskId)?.status === TaskStatus.Done ? this.runs.acceptedByUser(run.taskId) : undefined,
       previewPatch: { available: this.canPreviewPatch(run), active: this.projects.hasPreviewPatch(run.id), pending: this.projects.previewPatchPending(run.id) } }; });
   }
 
@@ -117,6 +145,18 @@ export class AutomationService {
         dependencyNote: typeof value.dependencyNote === 'string' ? value.dependencyNote.slice(0, 500) : undefined } });
     });
   }
+
+  private runWithAvailableImages(run: AgentRun): AgentRun {
+    const acceptance = run.acceptance;
+    return { ...this.publicRun(run), acceptance: acceptance && { ...acceptance, results: acceptance.results.map(result => {
+      const browser = result.source?.browser;
+      if (!browser) return result;
+      const url = new URL(browser.imageUrl, 'http://workspace.invalid');
+      const file = /^\/api\/images\/([a-z\d]+\.png)$/.exec(url.pathname)?.[1];
+      return file && url.searchParams.get('workspace') === this.workspace && this.images?.resolveFile(file)
+        ? result : { ...result, source: undefined };
+    }) } };
+  }
   public integration(id: string, token: string, input: unknown): void {
     this.runs.db.transaction(() => {
       const run = this.owned(id, token); const value = input as IntegrationInfo;
@@ -127,12 +167,74 @@ export class AutomationService {
         || !Number.isInteger(value.attempt) || value.attempt < 1 || (!run.trustedExecution && value.attempt > (run.settings.maxMergeAttempts ?? 2))) throw new TrackerError('VALIDATION_FAILED', 'Invalid integration metadata.');
       if ((value.state === 'ready' || value.state === 'publishing') && !value.candidateSha) throw new TrackerError('VALIDATION_FAILED', 'Verified candidate SHA is required.');
       const now = this.clock.now();
+      const checkIds = value.checkIds;
+      if (checkIds !== undefined && (!Array.isArray(checkIds) || !value.candidateSha
+        || value.checkFingerprint !== checkFingerprint(run.settings.checks)
+        || !verifyRefs(this.runs.checks(id), checkIds, run, 'candidate', value.candidateSha, run.stage, value.attempt)))
+        throw new TrackerError('VALIDATION_FAILED', 'Candidate check evidence does not match the verified SHA and command set.');
       this.runs.save({ ...run, phase: RunPhase.Merge, phaseStartedAt: run.phase === RunPhase.Merge ? run.phaseStartedAt : now,
         budgetElapsedMs: RunBudget.elapsed(run, Date.parse(now)), budgetUpdatedAt: now,
         integration: { state: value.state, sourceSha: value.sourceSha, baseSha: value.baseSha, candidateSha: value.candidateSha,
           targetBranch: value.targetBranch, worktreePath: value.worktreePath, attempt: value.attempt, noChanges: !!value.noChanges,
+          checkIds, checkFingerprint: checkIds ? value.checkFingerprint : undefined,
           error: typeof value.error === 'string' ? value.error.slice(0, 3000) : undefined } });
-      this.runs.event(id, 'integration', `${value.state}: ${value.targetBranch} · ${value.candidateSha ?? value.baseSha}`, now);
+      const eventId = this.runs.event(id, 'integration', `${value.state}: ${value.targetBranch} · ${value.candidateSha ?? value.baseSha}`, now);
+      if (value.state === 'blocked') this.recordFailure(run, eventId, now, 'Интеграция остановлена.', false, value.candidateSha, value.attempt);
+    });
+  }
+
+  public checkExecution(id: string, token: string, input: unknown, begin = false) {
+    return this.runs.db.transaction(() => {
+      const current = this.requireRun(id);
+      const value = input as CheckExecution;
+      if (!value || typeof value.id !== 'string' || !/^[a-f\d-]{36}$/.test(value.id)
+        || !Number.isSafeInteger(value.position) || !Number.isSafeInteger(value.attempt) || value.attempt < 1
+        || !/^[a-f\d]{40,64}$/.test(value.sha) || !checkBelongsToRun(value, current)
+        || !value.outcome || !['exit', 'launch_error', 'unknown'].includes(value.outcome.kind)
+        || (value.outcome.kind === 'exit' && !Number.isSafeInteger(value.outcome.code))
+        || !Number.isFinite(Date.parse(value.at))) throw new TrackerError('VALIDATION_FAILED', 'Invalid check execution evidence.');
+      if (value.browserResults !== undefined && (value.outcome.kind !== 'exit' || value.outcome.code !== 0
+        || !Array.isArray(value.browserResults) || value.browserResults.length > SCREENSHOT_LIMIT
+        || value.browserResults.some(result => !result || !/^[a-f\d]{64}$/.test(result.imageDigest) || !SCREENSHOT_PATH.test(result.screenshot)
+          || [result.criterionId, result.action, result.assertion, result.actual].some(field => typeof field !== 'string' || !field.trim() || field.length > 500))))
+        throw new TrackerError('VALIDATION_FAILED', 'Invalid browser assertion evidence.');
+      const intent = this.runs.db.prepare('SELECT lease_hash, payload FROM automation_check_intents WHERE id = ? AND run_id = ?')
+        .get<{ lease_hash: string; payload: string }>([value.id, id]);
+      const leaseHash = createHash('sha256').update(token).digest('hex');
+      const identity = (check: CheckExecution) => {
+        const { outcome: _, browserResults: __, at: ___, ...context } = check;
+        return JSON.stringify(context);
+      };
+      if (intent && identity(JSON.parse(intent.payload) as CheckExecution) !== identity(value))
+        throw new TrackerError('CONFLICT', 'Check execution identity changed.');
+      const cancelled = !begin && current.status === RunStatus.Cancelled && !!current.userCancelledAt && intent?.lease_hash === leaseHash;
+      const run = cancelled ? current : this.owned(id, token);
+      const existing = this.runs.check(id, value.id);
+      if (existing && !begin) {
+        const { eventId: _, ...prior } = existing;
+        if (identity(prior) !== identity(value) || prior.at !== value.at || ((!cancelled || prior.outcome.kind !== 'cancelled')
+          && JSON.stringify(prior.outcome) !== JSON.stringify(value.outcome))
+          || JSON.stringify(prior.browserResults) !== JSON.stringify(value.browserResults))
+          throw new TrackerError('CONFLICT', 'Check execution identity changed.');
+        return existing;
+      }
+      if (value.phase === 'candidate' ? run.status !== RunStatus.Integrating || run.integration?.candidateSha !== value.sha
+        || run.integration.attempt !== value.attempt : value.phase !== 'stage' || run.status !== RunStatus.Running
+        || !PipelinePolicy.checkAt(run.settings, run.stage)) {
+        if (!cancelled) throw new TrackerError('CONFLICT', 'Execution belongs to a different stage or integration candidate.');
+      }
+      if (begin) {
+        if (existing || value.outcome.kind !== 'unknown' || value.browserResults || (intent && intent.lease_hash !== leaseHash))
+          throw new TrackerError('CONFLICT', 'Check execution was already started or finished.');
+        this.runs.db.prepare('INSERT OR IGNORE INTO automation_check_intents(id, run_id, lease_hash, payload) VALUES (?, ?, ?, ?)')
+          .run([value.id, id, leaseHash, JSON.stringify(value)]);
+        return { ok: true };
+      }
+      if (!intent)
+        throw new TrackerError('CONFLICT', 'Execution belongs to a different stage or integration candidate.');
+      const result = this.runs.recordCheck(cancelled && value.outcome.kind === 'unknown' ? { ...value, outcome: { kind: 'cancelled' } } : value);
+      if (!cancelled) this.runs.db.prepare('DELETE FROM automation_check_intents WHERE id = ?').run([value.id]);
+      return result;
     });
   }
   public enqueue(taskId: string, draft?: unknown, persistSettings = true): AgentRun {
@@ -380,7 +482,8 @@ export class AutomationService {
         finished: a.finished || finished, usage: sample ?? a.usage }) });
     });
   }
-  public completeStage(id: string, token: string, outcome: AgentOutcome, branch: string, commitSha: string, screenshots?: unknown, checkFailed = false): AgentRun {
+  public completeStage(id: string, token: string, outcome: AgentOutcome, branch: string, commitSha: string,
+    screenshots?: unknown, checkFailed = false, checkIds?: string[], criterionImages?: unknown): AgentRun {
     return this.runs.db.transaction(() => {
       const run = this.owned(id, token);
       if (run.status !== RunStatus.Running) throw new TrackerError('CONFLICT', 'Pipeline is already complete.');
@@ -395,6 +498,14 @@ export class AutomationService {
       let updated: AgentRun = { ...run, branch, commitSha, updatedAt: now, summary: outcome.summary,
         budgetElapsedMs: RunBudget.elapsed(run, Date.parse(now)), budgetUpdatedAt: now };
       updated.budgetApproval = undefined;
+      if (checkIds !== undefined) {
+        if (!Array.isArray(checkIds) || !PipelinePolicy.checkAt(run.settings, run.stage)
+          || !verifyRefs(this.runs.checks(id), checkIds, run, 'stage', commitSha, run.stage))
+          throw new TrackerError('VALIDATION_FAILED', 'Stage check evidence does not match the verified SHA and command set.');
+        const prior = run.stageChecks ?? [];
+        updated.stageChecks = [...prior.filter(value => value.stage !== run.stage),
+          { stage: run.stage, revision: run.revision, sha: commitSha, ids: checkIds }];
+      }
       if (profile.role === AgentRole.Router && outcome.verdict === AgentVerdict.Pass) {
         if (run.routingInputDescription !== undefined && run.routingInputDescription !== (this.tasks.getTaskCard(taskId).description ?? '')) throw new TrackerError('VALIDATION_FAILED', 'Requirements changed after routing; resume the router with the latest task.');
         let decision;
@@ -407,7 +518,28 @@ export class AutomationService {
       }
       if (run.routing && profile.role === AgentRole.Tester && outcome.verdict === AgentVerdict.Pass) {
         try {
-          const results = TaskRouting.acceptance(outcome.plan ?? '', run.routing.decision.brief);
+          const brief = run.routing.decision.brief;
+          const images = Array.isArray(criterionImages) && criterionImages.length ? this.attachStageScreenshots(taskId, criterionImages, now) : new Map<string, string>();
+          const checks = this.runs.checks(id).filter(check => checkIds?.includes(check.id));
+          const results = TaskRouting.acceptance(outcome.plan ?? '', brief).map(result => {
+            const method = brief.criteria.find(item => item.id === result.id)!.method;
+            if (method === 'manual' || result.status !== 'passed') return result;
+            for (const check of checks) {
+              const base = { checkId: check.id, eventId: check.eventId, attempt: check.attempt, sha: check.sha };
+              if (method !== 'browser' && check.position === result.checkPosition) return { ...result, source: base };
+              if (method === 'browser') {
+                for (const scenario of check.browserResults ?? []) {
+                  const imageUrl = images.get(scenario.imageDigest);
+                  if (scenario.criterionId === result.id && imageUrl) {
+                    const { action, assertion, actual } = scenario;
+                    const source: AcceptanceResult['source'] = { ...base, browser: { action, assertion, actual, imageUrl } };
+                    return { ...result, source };
+                  }
+                }
+              }
+            }
+            return result;
+          });
           updated.acceptance = { sha: commitSha, results };
           if (results.some(r => r.status === 'failed')) outcome = { ...outcome, verdict: AgentVerdict.ChangesRequested, summary: 'Acceptance criteria failed. ' + outcome.summary };
           if (results.some(r => r.status === 'manual')) this.tasks.addComment({ id: taskId, text: 'Требуется ручная проверка: ' + results.filter(r => r.status === 'manual').map(r => r.id).join(', '), kind: 'note', actor: 'agent' });
@@ -515,25 +647,34 @@ export class AutomationService {
         this.runs.event(id, 'route', kind === 'exhausted' ? updated.summary
           : `Этап ${from + 1} → ${destination}. ${kind === 'retry' ? `Возврат ${updated.routeRetries?.[from]}/${PipelinePolicy.route(run.settings, from)?.retry?.limit}. ${outcome.summary}` : 'Проверка пройдена.'}`, now);
       }
-      this.runs.event(id, updated.status === RunStatus.Failed ? 'failed' : outcome.verdict, updated.summary, now);
+      const eventId = this.runs.event(id, updated.status === RunStatus.Failed ? 'failed' : outcome.verdict, updated.summary, now);
+      if (outcome.verdict === AgentVerdict.ChangesRequested || updated.status === RunStatus.Failed) {
+        const failedCheck = this.failedCheck(run, 'stage', commitSha);
+        this.recordFailure(run, failedCheck?.eventId ?? eventId, now,
+          failedCheck ? 'Обязательная проверка завершилась отказом.' : 'Этап потребовал исправления по итогам проверки.',
+          outcome.verdict === AgentVerdict.ChangesRequested, commitSha, failedCheck?.attempt);
+      }
       this.tasks.addComment({ id: taskId, text: `[AGENT ${profile.role}] ${outcome.summary}\nBranch: ${branch}\nCommit: ${commitSha}`, kind: 'note', actor: 'agent' });
       if (screenshots !== undefined) this.attachStageScreenshots(taskId, screenshots, now);
       return updated;
     });
   }
-  private attachStageScreenshots(taskId: string, screenshots: unknown, now: string): void {
+  private attachStageScreenshots(taskId: string, screenshots: unknown, now: string): Map<string, string> {
     if (!this.images || !Array.isArray(screenshots) || screenshots.length > SCREENSHOT_LIMIT
       || screenshots.some(image => typeof image !== 'string' || image.length > SCREENSHOT_MAX_ENCODED_LENGTH
         || !/^data:image\/png;base64,iVBORw0KGg[A-Za-z0-9+/]*={0,2}$/.test(image))) {
       throw new TrackerError('VALIDATION_FAILED', 'Invalid stage screenshots.');
     }
+    const urls = new Map<string, string>();
     for (const image of new Set<string>(screenshots)) {
       const stored = this.images.storeDataUrl(image, true);
       const url = `${stored.url}?workspace=${encodeURIComponent(this.workspace)}`;
       if (!this.repos.images.listByTask(taskId).some(existing => existing.url === url)) this.repos.images.add(taskId, url, now);
+      urls.set(createHash('sha256').update(image).digest('hex'), url);
     }
+    return urls;
   }
-  public fail(id: string, token: string, message: string, recoveryError?: string): void {
+  public fail(id: string, token: string, message: string, recoveryError?: string, evidence?: unknown): void {
     return this.runs.db.transaction(() => {
     const run = this.requireRun(id);
     if (!token || run.leaseToken !== token || !OWNED_RUN_STATUSES.includes(run.status)) throw new TrackerError('CONFLICT', 'Run is no longer owned by this worker.');
@@ -547,9 +688,37 @@ export class AutomationService {
       status: run.status === RunStatus.Integrating ? RunStatus.MergeBlocked : RunStatus.Failed,
       integration: run.integration ? { ...run.integration, state: 'blocked', error: message } : undefined, finishedAt: now,
       leaseToken: null, updatedAt: now, summary: message });
-    this.runs.event(id, RunStatus.Failed, message, now);
+    const eventId = this.runs.event(id, RunStatus.Failed, message, now);
+    const phase = run.status === RunStatus.Integrating ? 'candidate' : 'stage';
+    const sha = (phase === 'candidate' ? run.integration?.candidateSha : run.commitSha) ?? undefined;
+    const check = this.failedCheck(run, phase, sha);
+    const suppliedScripts = (evidence as { missingCheckScripts?: unknown } | undefined)?.missingCheckScripts;
+    const configured = configuredCheckScripts(run.settings.checks);
+    const missing = Array.isArray(suppliedScripts) && suppliedScripts.length && suppliedScripts.every(name =>
+      typeof name === 'string' && /^[\w:.-]{1,128}$/.test(name) && configured.includes(name))
+      ? [...new Set<string>(suppliedScripts)].sort() : undefined;
+    const cause = missing && { key: createHash('sha256').update(JSON.stringify(['missing_check_scripts', run.settings.repositoryPath,
+      run.settings.baseBranch, missing])).digest('hex'), description: `В package.json отсутствуют скрипты ${missing.join(', ')}.` };
+    this.recordFailure(run, cause ? eventId : check?.eventId ?? eventId, now,
+      cause ? 'Проверка наличия обязательных скриптов остановила запуск.' : check ? 'Обязательная проверка завершилась отказом.' : 'Выполнение остановлено с ошибкой.',
+      !!check || !!cause, check?.sha ?? sha, check?.attempt ?? run.integration?.attempt, cause || undefined);
     this.tasks.addComment({ id: run.taskId, text: `[AUTOMATION FAILED] ${message}`, actor: 'agent' });
     });
+  }
+  private failedCheck(run: AgentRun, phase: CheckExecution['phase'], sha?: string) {
+    return this.runs.checks(run.id).reverse().find(check => checkBelongsToRun(check, run) && check.phase === phase
+      && (sha === undefined || phase === 'stage' || check.sha === sha)
+      && (phase !== 'candidate' || check.attempt === run.integration?.attempt)
+      && (check.outcome.kind === 'launch_error' || (check.outcome.kind === 'exit' && check.outcome.code !== 0)));
+  }
+  private recordFailure(run: AgentRun, eventId: number, at: string, fact: string, technicalRejection: boolean, sha?: string,
+    attempt?: number, cause?: { key: string; description: string }): void {
+    const profile = run.settings.agents.find(agent => agent.id === run.settings.pipeline[run.stage]);
+    const attempts = run.usageAttempts ?? [];
+    this.improvements.recordOccurrence({ runId: run.id, eventId, taskId: Decomposition.child(run)?.taskId ?? run.taskId, at, fact, sha,
+      attempt: attempt ?? (attempts.length || undefined), revision: run.revision, phase: run.phase ?? run.status,
+      role: profile?.role, executor: profile && `${profile.runner} / ${profile.model}`, technicalRejection, cause,
+      recommendation: cause && 'Согласовать имена обязательных команд в настройках с текущим package.json.' });
   }
   public cancel(id: string): void {
     return this.runs.db.transaction(() => {
@@ -558,7 +727,7 @@ export class AutomationService {
     if (run.status === RunStatus.Integrating && run.integration?.state === 'publishing') throw new TrackerError('CONFLICT', 'Squash publication is already authorized; wait for its result before cancelling.');
     const now = this.clock.now();
     this.runs.save({ ...run, budgetElapsedMs: RunBudget.elapsed(run, Date.parse(now)), budgetUpdatedAt: now,
-      status: RunStatus.Cancelled, leaseToken: null, updatedAt: now, finishedAt: now });
+      status: RunStatus.Cancelled, leaseToken: null, updatedAt: now, finishedAt: now, userCancelledAt: now });
     this.runs.event(id, RunStatus.Cancelled, 'Остановлено пользователем. Worker отменит текущую операцию после проверки lease.', now);
     });
   }
@@ -567,7 +736,7 @@ export class AutomationService {
       const run = this.requireRun(id);
       if (run.status !== RunStatus.Queued) throw new TrackerError('CONFLICT', 'Запуск уже покинул очередь. Обновите состояние; выполняющийся запуск можно остановить отдельно.');
       const now = this.clock.now();
-      this.runs.save({ ...run, status: RunStatus.Cancelled, leaseToken: null, summary: 'Убрано из очереди. Задача и журнал сохранены.', updatedAt: now, finishedAt: now });
+    this.runs.save({ ...run, status: RunStatus.Cancelled, leaseToken: null, summary: 'Убрано из очереди. Задача и журнал сохранены.', updatedAt: now, finishedAt: now, userCancelledAt: now });
       this.runs.event(id, RunStatus.Cancelled, 'Убрано из очереди пользователем. Задача и журнал сохранены.', now);
     });
   }
@@ -1012,13 +1181,24 @@ export class AutomationService {
   public async diagnoseFix(id: string): Promise<ProposedFix> {
     const run = this.requireRun(id);
     if (!RESUMABLE_RUN_STATUSES.includes(run.status)) throw new TrackerError('CONFLICT', 'Анализ доступен после остановки запуска.');
+    const occurrence = this.runs.latestOccurrence(id);
+    const origin = occurrence && this.runs.eventById(id, occurrence.eventId);
     const events = this.runs.events(id).map(e => e.text);
+    if (origin && !events.includes(origin.text)) events.unshift(origin.text);
     const fix = await this.doctor.diagnose(run, events);
     if (fix.diagnosis?.confidence !== 'unknown' && fix.action === 'advice_only' && this.doctorRepairStage(run) !== undefined) fix.action = 'repair_stage';
-    const current = this.requireRun(id);
-    if (current.status !== run.status || current.updatedAt !== run.updatedAt) throw new TrackerError('CONFLICT', 'Запуск изменился во время диагностики.');
-    this.runs.save({ ...current, proposedFix: fix });
-    return fix;
+    return this.runs.db.transaction(() => {
+      const current = this.requireRun(id);
+      if (current.status !== run.status || current.updatedAt !== run.updatedAt || current.revision !== run.revision
+        || this.runs.latestOccurrence(id)?.eventId !== occurrence?.eventId)
+        throw new TrackerError('CONFLICT', 'Запуск изменился во время диагностики.');
+      if (occurrence) {
+        fix.occurrenceEventId = occurrence.eventId;
+        this.improvements.recommend(occurrence, `${fix.title}. ${fix.explanation}`);
+      }
+      this.runs.save({ ...current, proposedFix: fix });
+      return fix;
+    });
   }
 
   private doctorRepairStage(run: AgentRun): number | undefined {

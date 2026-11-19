@@ -130,7 +130,7 @@
     (onHide)="closeQueueTask()" [style]="{ width: '100vw', maxWidth: '100vw', height: '100dvh', maxHeight: '100dvh', margin: '0' }" [contentStyle]="{ overflow: 'hidden', display: 'flex', minHeight: '0' }">
     @if (showQueue) {
       @defer (on immediate) {
-        <sat-automation-queue #queue [runId]="queueRunId" [attr.inert]="queueTask() && store.openTask() ? '' : null"
+        <sat-automation-queue #queue [runId]="queueRunId" [eventId]="queueEventId" [attr.inert]="queueTask() && store.openTask() ? '' : null"
           (openTask)="openQueueTask($event)" (resumedFromCard)="closeQueueTask()"
           (configure)="showQueue = false; openAutomation()" (changed)="store.refresh(true)" />
         @if (queueTask(); as origin) {

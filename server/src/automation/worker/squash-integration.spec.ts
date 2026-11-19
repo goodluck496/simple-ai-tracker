@@ -104,3 +104,32 @@ test('checks that edit tracked content cannot publish', async () => {
     assert.equal((await f.git(['rev-parse', 'HEAD'])).trim(), before);
   } finally { await f.dispose(); }
 });
+test('integration receipt is reused only when checkFingerprint and verifyChecks match', async () => {
+  const f = await gitFixture();
+  try {
+    const source = await f.branch('task1', 'a.txt', ['1\n']);
+    let checkRuns = 0;
+    source.job.checkFingerprint = 'fp-v1';
+    source.job.checks = async (_cwd, sha, attempt) => {
+      checkRuns++;
+      assert.ok(sha && sha.length === 40);
+      assert.equal(attempt, 1);
+      return [`check-${checkRuns}`];
+    };
+    source.job.verifyChecks = async () => true;
+    const first = await new SquashIntegration().run(source.job);
+    assert.equal(checkRuns, 1);
+    assert.deepEqual(first.checkIds, ['check-1']);
+
+    // Replay with matching fingerprint and verifyChecks=true does not re-run checks
+    const replayed = await new SquashIntegration().run(source.job);
+    assert.equal(checkRuns, 1);
+    assert.equal(replayed.candidateSha, first.candidateSha);
+
+    // Replay with changed fingerprint re-runs checks on published candidate
+    source.job.checkFingerprint = 'fp-v2';
+    const rechecked = await new SquashIntegration().run(source.job);
+    assert.equal(checkRuns, 2);
+    assert.deepEqual(rechecked.checkIds, ['check-2']);
+  } finally { await f.dispose(); }
+});

@@ -14,7 +14,9 @@ export interface IntegrationJob {
   signal: AbortSignal;
   recoveryOnly?: boolean;
   prepare(cwd: string): Promise<void>;
-  checks(cwd: string): Promise<void>;
+  checks(cwd: string, candidateSha: string, attempt: number): Promise<string[] | void>;
+  checkFingerprint?: string;
+  verifyChecks?(candidateSha: string, attempt: number, ids: string[]): Promise<boolean>;
   resolve(cwd: string, files: string[], baseSha: string): Promise<void>;
   authorize(): Promise<void>;
   record(info: IntegrationInfo): Promise<void>;
@@ -51,6 +53,15 @@ export class SquashIntegration {
       if (value.checked && !value.noChanges) await RunWorkspace.atomic(sourceFile, value);
       await job.record(value);
     };
+    const verified = async (value: Receipt) => value.checked && !!value.candidateSha
+      && (!job.verifyChecks || (value.checkFingerprint === job.checkFingerprint && !!value.checkIds
+        && await job.verifyChecks(value.candidateSha, value.attempt, value.checkIds)));
+    const check = async (value: Receipt, cwd: string) => {
+      await job.prepare(cwd);
+      const ids = await job.checks(cwd, value.candidateSha!, value.attempt);
+      if (!await candidateUnchanged(cwd, value.candidateSha!)) throw new Error('Integration checks changed the tested tree.');
+      await write({ ...value, state: 'ready', checked: true, checkIds: ids || undefined, checkFingerprint: job.checkFingerprint });
+    };
     const ancestor = async (sha: string, target: string) => {
       try { await git(['merge-base', '--is-ancestor', sha, target]); return true; }
       catch (error) { if (String(error).includes('failed (1)')) return false; throw error; }
@@ -58,16 +69,26 @@ export class SquashIntegration {
     let previous: Receipt | undefined;
     try { previous = JSON.parse(await fs.readFile(sourceFile, 'utf8')) as Receipt; }
     catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
-    if (previous?.checked && previous.candidateSha && await ancestor(previous.candidateSha, await head())) {
-      if (previous.contextKey !== job.contextKey) throw new Error('This source was already published under different requirements; inspect the task rather than applying it twice.');
-      await job.authorize(); await write({ ...previous, attempt: receipt?.attempt ?? 1, state: 'publishing' }); return receipt!;
+    const published = receipt?.candidateSha && await ancestor(receipt.candidateSha, await head()) ? receipt
+      : previous?.checked && previous.candidateSha && await ancestor(previous.candidateSha, await head()) ? previous : undefined;
+    if (published) {
+      if (published.contextKey !== job.contextKey || published.sourceSha !== job.sourceSha || published.targetBranch !== job.targetBranch)
+        throw new Error('This source was already published under different requirements; inspect the task rather than applying it twice.');
+      await job.authorize();
+      if (!await verified(published)) {
+        if (job.recoveryOnly) throw new Error('Budget exhausted: the published candidate requires mandatory checks.');
+        const cwd = job.directory + '-integration-verified';
+        if (!await fs.stat(cwd).then(() => true, error => { if (error.code === 'ENOENT') return false; throw error; }))
+          await git(['worktree', 'add', '--detach', cwd, published.candidateSha!]);
+        if (!await candidateUnchanged(cwd, published.candidateSha!)) throw new Error('Published candidate verification worktree changed.');
+        const pending = { ...published, worktreePath: cwd, state: 'checking' as const, checked: false };
+        await write(pending);
+        await check(pending, cwd);
+      } else receipt = published;
+      await job.authorize(); await write({ ...receipt!, state: 'publishing' }); return receipt!;
     }
     if (receipt && (receipt.sourceSha !== job.sourceSha || receipt.contextKey !== job.contextKey || receipt.targetBranch !== job.targetBranch))
       throw new Error('Integration receipt belongs to different source/requirements; preserve it and inspect the run.');
-    if (receipt?.checked && receipt.candidateSha && await ancestor(receipt.candidateSha, await head())) {
-      // Crash after Git publication but before tracker acknowledgement: do not squash twice.
-      await job.authorize(); await write({ ...receipt, state: 'publishing' }); return receipt;
-    }
     if (job.recoveryOnly) throw new Error('Budget exhausted: no published receipt can be acknowledged without executing more work. Restart integration explicitly for a new budget.');
     for (let attempt = receipt?.attempt ?? 1; job.maxAttempts === undefined || attempt <= job.maxAttempts; attempt++) {
       job.signal.throwIfAborted(); await job.authorize();
@@ -124,13 +145,7 @@ export class SquashIntegration {
         }
         await write({ ...receipt!, state: 'checking', candidateSha: (await git(['rev-parse', 'HEAD'], cwd)).trim(), noChanges: !changed });
       }
-      if (!receipt!.checked) {
-        await job.prepare(cwd);
-        await job.checks(cwd);
-        if (!await candidateUnchanged(cwd, receipt!.candidateSha!))
-          throw new Error('Integration checks changed the tested tree.');
-        await write({ ...receipt!, state: 'ready', checked: true });
-      }
+      if (!await verified(receipt!)) await check(receipt!, cwd);
       await job.authorize();
       if (await head() !== base) { receipt = { ...receipt!, state: 'ready' }; continue; }
       if ((await git(['branch', '--show-current'])).trim() !== job.targetBranch || (await git(['status', '--porcelain'])).trim())

@@ -8,7 +8,19 @@ export interface RoutingDecision {
   assignments: { stage: number; profileId: string; reason: string }[];
 }
 export interface RoutingSnapshot { decision: RoutingDecision; sourceDescription: string; createdAt: string; }
-export interface AcceptanceResult { id: string; status: 'passed' | 'failed' | 'manual'; evidence: string; }
+export interface AcceptanceResult {
+  id: string;
+  status: 'passed' | 'failed' | 'manual';
+  evidence: string;
+  checkPosition?: number;
+  source?: {
+    checkId: string;
+    eventId: number;
+    sha: string;
+    attempt: number;
+    browser?: { action: string; assertion: string; actual: string; imageUrl: string };
+  };
+}
 const text = (value: unknown, max = 4000): value is string => typeof value === 'string' && !!value.trim() && value.length <= max;
 
 /** Validate model suggestions before they can influence a run. Never grants new stages or budgets. */
@@ -59,7 +71,8 @@ export class TaskRouting {
         || (item.status === 'manual' && criterion.method !== 'manual') || (criterion.method === 'manual' && item.status !== 'manual')) throw new Error('Invalid acceptance result.');
       ids.add(item.id);
     }
-    return value.results.map(({id, status, evidence}) => ({id, status, evidence}));
+    return value.results.map(({ id, status, evidence, checkPosition }) => ({ id, status, evidence,
+      ...(status !== 'manual' && Number.isSafeInteger(checkPosition) && checkPosition! >= 0 ? { checkPosition } : {}) }));
   }
   public static readonly instructions = 'Return plan as a JSON string containing {version:1,complexity:"simple|normal|complex",risk:"low|medium|high",uncertainty:"low|medium|high",reason:"evidence-based explanation",brief:{goal:"observable outcome",scope:"boundaries",criteria:[{id:"AC-1",requirement:"observable behavior",method:"unit|integration|browser|manual"}]},assignments:[{stage:1,profileId:"approved profile ID",reason:"why"}]}. Stage indexes are zero-based. Assign only future stages to explicitly approved profiles of the SAME role. Empty assignments preserves all profiles. Never invent model capabilities or requirements, change budgets, or write sources. Ask questions for missing user decisions. Browser criteria require actual interaction and assertions; manual criteria are reserved for checks requiring human input. Inspect focused code when needed. High uncertainty requires questions or an analyst stage before development.';
 }

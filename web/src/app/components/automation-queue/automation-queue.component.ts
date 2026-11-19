@@ -1,7 +1,7 @@
 import { RunProfileEditorComponent } from './run-profile-editor.component';
 import { DialogModule } from 'primeng/dialog';
 import type { ProposedFix } from '../../../../../shared/automation/contracts';
-import { ChangeDetectionStrategy, Component, DestroyRef, EventEmitter, Input, Output, computed, effect, inject, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, DestroyRef, ElementRef, EventEmitter, Input, Output, afterRenderEffect, computed, effect, inject, signal } from '@angular/core';
 import { DatePipe, DecimalPipe } from '@angular/common';
 import { TableModule } from 'primeng/table';
 import { ButtonModule } from 'primeng/button';
@@ -21,7 +21,7 @@ import { RunActivityComponent } from './run-activity.component';
 import { ACTIVITY_TIMING } from '../../../../../shared/automation/queue-activity';
 import { HttpClient } from '@angular/common/http';
 import { takeUntilDestroyed, toObservable, toSignal } from '@angular/core/rxjs-interop';
-import { EMPTY, Subject, catchError, combineLatest, exhaustMap, filter, finalize, map, merge, of, switchMap, take, tap, timeout, timer, type Observable } from 'rxjs';
+import { EMPTY, Subject, catchError, combineLatest, defer, exhaustMap, filter, finalize, map, merge, of, switchMap, take, tap, timeout, timer, type Observable } from 'rxjs';
 import { AUTOMATION_TIMING, EVIDENCE_AGENT_ROLES, RESUMABLE_RUN_STATUSES, RunStatus, RunAction, type AgentRun, type AutomationSettings, type RunEvent } from '../../../../../shared/automation/contracts';
 import { QUEUE_LANES, QUEUE_LIMITS, RUN_EVENT_TITLES, RUN_PHASE_TITLES, RUN_STATUS_TITLES, INTEGRATION_STATE_TITLES, QueuePresentation, RunProgressText,
   type QueueItem, type QueueSnapshot, type QueueLane } from '../../../../../shared/automation/queue';
@@ -32,17 +32,30 @@ import { filterQueueItems } from './queue-search';
 import { formatQueueDate, sortRunHistory } from './queue-dates';
 
 import { PipelineFlowComponent } from '../automation-panel/pipeline-flow.component';
+import { AutomationMetricsComponent } from './automation-metrics.component';
+import type { CheckEvidence, ImprovementOccurrence, ImprovementPeriod } from '../../../../../shared/automation/improvement-metrics';
+import { publicUrl } from '../../services/public-url';
 
-@Component({ selector: 'sat-automation-queue', standalone: true, imports: [RunProfileEditorComponent, DatePipe, DecimalPipe, RunConsoleComponent, RunActivityComponent, TableModule, ButtonModule, FormsModule, CheckboxModule, DialogModule, SelectModule, PanelModule, InputTextModule, InputNumberModule, PipelineFlowComponent],
+@Component({ selector: 'sat-automation-queue', standalone: true, imports: [RunProfileEditorComponent, DatePipe, DecimalPipe, RunConsoleComponent, RunActivityComponent, TableModule, ButtonModule, FormsModule, CheckboxModule, DialogModule, SelectModule, PanelModule, InputTextModule, InputNumberModule, PipelineFlowComponent, AutomationMetricsComponent],
   changeDetection: ChangeDetectionStrategy.OnPush, templateUrl: './automation-queue.component.html', styleUrl: './automation-queue.component.scss' })
 export class AutomationQueueComponent {
+  private readonly element = inject<ElementRef<HTMLElement>>(ElementRef);
   private readonly http = inject(HttpClient);
   private readonly destroyRef = inject(DestroyRef);
   private readonly workspace = inject(WorkspaceService);
   private readonly refresh = new Subject<void>();
   public readonly selectedId = signal<string | null>(null);
-  @Input() public set runId(value: string | null) { this.selectedId.set(value); if (value) this.historyMode.set(true); }
+  @Input() public set runId(value: string | null) { this.selectedOccurrence.set(null); this.sourceEventId.set(null); this.metricsMode.set(false); this.selectedId.set(value); if (value) this.historyMode.set(true); }
+  @Input() public set eventId(value: number | null) { this.sourceEventId.set(value); }
   public readonly historyMode = signal(false);
+  public readonly metricsMode = signal(false);
+  public readonly selectedOccurrence = signal<ImprovementOccurrence | null>(null);
+  public readonly metricsPeriod = signal<ImprovementPeriod | null>(null);
+  public readonly evidenceLoading = signal(false);
+  public readonly evidenceError = signal('');
+  public readonly sourceEventId = signal<number | null>(null);
+  public readonly evidenceImageUrl = publicUrl;
+  private readonly selectedEventId = computed(() => this.selectedOccurrence()?.eventId ?? this.sourceEventId());
   public readonly historyTask = signal('');
   public readonly showDetails = signal(false);
   public readonly leftSidebarOpen = signal(true);
@@ -127,12 +140,37 @@ export class AutomationQueueComponent {
     if (detail?.id === id && (!snapshot || detail.updatedAt >= snapshot.updatedAt)) return detail;
     return snapshot ?? (this.selectedCache()?.id === id ? this.selectedCache() : undefined);
   });
-  public readonly detail = toSignal(combineLatest([toObservable(this.selectedId), merge(timer(0, AUTOMATION_TIMING.pollMs), this.refresh)]).pipe(
-    switchMap(([id]) => id ? this.http.get<{ run: AgentRun; item?: QueueItem; events: RunEvent[];
-      previewPatch: { available: boolean; active: boolean; pending: boolean } }>(`/api/automation/runs/${id}`).pipe(
-      catchError((error: unknown) => { this.error.set(this.message(error)); return of(null); }),
-    ) : of(null)),
+  public readonly detail = toSignal(combineLatest([toObservable(this.selectedId), toObservable(this.selectedEventId), toObservable(this.workspace.current), merge(timer(0, AUTOMATION_TIMING.pollMs), this.refresh)]).pipe(
+    switchMap(([id, eventId, workspace]) => id ? defer(() => {
+      this.evidenceLoading.set(true);
+      this.evidenceError.set('');
+      return this.http.get<{ run: AgentRun; item?: QueueItem; events: RunEvent[]; selectedEvent?: RunEvent;
+      checks?: CheckEvidence[]; selectedOccurrence?: ImprovementOccurrence; userAcceptance?: { id: number; at: string };
+      previewPatch: { available: boolean; active: boolean; pending: boolean } }>(`/api/automation/runs/${encodeURIComponent(id)}${eventId === null ? '' : '?eventId=' + eventId}`).pipe(
+      filter(response => this.workspace.current() === workspace && this.selectedId() === id && this.selectedEventId() === eventId),
+      catchError((error: unknown) => {
+        this.evidenceError.set(this.message(error));
+        if (eventId === null) this.error.set(this.message(error));
+        return of(null);
+      }),
+      finalize(() => this.evidenceLoading.set(false)),
+    ); }) : of(null)),
   ), { initialValue: null });
+  public readonly displayedOccurrence = computed(() => {
+    const occurrence = this.detail()?.selectedOccurrence;
+    return occurrence?.runId === this.selectedId() && occurrence?.eventId === this.selectedEventId()
+      ? occurrence : this.selectedOccurrence();
+  });
+  public readonly selectedCheck = computed(() => {
+    const detail = this.detail();
+    return detail?.run.id === this.selectedId() ? detail?.checks?.find(check => check.eventId === this.sourceEventId()) : undefined;
+  });
+  public readonly selectedEvidence = computed(() => {
+    const occurrence = this.displayedOccurrence(); const detail = this.detail();
+    if (!occurrence || detail?.run.id !== occurrence.runId) return null;
+    const event = detail.selectedEvent ?? detail.events.find(event => event.id === occurrence.eventId);
+    return event?.id === occurrence.eventId && event.runId === occurrence.runId ? event : null;
+  });
   public readonly laneItems = computed(() => {
     const raw = this.snapshot().items;
     const history = this.historyMode();
@@ -267,7 +305,10 @@ export class AutomationQueueComponent {
   public currentRole(item: QueueItem): string { return item.status === RunStatus.Integrating ? 'Интеграция' : item.phase === 'waiting-slot' ? 'Ожидание слота' : this.role(item.pipeline.at(item.stage)?.role ?? ''); }
   public duration(at: string | undefined): string { return at ? `${Math.max(0, Math.floor((this.now() - Date.parse(at)) / 1000))} с` : 'нет данных'; }
   public progress(text: string): string { return RunProgressText.format(text); }
-  public select(id: string): void { this.selectedCache.set(this.snapshot().items.find(run => run.id === id)); this.selectedId.set(id); this.error.set(''); this.confirmation.set(null); }
+  public select(id: string, occurrence: ImprovementOccurrence | null = null): void { this.metricsMode.set(false); this.selectedOccurrence.set(occurrence); this.sourceEventId.set(null); this.selectedCache.set(this.snapshot().items.find(run => run.id === id)); this.selectedId.set(id); this.error.set(''); this.confirmation.set(null); }
+  public viewMetrics(): void { this.metricsMode.set(true); this.clearMetricSelection(); this.showDetails.set(false); }
+  public clearMetricSelection(): void { this.selectedOccurrence.set(null); this.sourceEventId.set(null); this.selectedId.set(null); this.selectedCache.set(undefined); this.error.set(''); }
+  public inspectOccurrence(occurrence: ImprovementOccurrence): void { this.select(occurrence.runId, occurrence); this.historyMode.set(true); this.showDetails.set(false); }
   public toggleLeftSidebar(): void { this.leftSidebarOpen.update(v => !v); }
   private loadInspectorWidth(): number {
     try {
@@ -320,10 +361,18 @@ export class AutomationQueueComponent {
       localStorage.setItem('sat-queue-inspector-width', String(this.inspectorWidth()));
     } catch {}
   }
-  public switchMode(history: boolean): void { this.historyMode.set(history); if (!history) this.historyTask.set(''); this.activeLaneFilter.set('all'); }
+  public switchMode(history: boolean): void { this.metricsMode.set(false); this.selectedOccurrence.set(null); this.sourceEventId.set(null); this.historyMode.set(history); if (!history) this.historyTask.set(''); this.activeLaneFilter.set('all'); }
+  public checkOutcome(check: CheckEvidence): string {
+    switch (check.outcome.kind) {
+      case 'exit': return `Код выхода ${check.outcome.code}`;
+      case 'launch_error': return 'Ошибка запуска процесса';
+      case 'cancelled': return 'Отменено пользователем';
+      case 'unknown': return 'Исход неизвестен';
+    }
+  }
   public filteredLanes() { return this.activeLaneFilter() === 'all' ? this.visibleLanes() : this.visibleLanes().filter(lane => lane.id === this.activeLaneFilter()); }
   public totalActive(): number { return this.items('queued').length + this.items('running').length; }
-  public viewHistory(taskId = ''): void { this.historyTask.set(taskId); this.historyMode.set(true); this.refresh.next(); }
+  public viewHistory(taskId = ''): void { this.switchMode(true); this.historyTask.set(taskId); this.refresh.next(); }
   public visibleLanes() { return this.historyMode() ? this.lanes : this.lanes.filter(lane => lane.id === 'queued' || lane.id === 'running'); }
   public manage(item: QueueItem): boolean { return !['queued', 'running', 'integrating', 'waiting'].includes(item.status); }
   public requestConfirmation(action: 'cleanup' | 'delete'): void { this.confirmation.set(action); this.discard = false; }
@@ -337,10 +386,13 @@ export class AutomationQueueComponent {
     });
   }
   constructor() {
+    afterRenderEffect(() => {
+      if (this.selectedOccurrence()) this.element.nativeElement.querySelector<HTMLElement>('#evidence-heading')?.focus();
+    });
     let current = this.workspace.current();
     effect(() => {
       const next = this.workspace.current();
-      if (next !== current) { current = next; this.search.set(''); this.selectedId.set(null); this.selectedCache.set(undefined); this.archived.set(null); this.historyTask.set(''); this.historyMode.set(false); }
+      if (next !== current) { current = next; this.search.set(''); this.clearMetricSelection(); this.metricsPeriod.set(null); this.archived.set(null); this.historyTask.set(''); this.historyMode.set(false); }
     });
     effect(() => {
       const run = this.detail()?.run;
@@ -348,7 +400,7 @@ export class AutomationQueueComponent {
     });
     effect(() => {
       const items = this.snapshot().items;
-      if (!this.selectedId() && items.length > 0) {
+      if (!this.metricsMode() && !this.selectedId() && items.length > 0) {
         const running = items.find(i => i.status === RunStatus.Running || i.status === RunStatus.Integrating) ?? items[0];
         if (running) {
           this.selectedId.set(running.id);

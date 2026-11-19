@@ -25,6 +25,10 @@ export class ProcessExecutionError extends Error {
     public readonly stdout: string, public readonly stderr: string) { super(message); }
 }
 
+export class ProcessLaunchError extends Error {
+  public constructor(cause: Error) { super(cause.message, { cause }); }
+}
+
 /** Executes argv without a shell, including npm shims on Windows. */
 export class ProcessExecutor {
   public run(request: ProcessRequest): Promise<string> {
@@ -93,7 +97,7 @@ export class ProcessExecutor {
       });
       child.stdin?.on('error', () => undefined);
       child.stdin?.end(request.stdin ?? '');
-      child.once('error', (error) => { clearTimeout(warningTimer); clearTimeout(idleTimer); clearInterval(progressTimer); request.signal.removeEventListener('abort', abort); reject(error); });
+      child.once('error', (error) => { clearTimeout(warningTimer); clearTimeout(idleTimer); clearInterval(progressTimer); request.signal.removeEventListener('abort', abort); reject(new ProcessLaunchError(error)); });
       child.once('close', (code) => {
         clearTimeout(warningTimer);
         clearTimeout(idleTimer);

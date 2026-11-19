@@ -18,6 +18,8 @@ export const MIGRATIONS: readonly Migration[] = [
   { version: version002, name: name002, sql: sql002 },
   { version: version003, name: name003, sql: sql003 },
   { version: version004, name: name004, sql: sql004 },
+  { version: version005, name: name005, sql: sql005 },
 ];
 
 export const LATEST_SCHEMA_VERSION = MIGRATIONS.reduce((max, migration) => Math.max(max, migration.version), 0);
+import { version as version005, name as name005, sql as sql005 } from './005-automation-improvements.js';

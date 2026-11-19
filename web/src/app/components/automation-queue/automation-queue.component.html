@@ -1,4 +1,4 @@
-<div class="queue-layout" [class.left-collapsed]="!leftSidebarOpen()" [class.inspector-open]="showDetails()">
+<div class="queue-layout" [class.left-collapsed]="!leftSidebarOpen()" [class.inspector-open]="showDetails()" [class.metrics-open]="metricsMode()" [class.evidence-open]="selectedOccurrence()">
   <!-- LEFT SIDEBAR: Очередь и список запусков -->
   <aside class="queue-sidebar" [class.collapsed]="!leftSidebarOpen()" aria-label="Очередь запусков">
     <div class="sidebar-top">
@@ -6,6 +6,7 @@
         <div class="mode-toggles">
           <button pButton size="small" [severity]="!historyMode() ? 'primary' : 'secondary'" [text]="historyMode()" (click)="switchMode(false)">Рабочая очередь</button>
           <button pButton size="small" [severity]="historyMode() ? 'primary' : 'secondary'" [text]="!historyMode()" (click)="viewHistory()">История</button>
+          <button pButton type="button" size="small" severity="secondary" [text]="true" (click)="viewMetrics()">Метрики</button>
         </div>
         <div class="mode-actions">
           <button pButton size="small" severity="secondary" [text]="true" icon="pi pi-cog" (click)="configure.emit()" title="Настройки команды и worker"></button>
@@ -117,7 +118,59 @@
   </aside>
 
   <!-- MAIN AREA: Заголовок запуска + Полноэкранный журнал -->
-  <main class="queue-main" aria-label="Выбранный запуск">
+  <main class="queue-main" [attr.aria-label]="metricsMode() ? 'Метрики автоматизации' : 'Выбранный запуск'">
+    @if (metricsMode()) {
+      <sat-automation-metrics [savedPeriod]="metricsPeriod()" (navigate)="$event === 'history' ? viewHistory() : switchMode(false)" (inspect)="inspectOccurrence($event)" (openTask)="openTask.emit($event)" (periodChanged)="metricsPeriod.set($event); clearMetricSelection()" />
+    } @else {
+    @if (displayedOccurrence(); as occurrence) {
+      <section class="selected-evidence" aria-labelledby="evidence-heading" tabindex="0">
+        <nav aria-label="Вернуться к представлению">
+          <button pButton type="button" size="small" severity="secondary" [outlined]="true" (click)="viewMetrics()" icon="pi pi-arrow-left">К метрикам</button>
+          <button pButton type="button" size="small" severity="secondary" [text]="true" (click)="switchMode(false)">Рабочая очередь</button>
+          <button pButton type="button" size="small" severity="secondary" [text]="true" (click)="viewHistory()">История</button>
+        </nav>
+        <h2 id="evidence-heading" tabindex="-1">Событие №{{ occurrence.eventId }} · {{ occurrence.taskId }}</h2>
+        <p class="evidence-meta">{{ occurrence.at | date:'dd.MM.yyyy HH:mm:ss' }} · {{ occurrence.phase }}@if (occurrence.role) { · {{ occurrence.role }} }@if (occurrence.executor) { · {{ occurrence.executor }} }</p>
+        <dl class="evidence-context" aria-label="Контекст исходного события">
+          <div><dt>Запуск</dt><dd>{{ occurrence.runId }}</dd></div>
+          <div><dt>Попытка</dt><dd>{{ occurrence.attempt ?? 'Не записана' }}</dd></div>
+          <div><dt>SHA источника</dt><dd>{{ occurrence.sha || 'Не записан' }}</dd></div>
+        </dl>
+        @if (!occurrence.attempt || !occurrence.sha) {
+          <p class="evidence-meta">Контекст доказательства неполный. Это событие само по себе не подтверждает проверку текущей версии.</p>
+        }
+        @if (selectedEvidence(); as event) {
+          <p-panel header="Наблюдаемый факт"><p class="evidence-fact">{{ event.text }}</p></p-panel>
+        } @else if (evidenceLoading()) {
+          <p role="status">Загрузка исходного события…</p>
+        } @else if (evidenceError()) {
+          <p role="alert">Не удалось открыть исходное событие. {{ evidenceError() }}</p>
+          <button pButton type="button" size="small" [disabled]="evidenceLoading()" (click)="refreshRun()">Повторить загрузку события</button>
+        } @else if (detail()?.run?.id === occurrence.runId) {
+          <p role="status">Исходное событие недоступно. Факт из списка: {{ occurrence.fact }}</p>
+        } @else { <p role="status">Загрузка исходного события…</p> }
+        <div class="evidence-analysis">
+          <p-panel header="Подтверждённая причина"><p>{{ occurrence.confirmedCause || 'Причина не установлена' }}</p></p-panel>
+          <p-panel header="Рекомендация"><p>{{ occurrence.recommendation || 'Рекомендация пока не сформирована' }}</p></p-panel>
+        </div>
+        <button pButton type="button" size="small" severity="secondary" [outlined]="true" [disabled]="!occurrence.improvementTaskId" (click)="openTask.emit({ taskId: occurrence.improvementTaskId!, runId: '' })">{{ occurrence.improvementTaskId ? 'Открыть подзадачу ' + occurrence.improvementTaskId : 'Подзадача ещё не создана' }}</button>
+      </section>
+    }
+    @if (sourceEventId() && !displayedOccurrence()) {
+      <section class="selected-evidence" aria-label="Источник результата">
+        <button pButton type="button" size="small" severity="secondary" [text]="true" icon="pi pi-arrow-left" (click)="sourceEventId.set(null)">К запуску</button>
+        @if (selectedCheck(); as check) {
+          <h2>Исполнение обязательной команды №{{ check.eventId }}</h2>
+          <p><code>{{ check.command }} {{ check.args.join(' ') }}</code></p>
+          <p>{{ checkOutcome(check) }} · попытка {{ check.attempt }} · ревизия {{ check.revision }}</p>
+          <p>{{ check.phase === 'candidate' ? 'SHA кандидата' : 'SHA этапа' }} <code>{{ check.sha }}</code></p>
+        } @else if (evidenceLoading()) {
+          <p role="status">Загрузка события…</p>
+        } @else {
+          <p role="status">{{ evidenceError() || 'Исходное событие недоступно.' }}</p>
+        }
+      </section>
+    }
     @if (selected(); as item) {
       <header class="run-header">
         <div class="run-header-top">
@@ -329,6 +382,37 @@
             (click)="runConsole.level.set('error'); runConsole.stage.set('all'); runConsole.follow.set(true); executionLog.scrollIntoView({ block: 'nearest' })">Показать ошибки в журнале</button>
         </section>
       }
+      @if (detail()?.run?.id === item.id && detail(); as result) {
+        @if (result.checks?.length || result.run.acceptance || result.userAcceptance) {
+          <p-panel header="Доказательства результатов" [toggleable]="true" [collapsed]="true" styleClass="run-proof-panel">
+            @for (criterion of result.run.acceptance?.results; track criterion.id) {
+              <div class="run-proof-row">
+                <strong>{{ criterion.id }}</strong>
+                @if (criterion.source; as source) {
+                  <button pButton type="button" size="small" severity="secondary" [text]="true" (click)="sourceEventId.set(source.eventId)">Исполнение №{{ source.eventId }}</button>
+                  @if (source.browser; as scenario) {
+                    <p>{{ scenario.action }} · {{ scenario.assertion }} · {{ scenario.actual }}</p>
+                    <a pButton size="small" severity="secondary" [outlined]="true" [href]="evidenceImageUrl(scenario.imageUrl)" target="_blank" rel="noopener">Открыть PNG</a>
+                  }
+                } @else {
+                  <span>{{ criterion.status === 'manual' ? 'Ручная проверка' : 'Доказательство недоступно' }}</span>
+                }
+                <p>{{ criterion.evidence }}</p>
+              </div>
+            }
+            @if (result.userAcceptance; as accepted) {
+              <button pButton type="button" size="small" severity="secondary" [text]="true" (click)="openTask.emit({ taskId: item.taskId, runId: item.id })">Пользовательская приёмка №{{ accepted.id }} · {{ timestamp(accepted.at) }}</button>
+            }
+            @for (check of result.checks; track check.id) {
+              <div class="run-proof-row">
+                <button pButton type="button" size="small" severity="secondary" [text]="true" (click)="sourceEventId.set(check.eventId)">Запись №{{ check.eventId }} · {{ check.command }} {{ check.args.join(' ') }}</button>
+                <span>{{ checkOutcome(check) }} · попытка {{ check.attempt }}</span>
+                <code>{{ check.sha }}</code>
+              </div>
+            }
+          </p-panel>
+        }
+      }
       <!-- ЖУРНАЛ ВЫПОЛНЕНИЯ: занимает всё оставшееся пространство -->
       @if (detail()?.run; as run) {
         @if (run.id === item.id) {
@@ -346,12 +430,13 @@
         </div>
         <sat-run-console #runConsole class="embedded-console" [runId]="item.id" [events]="detail()?.run?.id === item.id ? (detail()?.events ?? []) : []" />
       </section>
-    } @else {
+    } @else if (!selectedOccurrence()) {
       <div class="empty-selection-placeholder">
         <i class="pi pi-desktop placeholder-icon"></i>
         <h3>Запуск не выбран</h3>
         <p>Выберите запуск из списка очереди слева, чтобы просмотреть подробности, этапы и живой журнал выполнения.</p>
       </div>
+    }
     }
   </main>
 
