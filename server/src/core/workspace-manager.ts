@@ -20,6 +20,7 @@ import { TrackerError } from './errors.js';
 import type { ContainerOptions } from '../bootstrap/container.js';
 import { AutomationService } from '../automation/automation-service.js';
 import { AgentRunRepository } from '../automation/run-repository.js';
+import { ImprovementService } from '../automation/improvement-service.js';
 
 /** Одно пространство: имя, файл БД, каталог бэкапов. */
 export interface WorkspaceInfo {
@@ -287,7 +288,9 @@ export class WorkspaceManager {
     const verificationService = new VerificationService(finalConfig, repos, taskService);
     const backupService = new BackupService(finalConfig, db, clock, this.logger);
     const imageService = new ImageService(finalConfig, this.logger);
-    const automationService = new AutomationService(new AgentRunRepository(db), repos, taskService, clock, workspaceName, imageService);
+    const runs = new AgentRunRepository(db);
+    const improvements = new ImprovementService(runs, taskService, workspaceName);
+    const automationService = new AutomationService(runs, repos, taskService, clock, workspaceName, imageService, improvements);
 
     return {
       config: finalConfig,

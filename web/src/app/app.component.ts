@@ -9,6 +9,7 @@ import { TooltipModule } from 'primeng/tooltip';
 import { EMPTY, catchError, delay, exhaustMap, filter, of, switchMap, tap, timer } from 'rxjs';
 import type { TaskStatus, TaskType } from './models/tracker.models';
 import { TrackerStore } from './services/tracker-store.service';
+import { WorkspaceService } from './services/workspace.service';
 import { ToolbarComponent } from './components/toolbar/toolbar.component';
 import { BoardComponent } from './components/board/board.component';
 import { TaskDialogComponent } from './components/task-dialog/task-dialog.component';
@@ -54,6 +55,7 @@ export class AppComponent implements OnInit {
   public readonly automationLauncher = inject(AutomationLaunchService);
   private readonly destroyRef = inject(DestroyRef);
   public readonly store = inject(TrackerStore);
+  private readonly workspace = inject(WorkspaceService);
 
   public readonly sidebarOpen = signal(true);
 
@@ -76,8 +78,9 @@ export class AppComponent implements OnInit {
   }
   public showQueue = false;
   public queueRunId: string | null = null;
+  public queueEventId: number | null = null;
   public readonly queueTask = signal<{ taskId: string; runId: string } | null>(null);
-  public openQueue(id: string | null): void { if (this.automationTaskId) this.showAutomation = false; this.queueRunId = id; this.showQueue = true; }
+  public openQueue(id: string | null): void { if (this.automationTaskId) this.showAutomation = false; this.queueRunId = id; this.queueEventId = null; this.showQueue = true; }
   public async openQueueTask(context: { taskId: string; runId: string }): Promise<void> {
     this.store.closeCard();
     this.queueTask.set(context);
@@ -113,6 +116,21 @@ export class AppComponent implements OnInit {
 
   public ngOnInit(): void {
     void this.store.init();
+    const query = new URLSearchParams(location.search);
+    const run = query.get('automationRun');
+    const event = Number(query.get('eventId'));
+    const workspace = query.get('workspace');
+    if (run && Number.isSafeInteger(event) && event > 0) {
+      if (workspace && workspace !== this.workspace.current()) {
+        void this.workspace.load().then(() => {
+          if (this.workspace.workspaces().some(item => item.name === workspace)) return this.workspace.activate(workspace);
+          return undefined;
+        });
+      } else {
+        this.openQueue(run);
+        this.queueEventId = event;
+      }
+    }
     timer(this.POLL_INTERVAL_MS, this.POLL_INTERVAL_MS).pipe(
       filter(() => !this.createMode() && !this.store.dragging()),
       exhaustMap(() => this.store.refresh(true)), takeUntilDestroyed(this.destroyRef),

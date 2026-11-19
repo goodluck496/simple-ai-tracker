@@ -3,11 +3,15 @@ import path from 'node:path';
 import { createHash } from 'node:crypto';
 import type { AgentOutcome } from '../../../../shared/automation/contracts.js';
 import type { StageEvidence } from '../../../../shared/automation/work-order.js';
+import type { CheckExecution } from '../../../../shared/automation/improvement-metrics.js';
+import { checksMatch } from '../check-evidence.js';
 
 type Git = (args: string[]) => Promise<string>;
 export interface StageResult {
   key: string; head: string; fingerprint: string; priorHead: string; priorStatus: string; priorFingerprint?: string;
   outcome: AgentOutcome; checksComplete?: boolean; checks?: StageEvidence['checks'];
+  checkExecutions?: CheckExecution[];
+  checkAttempt?: number;
 }
 
 /** Durable completed-agent output; infrastructure retries must not call the model again. */
@@ -17,13 +21,19 @@ export class StageCheckpoint {
     this.file = path.join(cwd, '.sat', `stage-${stage}-${revision}.json`);
   }
   public static key(value: unknown): string { return createHash('sha256').update(JSON.stringify(value)).digest('hex'); }
-  public async load(key: string | string[]): Promise<StageResult | undefined> {
+  public async load(key: string | string[], run?: Pick<import('../../../../shared/automation/contracts.js').AgentRun, 'id' | 'revision' | 'settings'>): Promise<StageResult | undefined> {
     let saved: StageResult;
     try { saved = JSON.parse(await fs.readFile(this.file, 'utf8')) as StageResult; }
     catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined; throw error; }
     if (!(Array.isArray(key) ? key : [key]).includes(saved.key)) return undefined;
     if (saved.head !== (await this.git(['rev-parse', 'HEAD'])).trim() || saved.fingerprint !== await this.fingerprint()) {
       throw new Error('Completed stage checkpoint no longer matches worktree files/HEAD. Preserve and inspect the changes before restarting this stage.');
+    }
+    if (run && !checksMatch(saved.checkExecutions ?? [], run.settings.checks,
+      { runId: run.id, phase: 'stage', revision: run.revision, sha: saved.head })) {
+      saved.checksComplete = false;
+      saved.checks = undefined;
+      saved.checkExecutions = undefined;
     }
     return saved;
   }

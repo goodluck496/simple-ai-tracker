@@ -5,8 +5,12 @@ import { AGENT_ROLES, RUNNER_IDS } from '../../../../shared/automation/contracts
 import type { ProjectInput } from '../../../../shared/automation/project.js';
 import { TASK_SELECTION_LIMIT } from '../../../../shared/automation/task-readiness.js';
 import { RunLogDownload } from '../../automation/run-log-download.js';
+import { TrackerError } from '../../core/errors.js';
 
 export function registerAutomationRoutes(router: Router, app: AppContainer): void {
+  router.get('/api/automation/metrics', ({ query, res }) => sendJson(res, 200, app.automationService.metrics({
+    from: query.get('from') ?? undefined, to: query.get('to') ?? undefined,
+  })));
   router.post('/api/automation/runs/:id/accept-manually', ({ params, res }) =>
     sendJson(res, 200, { run: app.automationService.acceptManually(params.id) }));
   router.get('/api/automation/tasks/:id/preview-patch', ({ params, res }) =>
@@ -46,7 +50,13 @@ export function registerAutomationRoutes(router: Router, app: AppContainer): voi
     runs: app.automationService.list(query.get('taskId') ?? undefined), activeTaskIds: app.automationService.activeTaskIds(),
     tasks: app.taskService.listTasks({ limit: TASK_SELECTION_LIMIT }).map(({ id, title, status, hasPlan, openQuestionsCount, trustedExecution }) => ({ id, title, status, hasPlan, openQuestionsCount, trustedExecution: trustedExecution === true })),
   }));
-  router.get('/api/automation/runs/:id', ({ params, res }) => sendJson(res, 200, app.automationService.detail(params.id)));
+  router.get('/api/automation/runs/:id', ({ params, query, res }) => {
+    const value = query.get('eventId');
+    const eventId = value === null ? undefined : Number(value);
+    if (value !== null && (!/^\d+$/.test(value) || !Number.isSafeInteger(eventId) || eventId! <= 0))
+      throw new TrackerError('VALIDATION_FAILED', 'Некорректный ID события.');
+    sendJson(res, 200, app.automationService.detail(params.id, eventId));
+  });
   router.get('/api/automation/runs/:id/log', ({ params, res }) => new RunLogDownload(app.automationService).send(params.id, res));
   router.post('/api/automation/runs', ({ body, res }) => sendJson(res, 201, { run: app.automationService.enqueue(requireBodyField<string>(body, 'taskId'), bodyField(body, 'settings'), false) }));
   router.post('/api/automation/batch', ({ body, res }) => sendJson(res, 201, { runs: app.automationService.enqueueBatch(bodyField(body, 'taskIds'), bodyField(body, 'settings'), bodyField(body, 'requestId')) }));

@@ -12,6 +12,9 @@ import { DEFAULT_ROLE_INSTRUCTIONS } from '../../../../shared/automation/team-pr
 import { RunPhase } from '../../../../shared/automation/queue.js';
 import { TokenMeter, type TokenUsage } from '../../../../shared/automation/token-usage.js';
 import { StageCheckpoint, type StageResult } from './stage-checkpoint.js';
+import { CheckJournal } from './check-journal.js';
+import { readCriterionImages, runWithBrowserEvidence } from './browser-check-evidence.js';
+import { checkFingerprint } from '../check-evidence.js';
 import { StageJournal } from './stage-journal.js';
 import { AgentHandoff, HANDOFF_LIMITS } from '../../../../shared/automation/handoff.js';
 import { ProgressBuffer } from '../../../../shared/automation/progress-buffer.js';
@@ -34,7 +37,7 @@ import { Decomposition } from '../../../../shared/automation/decomposition.js';
 import type { WorktreeCodeGraph } from './code-navigation.js';
 import { readStageScreenshots } from './stage-screenshots.js';
 import { readVisualArtifacts } from '../visual-artifacts.js';
-import { assertProjectCheckScripts, readProjectPackageManager } from '../package-manager.js';
+import { assertProjectCheckScripts, MissingCheckScriptsError, readProjectPackageManager } from '../package-manager.js';
 import { projectCommand } from '../../../../shared/automation/project.js';
 import { SCREENSHOT_LIMIT } from '../../../../shared/automation/screenshots.js';
 
@@ -52,6 +55,12 @@ export class PipelineWorker {
     if (this.stopping) { await this.channel.call(AutomationTool.Fail, { id: claimed.id, leaseToken: claimed.leaseToken, text: 'Worker остановлен до начала выполнения; файлы не удалялись.' }); return true; }
     let run: AgentRun = claimed;
     const token = run.leaseToken!;
+    const deliverCheck = async (result: import('../../../../shared/automation/improvement-metrics.js').CheckExecution) => {
+      await this.channel.call(AutomationTool.CheckExecution, { id: run.id, leaseToken: token, result });
+    };
+    const beginCheck = async (result: import('../../../../shared/automation/improvement-metrics.js').CheckExecution) => {
+      await this.channel.call(AutomationTool.CheckExecution, { id: run.id, leaseToken: token, result, phase: 'begin' });
+    };
     const controller = new AbortController();
     this.activeController = controller;
     let finished = false;
@@ -145,6 +154,7 @@ export class PipelineWorker {
             if (metering) { const sample = metering; metering = undefined; await reportUsage(sample, complete); }
           }
         });
+        const journal = new CheckJournal(path.join(cwd, '.sat', 'checks'), deliverCheck, beginCheck);
         await new SquashIntegration(this.executor).run({ runId: run!.id, taskId: run!.taskId, repository, common,
           sourceSha: run!.commitSha!, targetBranch: run!.settings.baseBranch, directory: cwd,
           message: CommitMessage.forTask(run!.mergeMessage, run!.taskId, String((context as { title?: string }).title ?? run!.taskId)), contextKey: StageCheckpoint.key(context), maxAttempts: run!.trustedExecution ? undefined : run!.settings.maxMergeAttempts ?? 2,
@@ -152,11 +162,16 @@ export class PipelineWorker {
           authorize: async () => { run = await this.channel.call<AgentRun>(AutomationTool.Heartbeat, { id: run!.id, leaseToken: token, phase: recoveryOnly ? 'recovery' : undefined }); },
           record: async info => { publishing = info.state === 'publishing'; await this.channel.call(AutomationTool.Integration, { id: run!.id, leaseToken: token, result: info }); },
           prepare: async directory => { await preparation!.prepare(directory, controller.signal, progress); },
-          checks: async directory => {
+          checkFingerprint: checkFingerprint(run.settings.checks),
+          verifyChecks: (sha, attempt, ids) => run.settings.checks.length ? journal.verify(run, sha, attempt, ids) : Promise.resolve(true),
+          checks: async (directory, sha, attempt) => {
             const project = await readProjectPackageManager(directory);
             await assertProjectCheckScripts(directory, run!.settings.checks);
-            for (const check of run!.settings.checks) await this.executor.run({ ...projectCommand(check, project), cwd: directory,
-              env: TaskEnvironment.create(), signal: controller.signal, compactProgress: true, onProgress: progress });
+            const results = await journal.run(run, 'candidate', sha, attempt, controller.signal, async check => {
+              await this.executor.run({ ...projectCommand(check, project), cwd: directory,
+                env: TaskEnvironment.create(), signal: controller.signal, compactProgress: true, onProgress: progress });
+            });
+            return results.map(result => result.id);
           },
           resolve: (directory, files, base) => resolver.resolve(run!, context, directory, files, base, controller.signal),
         });
@@ -253,7 +268,7 @@ export class PipelineWorker {
           task: { id: pack.id, title: pack.title, description: pack.description, plan: selfPlanned ? null : pack.plan, questions: pack.questions, relations: relationKey } };
         const key = StageCheckpoint.key(keyInput);
         const legacyKey = StageCheckpoint.key({ ...keyInput, task: { ...keyInput.task, relations: pack.relations }, settings: { ...run.settings, ...run.checkpointBudgets } });
-        let saved = await checkpoint.load([key, legacyKey]);
+        let saved = await checkpoint.load([key, legacyKey], run);
         const priorSha = (await git(['rev-parse', 'HEAD'], cwd)).trim();
         const sessionKey = StageCheckpoint.key({ key, head: priorSha, cwd: path.resolve(cwd) });
         const memory = run.stageMemory?.key === sessionKey ? run.stageMemory : undefined;
@@ -449,7 +464,8 @@ export class PipelineWorker {
             }
           }
         }
-        saved = { key, head: priorSha, fingerprint: '', priorHead: priorSha, priorStatus, priorFingerprint, outcome };
+        saved = { key, head: priorSha, fingerprint: '', priorHead: priorSha, priorStatus, priorFingerprint, outcome,
+          checkAttempt: (run.usageAttempts?.length ?? 0) + 1 };
         if (outcome.verdict === AgentVerdict.Pass) await checkpoint.save(saved);
         }
         const screenshots = await readStageScreenshots(cwd, outcome.screenshots);
@@ -493,21 +509,25 @@ export class PipelineWorker {
           const checkProject = await readProjectPackageManager(cwd);
           await assertProjectCheckScripts(cwd, run.settings.checks);
           if (checkProject.packageManager === 'pnpm' && writes) await prepareStage();
-          for (const configured of run.settings.checks) {
-            const check = projectCommand(configured, checkProject);
-            try {
-              await phase(RunPhase.Checks, `Проверка: ${check.command} ${check.args.join(' ')}`);
-              await this.executor.run({ ...check, cwd, env: TaskEnvironment.create(), signal: controller.signal, compactProgress: true, onProgress: progress });
-              checksEvidence.push({ command: check.command, args: check.args, exitCode: 0 });
-            }
-            catch (error) {
-              if (!(error instanceof ProcessExecutionError) || !error.exitCode || controller.signal.aborted) throw error;
-              checkFailed = true;
-              const diagnostics = [error.stdout.trim().slice(-3000), error.stderr.trim().slice(-6000)].filter(Boolean).join('\n');
-              outcome = { verdict: AgentVerdict.ChangesRequested,
-                summary: redact(`Configured check failed: ${check.command} ${check.args.join(' ')} (exit ${error.exitCode})\n${diagnostics || error.message}`) };
-              break;
-            }
+          const journal = new CheckJournal(path.join(cwd, '.sat', 'checks'), deliverCheck, beginCheck);
+          let failedCommand = '';
+          try {
+            saved.checkExecutions = await journal.run(run, 'stage', sha, saved.checkAttempt ?? 1, controller.signal, configured =>
+              runWithBrowserEvidence(cwd, async output => {
+                await this.executor.run({ ...projectCommand(configured, checkProject), cwd,
+                  env: { ...TaskEnvironment.create(), SAT_BROWSER_EVIDENCE: output }, signal: controller.signal, compactProgress: true, onProgress: progress });
+              }), async configured => {
+              const check = projectCommand(configured, checkProject);
+              failedCommand = `${check.command} ${check.args.join(' ')}`;
+              await phase(RunPhase.Checks, `Проверка: ${failedCommand}`);
+            });
+            for (const check of saved.checkExecutions) checksEvidence.push({ command: check.command, args: check.args, exitCode: 0 });
+          } catch (error) {
+            if (!(error instanceof ProcessExecutionError) || !error.exitCode || controller.signal.aborted) throw error;
+            checkFailed = true;
+            const diagnostics = [error.stdout.trim().slice(-3000), error.stderr.trim().slice(-6000)].filter(Boolean).join('\n');
+            outcome = { verdict: AgentVerdict.ChangesRequested,
+              summary: redact(`Configured check failed: ${failedCommand} (exit ${error.exitCode})\n${diagnostics || error.message}`) };
           }
           if ((await git(['rev-parse', 'HEAD'], cwd)).trim() !== sha || !await checkpoint.isClean()) {
             throw new Error(`Checks changed the tested commit or left uncommitted files.${checkFailed ? '\n' + outcome.summary : ''}`);
@@ -546,8 +566,9 @@ export class PipelineWorker {
             await new PostOperationRunner(this.executor).run(op, cwd, common, controller.signal, progress);
           }
         }
+        const criterionImages = await readCriterionImages(cwd, saved.checkExecutions ?? []);
         run = await this.channel.call<AgentRun>(AutomationTool.CompleteStage, { id: run.id, leaseToken: token, outcome, branch, commitSha: sha,
-          result: { screenshots, checkFailed } });
+          result: { screenshots, checkFailed, checkIds: saved.checkExecutions?.map(check => check.id), criterionImages } });
         recovery = undefined;
       }
       cwd = featureCwd;
@@ -558,7 +579,8 @@ export class PipelineWorker {
       const failure = preparationError ?? error;
       const message = redact(budgetError ?? `${this.stopping ? 'Worker остановлен; рабочая копия и checkpoints сохранены. ' : ''}${channelError ? 'Tracker connection/lease lost. ' : ''}${failure instanceof Error ? failure.message : String(failure)}`);
       if (pending.length) { try { await this.channel.call(AutomationTool.Progress, { id: run.id, leaseToken: token, text: redact(pending.take()) }); } catch { /* Preserve terminal failure even if the lease was lost. */ } }
-      try { await this.channel.call(AutomationTool.Fail, { id: run.id, leaseToken: token, text: message, error: recovery?.error }); }
+      try { await this.channel.call(AutomationTool.Fail, { id: run.id, leaseToken: token, text: message, error: recovery?.error,
+        result: failure instanceof MissingCheckScriptsError ? { missingCheckScripts: failure.scripts } : undefined }); }
       catch { process.stderr.write(`${message}\n`); }
     } finally {
       finished = true;

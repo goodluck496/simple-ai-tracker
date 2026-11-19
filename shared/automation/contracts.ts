@@ -116,6 +116,7 @@ export const DEFAULT_SETUP_COMMAND: CheckCommand = { command: 'npm', args: ['ci'
 export const DEFAULT_POST_OPERATION: CheckCommand = { command: 'npm', args: ['run', 'build'] };
 
 export interface ProposedFix {
+  occurrenceEventId?: number;
   id: string;
   title: string;
   explanation: string;
@@ -128,6 +129,8 @@ export interface ProposedFix {
 }
 
 export interface AgentRun {
+  stageChecks?: { stage: number; revision: number; sha: string; ids: string[] }[];
+  userCancelledAt?: string;
   manualAcceptance?: { at: string; sha: string; stage: number };
   routing?: import('./task-routing.js').RoutingSnapshot;
   acceptance?: { sha: string; results: import('./task-routing.js').AcceptanceResult[] };
@@ -184,6 +187,8 @@ export interface IntegrationInfo {
   state: 'preparing' | 'resolving' | 'checking' | 'ready' | 'publishing' | 'merged' | 'blocked';
   sourceSha: string; baseSha: string; candidateSha?: string; targetBranch: string;
   worktreePath: string; attempt: number; error?: string; noChanges?: boolean;
+  checkIds?: string[];
+  checkFingerprint?: string;
 }
 export interface RunEvent { id: number; runId: string; at: string; kind: string; text: string; }
 export interface AgentOutcome {

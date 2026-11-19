@@ -122,7 +122,7 @@
     @if (metricsMode()) {
       <sat-automation-metrics [savedPeriod]="metricsPeriod()" (navigate)="$event === 'history' ? viewHistory() : switchMode(false)" (inspect)="inspectOccurrence($event)" (openTask)="openTask.emit($event)" (periodChanged)="metricsPeriod.set($event); clearMetricSelection()" />
     } @else {
-    @if (selectedOccurrence(); as occurrence) {
+    @if (displayedOccurrence(); as occurrence) {
       <section class="selected-evidence" aria-labelledby="evidence-heading" tabindex="0">
         <nav aria-label="Вернуться к представлению">
           <button pButton type="button" size="small" severity="secondary" [outlined]="true" (click)="viewMetrics()" icon="pi pi-arrow-left">К метрикам</button>
@@ -154,6 +154,21 @@
           <p-panel header="Рекомендация"><p>{{ occurrence.recommendation || 'Рекомендация пока не сформирована' }}</p></p-panel>
         </div>
         <button pButton type="button" size="small" severity="secondary" [outlined]="true" [disabled]="!occurrence.improvementTaskId" (click)="openTask.emit({ taskId: occurrence.improvementTaskId!, runId: '' })">{{ occurrence.improvementTaskId ? 'Открыть подзадачу ' + occurrence.improvementTaskId : 'Подзадача ещё не создана' }}</button>
+      </section>
+    }
+    @if (sourceEventId() && !displayedOccurrence()) {
+      <section class="selected-evidence" aria-label="Источник результата">
+        <button pButton type="button" size="small" severity="secondary" [text]="true" icon="pi pi-arrow-left" (click)="sourceEventId.set(null)">К запуску</button>
+        @if (selectedCheck(); as check) {
+          <h2>Исполнение обязательной команды №{{ check.eventId }}</h2>
+          <p><code>{{ check.command }} {{ check.args.join(' ') }}</code></p>
+          <p>{{ checkOutcome(check) }} · попытка {{ check.attempt }} · ревизия {{ check.revision }}</p>
+          <p>{{ check.phase === 'candidate' ? 'SHA кандидата' : 'SHA этапа' }} <code>{{ check.sha }}</code></p>
+        } @else if (evidenceLoading()) {
+          <p role="status">Загрузка события…</p>
+        } @else {
+          <p role="status">{{ evidenceError() || 'Исходное событие недоступно.' }}</p>
+        }
       </section>
     }
     @if (selected(); as item) {
@@ -365,6 +380,37 @@
           <button pButton severity="secondary" size="small" type="button"
             (click)="runConsole.level.set('error'); runConsole.stage.set('all'); runConsole.follow.set(true); executionLog.scrollIntoView({ block: 'nearest' })">Показать ошибки в журнале</button>
         </section>
+      }
+      @if (detail()?.run?.id === item.id && detail(); as result) {
+        @if (result.checks?.length || result.run.acceptance || result.userAcceptance) {
+          <p-panel header="Доказательства результатов" [toggleable]="true" [collapsed]="true" styleClass="run-proof-panel">
+            @for (criterion of result.run.acceptance?.results; track criterion.id) {
+              <div class="run-proof-row">
+                <strong>{{ criterion.id }}</strong>
+                @if (criterion.source; as source) {
+                  <button pButton type="button" size="small" severity="secondary" [text]="true" (click)="sourceEventId.set(source.eventId)">Исполнение №{{ source.eventId }}</button>
+                  @if (source.browser; as scenario) {
+                    <p>{{ scenario.action }} · {{ scenario.assertion }} · {{ scenario.actual }}</p>
+                    <a pButton size="small" severity="secondary" [outlined]="true" [href]="evidenceImageUrl(scenario.imageUrl)" target="_blank" rel="noopener">Открыть PNG</a>
+                  }
+                } @else {
+                  <span>{{ criterion.status === 'manual' ? 'Ручная проверка' : 'Доказательство недоступно' }}</span>
+                }
+                <p>{{ criterion.evidence }}</p>
+              </div>
+            }
+            @if (result.userAcceptance; as accepted) {
+              <button pButton type="button" size="small" severity="secondary" [text]="true" (click)="openTask.emit({ taskId: item.taskId, runId: item.id })">Пользовательская приёмка №{{ accepted.id }} · {{ timestamp(accepted.at) }}</button>
+            }
+            @for (check of result.checks; track check.id) {
+              <div class="run-proof-row">
+                <button pButton type="button" size="small" severity="secondary" [text]="true" (click)="sourceEventId.set(check.eventId)">Запись №{{ check.eventId }} · {{ check.command }} {{ check.args.join(' ') }}</button>
+                <span>{{ checkOutcome(check) }} · попытка {{ check.attempt }}</span>
+                <code>{{ check.sha }}</code>
+              </div>
+            }
+          </p-panel>
+        }
       }
       <!-- ЖУРНАЛ ВЫПОЛНЕНИЯ: занимает всё оставшееся пространство -->
       @if (detail()?.run; as run) {

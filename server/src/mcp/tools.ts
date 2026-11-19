@@ -427,12 +427,15 @@ export class TrackerToolRegistry {
         case AutomationTool.Checkout: service.checkout(id(), token(), args['result']); return json({ ok: true });
         case AutomationTool.ReviewEvidence: return json(service.reviewEvidence(id(), token()));
         case AutomationTool.Integration: service.integration(id(), token(), args['result']); return json({ ok: true });
+        case AutomationTool.CheckExecution: return json(service.checkExecution(id(), token(), args['result'], args['phase'] === 'begin'));
         case AutomationTool.Usage: service.usage(id(), token(), requireString(args, 'attemptId'), args['usage'], args['finished'] === true); return json({ ok: true });
         case AutomationTool.Checkpoint: return json(service.checkpoint(id(), token(), requireString(args, 'attemptId'), args['result']));
         case AutomationTool.CompleteStage: return json(service.completeStage(id(), token(), args['outcome'] as AgentOutcome, requireString(args, 'branch'), requireString(args, 'commitSha'),
           (args['result'] as { screenshots?: unknown } | undefined)?.screenshots,
-          (args['result'] as { checkFailed?: unknown } | undefined)?.checkFailed === true));
-        case AutomationTool.Fail: service.fail(id(), token(), requireString(args, 'text'), asString(args, 'error')); return json({ ok: true });
+          (args['result'] as { checkFailed?: unknown } | undefined)?.checkFailed === true,
+          (args['result'] as { checkIds?: string[] } | undefined)?.checkIds,
+          (args['result'] as { criterionImages?: unknown } | undefined)?.criterionImages));
+        case AutomationTool.Fail: service.fail(id(), token(), requireString(args, 'text'), asString(args, 'error'), args['result']); return json({ ok: true });
         case AutomationTool.Cancel: service.cancel(id()); return json({ ok: true });
         case AutomationTool.Resume: return json(service.resume(id()));
         case AutomationTool.Merged: service.merged(id(), token()); return json({ ok: true });

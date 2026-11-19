@@ -8,6 +8,7 @@ export const AutomationTool = {
   Heartbeat: `${AUTOMATION_TOOL_PREFIX}heartbeat`, Progress: `${AUTOMATION_TOOL_PREFIX}progress`,
   Usage: `${AUTOMATION_TOOL_PREFIX}usage`,
   Checkpoint: `${AUTOMATION_TOOL_PREFIX}checkpoint`,
+  CheckExecution: `${AUTOMATION_TOOL_PREFIX}check_execution`,
   BeginStage: `${AUTOMATION_TOOL_PREFIX}begin_stage`, CompleteStage: `${AUTOMATION_TOOL_PREFIX}complete_stage`,
   Fail: `${AUTOMATION_TOOL_PREFIX}fail`, Cancel: `${AUTOMATION_TOOL_PREFIX}cancel`,
   Resume: `${AUTOMATION_TOOL_PREFIX}resume`, Merged: `${AUTOMATION_TOOL_PREFIX}merged`,

@@ -3,19 +3,29 @@ import path from 'node:path';
 import { detectPackageManager, type PackageManagerInfo } from '../../../shared/automation/project.js';
 import type { CheckCommand } from '../../../shared/automation/contracts.js';
 
-export async function assertProjectCheckScripts(cwd: string, checks: CheckCommand[]): Promise<void> {
-  const scripts = checks.flatMap(check => {
+export class MissingCheckScriptsError extends Error {
+  public constructor(public readonly scripts: string[]) {
+    super(`В package.json текущей рабочей копии отсутствуют скрипты обязательных проверок: ${scripts.join(', ')}. Исправьте команды проверок в проекте и продолжите запуск с обновлёнными проверками.`);
+  }
+}
+
+export function configuredCheckScripts(checks: CheckCommand[]): string[] {
+  return checks.flatMap(check => {
     const executable = check.command.split(/[\\/]/).at(-1) ?? '';
     if (!/^(npm|pnpm)(?:\.cmd|\.exe)?$/i.test(executable)) return [];
     const [action, script] = check.args;
     return ['test', 't', 'tst'].includes(action) ? ['test'] : ['run', 'run-script'].includes(action) && script && !script.startsWith('-') ? [script] : [];
   });
+}
+
+export async function assertProjectCheckScripts(cwd: string, checks: CheckCommand[]): Promise<void> {
+  const scripts = configuredCheckScripts(checks);
   if (!scripts.length) return;
   let available: Record<string, unknown> = {};
   try { available = JSON.parse(await fs.readFile(path.join(cwd, 'package.json'), 'utf8'))?.scripts ?? {}; }
   catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
   const missing = [...new Set(scripts)].filter(name => !Object.hasOwn(available, name) || typeof available[name] !== 'string');
-  if (missing.length) throw new Error(`В package.json текущей рабочей копии отсутствуют скрипты обязательных проверок: ${missing.join(', ')}. Исправьте команды проверок в проекте и продолжите запуск с обновлёнными проверками.`);
+  if (missing.length) throw new MissingCheckScriptsError(missing);
 }
 
 

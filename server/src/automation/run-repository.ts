@@ -1,6 +1,7 @@
 import { RunStatus, ACTIVE_RUN_STATUSES, AUTOMATION_LIMITS, type AgentRun, type RunEvent } from '../../../shared/automation/contracts.js';
 import type { SqlDatabase } from '../db/sql-database.js';
 import { QUEUE_LIMITS } from '../../../shared/automation/queue.js';
+import type { CheckEvidence, CheckExecution, ImprovementOccurrence, ImprovementPeriod } from '../../../shared/automation/improvement-metrics.js';
 
 export class AgentRunRepository {
   public constructor(public readonly db: SqlDatabase) {}
@@ -12,6 +13,53 @@ export class AgentRunRepository {
   public get(id: string): AgentRun | undefined {
     const row = this.db.prepare('SELECT payload FROM agent_runs WHERE id = ?').get<{ payload: string }>([id]);
     return row ? JSON.parse(row.payload) as AgentRun : undefined;
+  }
+  public cohort(period: ImprovementPeriod): AgentRun[] {
+    return this.db.prepare(`SELECT payload FROM agent_runs WHERE json_extract(payload, '$.startedAt') >= ?
+      AND json_extract(payload, '$.startedAt') < ?`).all<{ payload: string }>([period.from, period.to])
+      .map(row => JSON.parse(row.payload) as AgentRun);
+  }
+  public taskHistory(taskId: string): AgentRun[] {
+    return this.db.prepare('SELECT payload FROM agent_runs WHERE task_id = ?').all<{ payload: string }>([taskId])
+      .map(row => JSON.parse(row.payload) as AgentRun);
+  }
+  public acceptedByUser(taskId: string): { id: number; at: string } | undefined {
+    const transition = this.db.prepare(`SELECT id, actor, created_at AS at FROM task_events WHERE task_id = ?
+      AND type IN ('status_changed', 'moved') AND json_extract(payload, '$.to') = 'done'
+      AND json_extract(payload, '$.from') <> 'done' ORDER BY id DESC LIMIT 1`)
+      .get<{ id: number; actor: string; at: string }>([taskId]);
+    return transition?.actor === 'user' ? { id: transition.id, at: transition.at } : undefined;
+  }
+  public check(runId: string, id: string): CheckEvidence | undefined {
+    const row = this.db.prepare('SELECT event_id, payload FROM automation_check_executions WHERE run_id = ? AND id = ?')
+      .get<{ event_id: number; payload: string }>([runId, id]);
+    return row && { ...JSON.parse(row.payload) as CheckExecution, eventId: row.event_id };
+  }
+  public checks(runId: string): CheckEvidence[] {
+    return this.db.prepare('SELECT event_id, payload FROM automation_check_executions WHERE run_id = ? ORDER BY event_id')
+      .all<{ event_id: number; payload: string }>([runId]).map(row => ({ ...JSON.parse(row.payload) as CheckExecution, eventId: row.event_id }));
+  }
+  public recordCheck(check: CheckExecution): CheckEvidence {
+    const eventId = this.event(check.runId, 'check_execution',
+      JSON.stringify({ id: check.id, phase: check.phase, attempt: check.attempt, revision: check.revision, sha: check.sha,
+        position: check.position, outcome: check.outcome }), check.at);
+    this.db.prepare('INSERT INTO automation_check_executions(id, run_id, event_id, payload) VALUES (?, ?, ?, ?)')
+      .run([check.id, check.runId, eventId, JSON.stringify(check)]);
+    return { ...check, eventId };
+  }
+  public occurrence(runId: string, eventId: number): ImprovementOccurrence | undefined {
+    const row = this.db.prepare('SELECT payload FROM automation_occurrences WHERE run_id = ? AND event_id = ?')
+      .get<{ payload: string }>([runId, eventId]);
+    return row && JSON.parse(row.payload) as ImprovementOccurrence;
+  }
+  public latestOccurrence(runId: string): ImprovementOccurrence | undefined {
+    const row = this.db.prepare('SELECT payload FROM automation_occurrences WHERE run_id = ? ORDER BY event_id DESC LIMIT 1')
+      .get<{ payload: string }>([runId]);
+    return row && JSON.parse(row.payload) as ImprovementOccurrence;
+  }
+  public occurrences(runId: string): ImprovementOccurrence[] {
+    return this.db.prepare('SELECT payload FROM automation_occurrences WHERE run_id = ? ORDER BY event_id DESC')
+      .all<{ payload: string }>([runId]).map(row => JSON.parse(row.payload) as ImprovementOccurrence);
   }
   public history(taskId?: string): AgentRun[] {
     const rows = taskId
@@ -55,12 +103,19 @@ export class AgentRunRepository {
     this.db.prepare('INSERT INTO agent_runs(id, task_id, status, payload, updated_at) VALUES(?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET status=excluded.status, payload=excluded.payload, updated_at=excluded.updated_at')
       .run([run.id, run.taskId, run.status, JSON.stringify(run), run.updatedAt]);
   }
-  public event(runId: string, kind: string, text: string, at: string): void {
+  public event(runId: string, kind: string, text: string, at: string): number {
     const insert = this.db.prepare('INSERT INTO agent_run_events(run_id, at, kind, text) VALUES(?,?,?,?)');
-    if (kind !== 'progress') { insert.run([runId, at, kind, text.slice(0, AUTOMATION_LIMITS.eventTextLength)]); return; }
+    if (kind !== 'progress') return insert.run([runId, at, kind, text.slice(0, AUTOMATION_LIMITS.eventTextLength)]).lastInsertRowId;
+    let first = 0;
     for (let offset = 0; offset < text.length; offset += AUTOMATION_LIMITS.eventTextLength) {
-      insert.run([runId, at, kind, text.slice(offset, offset + AUTOMATION_LIMITS.eventTextLength)]);
+      const id = insert.run([runId, at, kind, text.slice(offset, offset + AUTOMATION_LIMITS.eventTextLength)]).lastInsertRowId;
+      if (!offset) first = id;
     }
+    return first;
+  }
+  public eventById(runId: string, eventId: number): RunEvent | undefined {
+    return this.db.prepare('SELECT id, run_id AS runId, at, kind, text FROM agent_run_events WHERE run_id = ? AND id = ?')
+      .get<RunEvent>([runId, eventId]);
   }
   public eventPage(runId: string, after: number): RunEvent[] {
     return this.db.prepare('SELECT id, run_id AS runId, at, kind, text FROM agent_run_events WHERE run_id = ? AND id > ? ORDER BY id ASC LIMIT 200')
