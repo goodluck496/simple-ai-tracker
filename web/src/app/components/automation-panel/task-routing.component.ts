@@ -37,7 +37,7 @@ import type { AgentRun, AutomationSettings } from '../../../../../shared/automat
           <ng-template #body let-row><tr><td>{{ row.id }}: {{ row.requirement }}</td><td>{{ row.method }}</td><td>{{ result(row.id) }}</td></tr></ng-template>
         </p-table>
         <p>Критериев: {{ routing.decision.brief.criteria.length }} · замен профилей: {{ routing.decision.assignments.length }} · подтверждено: {{ passed }} / {{ routing.decision.brief.criteria.length }}</p>
-        <p-message severity="secondary">Результаты сценариев сообщает тестировщик; команды проверок worker выполняет независимо. Ручные проверки ожидают пользователя.</p-message>
+        <p-message severity="secondary">Результаты сценариев сообщает разработчик или выбранный тестировщик. Воркер запускает команды проверок. Ручные проверки ожидают пользователя.</p-message>
       } @else { <p>Решение и критерии появятся после этапа роутера.</p> }
     </p-panel>
   }
@@ -46,7 +46,7 @@ import type { AgentRun, AutomationSettings } from '../../../../../shared/automat
       <p-checkbox inputId="managed-browser" [binary]="true" [ngModel]="!!settings.browser" (ngModelChange)="toggleBrowser($event)" />
       <label for="managed-browser">Worker запускает тестовое приложение</label>
       @if (settings.browser; as browser) {
-        <p-message severity="info">Команда запускается в worktree с выделенным PORT. Аргументы — JSON-массив; подстановка порта: {{ portToken }}. Подключите браузерный MCP для тестировщика в docs/agent-environment.json и настройте тестовые данные проекта.</p-message>
+        <p-message severity="info">Команда запускается в worktree с выделенным PORT. Аргументы — JSON-массив; подстановка порта: {{ portToken }}. Подключите браузерный MCP для роли, которая проверяет интерфейс в docs/agent-environment.json и настройте тестовые данные проекта.</p-message>
         <label>Команда <input pInputText [(ngModel)]="browser.command" placeholder="npm" /></label>
         <label>Аргументы <input pInputText [ngModel]="browserArgs" (ngModelChange)="setArgs($event)" /></label>
         @if (argsError) { <p-message severity="error">{{ argsError }}</p-message> }

@@ -20,7 +20,7 @@ export class PipelinePolicy {
     if (!roles.includes(AgentRole.Router)) return;
     if (roles[0] !== AgentRole.Router || roles.filter(r => r === AgentRole.Router).length !== 1) return 'Роутер должен быть единственным первым этапом.';
     if (settings.pipelineRoutes?.some(r => r.passTo !== undefined && this.passStage(settings, settings.pipeline.indexOf(r.from)) !== settings.pipeline.indexOf(r.from) + 1)) return 'Для роутера сохраняйте все этапы проверки: переходы с пропуском этапов запрещены.';
-    if (this.writes(settings) && (!roles.includes(AgentRole.Tester) || !roles.includes(AgentRole.Reviewer))) return 'Для маршрутизации кода нужны тестировщик и ревьюер.';
+    if (this.writes(settings) && !roles.includes(AgentRole.Reviewer)) return 'Для маршрутизации кода нужен ревьюер.';
     return;
   }
   /** Router is a preparation step; adding it must not reconnect the terminal gate to it. */
@@ -129,12 +129,22 @@ export class PipelinePolicy {
       ?? feature?.finalDeveloperStage
       ?? settings.pipeline.findIndex(id => settings.agents.some(agent => agent.id === id && WRITABLE_AGENT_ROLES.includes(agent.role)));
   }
-  public static checkAt(settings: AutomationSettings, stage: number): boolean {
+  public static checkAt(settings: AutomationSettings, stage: number, feature?: FeatureExecution): boolean {
     const roles = this.roles(settings);
+    // The aggregate developer is reserved for repairs and skipped on the initial delivery.
+    if (feature && !roles.includes(AgentRole.Tester)) return stage === roles.length - 1 && roles[stage] === AgentRole.Reviewer;
     if (roles[stage] === AgentRole.Tester) return true;
     return WRITABLE_AGENT_ROLES.includes(roles[stage]) && !roles.slice(stage + 1).some(role => WRITABLE_AGENT_ROLES.includes(role) || role === AgentRole.Tester);
   }
-  public static canDecompose(settings: AutomationSettings): boolean { return !settings.pipelineRoutes?.length && this.roles(settings).join(',') === [AgentRole.Analyst, AgentRole.Developer, AgentRole.Tester, AgentRole.Reviewer].join(','); }
+  public static reportsAcceptance(settings: AutomationSettings, stage: number): boolean {
+    const roles = this.roles(settings);
+    if (roles.includes(AgentRole.Tester)) return roles[stage] === AgentRole.Tester;
+    return this.checkAt(settings, stage);
+  }
+  public static canDecompose(settings: AutomationSettings, allowWithoutTester = false): boolean {
+    const roles = this.roles(settings).join(',');
+    return !settings.pipelineRoutes?.length && (roles === 'analyst,developer,tester,reviewer' || (allowWithoutTester && roles === 'analyst,developer,reviewer'));
+  }
   public static needsPlan(settings: AutomationSettings, hasPlan: boolean): boolean {
     const roles = this.roles(settings); const writer = roles.findIndex(role => WRITABLE_AGENT_ROLES.includes(role));
     return !hasPlan && writer >= 0 && roles[writer] !== AgentRole.Developer && !roles.slice(0, writer).includes(AgentRole.Analyst);

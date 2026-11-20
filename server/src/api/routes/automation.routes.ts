@@ -8,6 +8,10 @@ import { RunLogDownload } from '../../automation/run-log-download.js';
 import { TrackerError } from '../../core/errors.js';
 
 export function registerAutomationRoutes(router: Router, app: AppContainer): void {
+  router.get('/api/automation/skills', ({ res }) => sendJson(res, 200, app.automationService.skillLibrary.list()));
+  router.get('/api/automation/skills/:id/:version', ({ params, res }) => sendJson(res, 200, app.automationService.skillLibrary.read({ id: params.id, version: Number(params.version) })));
+  router.post('/api/automation/skills', ({ body, res }) => sendJson(res, 201, app.automationService.skillLibrary.save(body)));
+  router.patch('/api/automation/skills/:id', ({ params, body, res }) => sendJson(res, 200, app.automationService.skillLibrary.save(body, params.id)));
   router.post('/api/automation/runs/:id/profile', ({params, body, res}) => sendJson(res, 200, {run: app.automationService.changeStageProfile(params.id, bodyField(body, 'stage'), bodyField(body, 'profileId'), bodyField(body, 'model'), bodyField(body, 'expectedProfileId'))}));
   router.get('/api/automation/metrics', ({ query, res }) => sendJson(res, 200, app.automationService.metrics({
     from: query.get('from') ?? undefined, to: query.get('to') ?? undefined,
@@ -43,10 +47,12 @@ export function registerAutomationRoutes(router: Router, app: AppContainer): voi
   router.get('/api/automation/project-requests/:id', ({ params, res }) => sendJson(res, 200, app.automationService.projects.get(params.id)));
   router.get('/api/automation/catalog', ({ res }) => sendJson(res, 200, { roles: AGENT_ROLES, runners: RUNNER_IDS }));
   router.get('/api/automation/settings', ({ res }) => sendJson(res, 200, app.automationService.settings()));
+  router.get('/api/automation/project-team', ({ res }) => sendJson(res, 200, app.automationService.projectTeam.read()));
+  router.post('/api/automation/base-team', ({body, res}) => sendJson(res, 200, app.automationService.publishTeam(bodyField(body, 'settings'), bodyField(body, 'revision'))));
   router.get('/api/automation/tasks/:id/team', ({ params, res }) => sendJson(res, 200, app.automationService.taskTeam(params.id)));
   router.post('/api/automation/tasks/:id/team', ({ params, body, res }) => sendJson(res, 200, app.automationService.taskTeam(params.id, body)));
   router.post('/api/automation/tasks/:id/team/reset', ({ params, res }) => sendJson(res, 200, app.automationService.taskTeam(params.id, null)));
-  router.post('/api/automation/settings', ({ body, res }) => sendJson(res, 200, app.automationService.configure(body)));
+  router.post('/api/automation/settings', ({ body, res }) => sendJson(res, 200, app.automationService.configure(body, bodyField(body, 'baseTeamRevision'), bodyField(body, 'adoptBaseTeam') === true)));
   router.get('/api/automation/runs', ({ query, res }) => sendJson(res, 200, {
     runs: app.automationService.list(query.get('taskId') ?? undefined), activeTaskIds: app.automationService.activeTaskIds(),
     tasks: app.taskService.listTasks({ limit: TASK_SELECTION_LIMIT }).map(({ id, title, status, hasPlan, openQuestionsCount, trustedExecution }) => ({ id, title, status, hasPlan, openQuestionsCount, trustedExecution: trustedExecution === true })),

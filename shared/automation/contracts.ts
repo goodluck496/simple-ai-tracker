@@ -30,7 +30,7 @@ export type RunAction = typeof RunAction[keyof typeof RunAction];
 export const WRITABLE_AGENT_ROLES: readonly AgentRole[] = [AgentRole.Developer, AgentRole.Designer];
 export const READ_ONLY_AGENT_ROLES: readonly AgentRole[] = [AgentRole.Router, AgentRole.Analyst, AgentRole.Tester, AgentRole.Reviewer, AgentRole.VisualValidator, AgentRole.Doctor];
 export const EVIDENCE_AGENT_ROLES: readonly AgentRole[] = [AgentRole.Tester, AgentRole.Reviewer, AgentRole.VisualValidator];
-export const REQUIRED_PIPELINE_ROLES: readonly AgentRole[] = [AgentRole.Developer, AgentRole.Tester, AgentRole.Reviewer];
+export const REQUIRED_PIPELINE_ROLES: readonly AgentRole[] = [AgentRole.Developer, AgentRole.Reviewer];
 export const AUTOMATION_LIMITS = { timeoutMinutes: { min: 1, max: 240, default: 30 }, revisions: { min: 0, max: 10, default: 1 }, modelToolTurns: 40, imageBytes: 4 * 1024 * 1024, eventTextLength: 12000 } as const;
 export const AUTOMATION_TIMING = { pollMs: 5000, heartbeatMs: 15000, leaseMs: 90000 } as const;
 
@@ -71,6 +71,8 @@ export interface PipelineRoute {
 }
 
 export interface AutomationSettings {
+  mcpServers?: import('./project-mcp.js').ProjectMcp[];
+  skillBindings?: import('./skills.js').SkillBinding[];
   repositoryPath: string;
   baseBranch: string;
   connections: ModelConnection[];
@@ -131,6 +133,8 @@ export interface ProposedFix {
 }
 
 export interface AgentRun {
+  skillVersions?: import('./skills.js').SkillReference[];
+  decompositionAllowed?: boolean;
   stageChecks?: { stage: number; revision: number; sha: string; ids: string[] }[];
   userCancelledAt?: string;
   manualAcceptance?: { at: string; sha: string; stage: number };
@@ -207,6 +211,7 @@ export interface AgentOutcome {
 }
 
 export interface AgentJob {
+  librarySkills?: import('./skills.js').LibrarySkill[];
   auditAttempt?: { id: string; workspace: string; taskId: string; stage: number; revision: number; handoffBytes: number };
   reviewImageData?: string[];
   visualArtifactData?: string[];
@@ -218,7 +223,7 @@ export interface AgentJob {
   sessionId?: string;
   sessionUsage?: import('./token-usage.js').TokenUsage;
   onSession?: (sessionId: string) => void;
-  projectMcp?: { name: string; command: string; args: string[]; envVars: string[]; tools: string[] }[];
+  projectMcp?: import('./project-mcp.js').ProjectMcp[];
   maxToolCalls?: number;
   onUsage?: (usage: import('./token-usage.js').TokenUsage, state?: { terminal: boolean }) => void;
   runId: string;

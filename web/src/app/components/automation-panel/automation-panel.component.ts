@@ -22,6 +22,10 @@ import { MCP_CATALOG } from '../../../../../shared/automation/mcp-catalog';
 import { PipelinePolicy } from '../../../../../shared/automation/pipeline-policy';
 import { AUTOMATION_TABS, AutomationTab } from './automation-panel.types';
 import { PipelineFlowComponent } from './pipeline-flow.component';
+import { SkillLibraryComponent } from './skill-library.component';
+import { ProjectMcpComponent } from './project-mcp.component';
+import type { SkillSummary } from '../../../../../shared/automation/skills';
+import type { ProjectMcp } from '../../../../../shared/automation/project-mcp';
 import { AGENT_ROLES, RUNNER_IDS, DEFAULT_AUTOMATION_SETTINGS, PROVIDER_KINDS, REASONING_EFFORTS, MERGE_POLICIES,
   AUTOMATION_LIMITS, AUTOMATION_TIMING,
   DEFAULT_SETUP_COMMAND, ProviderKind, RunnerId, AgentRole,
@@ -34,21 +38,73 @@ import { TrackerApiService } from '../../services/tracker-api.service';
 import { WorkspaceService } from '../../services/workspace.service';
 import { WorkerLaunchCommand, DEFAULT_TRACKER_CONTAINER } from '../../../../../shared/automation/launch-command';
 import { AgentTeamProfiles, DEFAULT_ROLE_INSTRUCTIONS } from '../../../../../shared/automation/team-profiles';
+import { applyTeam, type BaseTeamState } from '../../../../../shared/automation/base-team';
 import { TaskAutomationReadiness, TASK_STATUS_TITLES, TASK_SELECTION_LIMIT, type TaskReadiness, type TaskLaunchCandidate } from '../../../../../shared/automation/task-readiness';
 import { ModelCatalogKey, type ModelOption } from '../../../../../shared/automation/model-catalog';
 
 @Component({ selector: 'sat-automation-panel', standalone: true,
-  imports: [TreeModule, FormsModule, ReactiveFormsModule, SelectModule, ButtonModule, CheckboxModule, InputTextModule, TabsModule, AccordionModule, DialogModule, MultiSelectModule, TooltipModule, PanelModule, TextareaModule, PipelineFlowComponent, CdkScrollable],
+  imports: [TreeModule, FormsModule, ReactiveFormsModule, SelectModule, ButtonModule, CheckboxModule, InputTextModule, TabsModule, AccordionModule, DialogModule, MultiSelectModule, TooltipModule, PanelModule, TextareaModule, PipelineFlowComponent, SkillLibraryComponent, ProjectMcpComponent, CdkScrollable],
   templateUrl: './automation-panel.component.html', styleUrl: './automation-panel.component.scss' })
 export class AutomationPanelComponent implements OnInit {
   public readonly mcpCatalog = MCP_CATALOG;
+  public library: SkillSummary[] = [];
+  public baseTeam?: BaseTeamState;
+  public confirmPublish = false;
+  public adoptingTeam = false;
+  private readProjectTeam() {
+    return firstValueFrom(this.http.get<{settings: AutomationSettings; base: BaseTeamState}>('/api/automation/project-team'));
+  }
+  public useBaseTeam(): void {
+    if (!this.baseTeam?.team || this.settingsScope !== 'project') return;
+    this.settings = applyTeam(this.settings, this.baseTeam.team);
+    this.adoptingTeam = true;
+    this.notice = 'Базовая команда загружена в черновик. Сохраните настройки проекта.';
+  }
+  public publishBaseTeam(): void {
+    if (!this.baseTeam || this.settingsScope !== 'project') return;
+    const revision = this.baseTeam.revision;
+    this.confirmPublish = false;
+    void this.act(async () => {
+      await firstValueFrom(this.http.post('/api/automation/base-team', {revision, settings: this.settings}));
+      this.baseTeam = (await this.readProjectTeam()).base;
+      this.notice = 'Базовая команда сохранена для всех проектов.';
+    });
+  }
+  private resourceCache?: {library:SkillSummary[]; bindings:AutomationSettings['skillBindings']; servers:AutomationSettings['mcpServers'];
+    connected:SkillSummary[]; assignableMcp:ProjectMcp[]; skills:Map<AgentRole,string[]>; mcp:Map<AgentRole,string[]> };
+  public get roleResources() {
+    const bindings = this.settings.skillBindings, servers = this.settings.mcpServers;
+    if (this.resourceCache?.library === this.library && this.resourceCache.bindings === bindings && this.resourceCache.servers === servers) return this.resourceCache;
+    const skills = new Map<AgentRole,string[]>(), mcp = new Map<AgentRole,string[]>();
+    for (const role of AGENT_ROLES) {
+      skills.set(role, bindings?.filter(b => b.roles.includes(role)).map(b => b.skillId) ?? []);
+      mcp.set(role, servers?.filter(s => s.roles?.includes(role)).map(s => s.name) ?? []);
+    }
+    return this.resourceCache = {library:this.library, bindings, servers, skills, mcp, assignableMcp:servers?.filter(s => s.tools.length) ?? [],
+      connected:this.library.filter(s => bindings?.some(b => b.skillId === s.id))};
+  }
+  public assignSkills(role:AgentRole, ids:string[]): void {
+    this.settings.skillBindings = this.settings.skillBindings?.map(b => ({...b,roles:this.assignedRoles(b.roles, role, ids.includes(b.skillId))}));
+  }
+  public assignMcp(role:AgentRole, names:string[]): void {
+    this.settings.mcpServers = this.settings.mcpServers?.map(s => ({...s,roles:this.assignedRoles(s.roles ?? [], role, names.includes(s.name))}));
+  }
+  private assignedRoles(roles: AgentRole[], role: AgentRole, enabled: boolean): AgentRole[] {
+    return enabled ? [...new Set([...roles,role])] : roles.filter(item => item !== role);
+  }
+  public readonly probeMcp = async (mcp: ProjectMcp) => {
+    if (this.projectBusy) throw new Error('Воркер обрабатывает другой запрос. Повторите получение инструментов.');
+    const result = await this.project({action:ProjectAction.ProbeMcp,path:mcp.url ? '' : this.settings.repositoryPath,mcp}, () => {});
+    if (!result?.mcpTools) throw new Error(this.error || 'Воркер не вернул список инструментов.');
+    return result.mcpTools;
+  };
   @Output() public readonly openQueue = new EventEmitter<string | null>();
   public readonly tabs = AUTOMATION_TABS;
   public readonly tab = AutomationTab;
   public activeTab: string | number = AutomationTab.Project;
   public sidebarCollapsed = false;
   public toggleSidebar(): void { this.sidebarCollapsed = !this.sidebarCollapsed; }
-  public isTabDisabled(value: AutomationTab): boolean { return this.settingsScope === 'task' && (value === AutomationTab.Project || value === AutomationTab.Models); }
+  public isTabDisabled(value: string | number): boolean { return this.settingsScope === 'task' && (value === AutomationTab.Project || value === AutomationTab.Models || value === AutomationTab.Resources); }
   public selectTab(value: AutomationTab): void { if (!this.isTabDisabled(value)) { this.activeTab = value; if (window.matchMedia('(max-width: 700px)').matches) this.sidebarCollapsed = true; } }
   @Input() public initialMessage = '';
   @Input() public set initialBatch(value: boolean) { if (value) { this.batchMode = true; this.activeTab = AutomationTab.Launch; } }
@@ -126,7 +182,8 @@ export class AutomationPanelComponent implements OnInit {
   }
   public changeScope(scope: 'project' | 'task'): void {
     this.cacheDraft(); this.settingsScope = scope;
-    if (scope === 'task' && (this.activeTab === AutomationTab.Project || this.activeTab === AutomationTab.Models)) this.activeTab = AutomationTab.Team;
+    this.confirmPublish = false;
+    if (this.isTabDisabled(this.activeTab)) this.activeTab = AutomationTab.Team;
     void this.act(async () => {
       if (scope === 'task' && this.selectedTask) await this.loadTaskTeam(this.selectedTask);
       else if (scope === 'project') this.settings = structuredClone(this.projectDraft ?? await firstValueFrom(this.http.get<AutomationSettings>('/api/automation/settings')));
@@ -489,6 +546,10 @@ export class AutomationPanelComponent implements OnInit {
   private connectionOptionsSignature = '';
   private connectionOptionsCache: { label: string; value: string }[] = [];
   public ngOnInit(): void {
+    this.http.get<SkillSummary[]>('/api/automation/skills').pipe(takeUntilDestroyed(this.destroyRef)).subscribe({
+      next: catalog => { this.library = catalog; this.changeDetector.markForCheck(); },
+      error: () => { this.error = 'Не удалось загрузить библиотеку навыков.'; },
+    });
     this.destroyRef.onDestroy(() => { this.destroyed = true; });
     this.taskControl.valueChanges.pipe(takeUntilDestroyed(this.destroyRef)).subscribe(id => {
       this.startError = ''; this.cacheDraft();
@@ -496,7 +557,9 @@ export class AutomationPanelComponent implements OnInit {
       this.changeDetector.markForCheck();
     });
     void this.act(async () => {
-      const prepared = this.teamProfiles.prepare(await firstValueFrom(this.http.get<AutomationSettings>('/api/automation/settings')));
+      const project = await this.readProjectTeam();
+      this.baseTeam = project.base;
+      const prepared = this.teamProfiles.prepare(project.settings, project.base.mode === 'independent');
       this.settings = prepared.settings;
       this.projectDraft = structuredClone(this.settings);
       if (this.settingsScope === 'task' && this.selectedTask) await this.loadTaskTeam(this.selectedTask);
@@ -809,7 +872,7 @@ export class AutomationPanelComponent implements OnInit {
   public addStandardTeam(): void {
     if (this.settings.agents.length) return;
     for (const role of STANDARD_TEAM_ROLES) this.addAgent(role);
-    this.notice = 'Добавлены разработчик и тестировщик. Разработчик сам анализирует и пишет код/юнит-тесты; тестировщик проверяет поведение. Выберите модели отдельно.';
+    this.notice = 'Добавлен разработчик. Выберите модель. Воркер выполнит настроенные проверки проекта.';
   }
   public selectConnection(agent: AgentProfile): void {
     if (agent.connectionId.startsWith('preset:')) {
@@ -832,7 +895,11 @@ export class AutomationPanelComponent implements OnInit {
   }
   public roleLabel(role: AgentRole): string { return ROLE_OPTIONS.find((option) => option.value === role)?.label ?? role; }
   public changeRole(agent: AgentProfile, role: AgentRole): void { this.teamProfiles.changeRole(agent, role); }
-  public resetInstructions(agent: AgentProfile): void { agent.instructions = DEFAULT_ROLE_INSTRUCTIONS[agent.role]; }
+  public resetInstructions(agent: AgentProfile): void {
+    const parent = this.settingsScope === 'task' ? this.projectDraft : this.baseTeam?.team;
+    const original = parent?.agents.find(profile => profile.id === agent.id && profile.role === agent.role);
+    agent.instructions = original?.instructions ?? DEFAULT_ROLE_INSTRUCTIONS[agent.role];
+  }
   public agentLabel(id: string): string { const agent = this.settings.agents.find((entry) => entry.id === id); return agent ? `${this.roleLabel(agent.role)} · ${agent.runner} · ${agent.model || 'выберите модель'}` : id; }
   public save(): void { void this.act(async () => {
     if (!this.taskTeamReady) throw new Error('Сначала дождитесь загрузки команды выбранной задачи.');
@@ -840,7 +907,16 @@ export class AutomationPanelComponent implements OnInit {
       if (!this.selectedTask) throw new Error('Выберите задачу для настройки команды.');
       const value = await firstValueFrom(this.http.post<{ settings: AutomationSettings; overridden: boolean }>(`/api/automation/tasks/${this.selectedTask}/team`, this.settings));
       this.settings = value.settings; this.taskOverridden = value.overridden; this.loadedTeamSignature = this.teamSignature(this.settings); this.cacheDraft(); this.notice = `Команда задачи ${this.selectedTask} сохранена. Настройки проекта не изменены.`;
-    } else { this.settings = await firstValueFrom(this.http.post<AutomationSettings>('/api/automation/settings', this.settings)); this.projectDraft = structuredClone(this.settings); this.notice = 'Настройки проекта сохранены.'; }
+    } else {
+      await firstValueFrom(this.http.post('/api/automation/settings', {...this.settings,
+        baseTeamRevision: this.baseTeam?.revision, adoptBaseTeam: this.adoptingTeam}));
+      const project = await this.readProjectTeam();
+      this.settings = project.settings;
+      this.baseTeam = project.base;
+      this.projectDraft = structuredClone(this.settings);
+      this.adoptingTeam = false;
+      this.notice = 'Настройки проекта сохранены.';
+    }
     this.repairNotice = '';
   }); }
   public start(): void {

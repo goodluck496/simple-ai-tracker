@@ -4,6 +4,7 @@ import type { SqlDatabase } from '../db/sql-database.js';
 import { TrackerError } from '../core/errors.js';
 import { DEFAULT_AUTOMATION_SETTINGS, RUNNER_IDS, RunnerId, ProviderKind } from '../../../shared/automation/contracts.js';
 import { AutomationSettingsValidator } from './settings.js';
+import { validMcp } from '../../../shared/automation/project-mcp.js';
 import { ProjectAction, ProjectRequestStatus, PROJECT_LIMITS, type HostStatus, type ProjectInput, type ProjectRequest, type ProjectResult, type ExecutionStatus, type ProjectPassport } from '../../../shared/automation/project.js';
 
 const STATE_KEY = 'automation_host_requests_v1';
@@ -32,6 +33,9 @@ export class ProjectRequests {
       throw new TrackerError('VALIDATION_FAILED', 'Укажите репозиторий и базовую ветку.');
     }
     let catalog: ProjectInput['catalog'];
+    if (input.action === ProjectAction.ProbeMcp && (!validMcp(input.mcp) || (input.mcp.command !== undefined && !input.path.trim()))) {
+      throw new TrackerError('VALIDATION_FAILED', 'Укажите каталог проекта и параметры сервера MCP.');
+    }
     if (input.action === ProjectAction.Models || input.action === ProjectAction.UnloadOllama) {
       if (!input.catalog || !RUNNER_IDS.includes(input.catalog.runner)) throw new TrackerError('VALIDATION_FAILED', 'Укажите исполнитель и подключение моделей.');
       const connection = new AutomationSettingsValidator().validate({ ...structuredClone(DEFAULT_AUTOMATION_SETTINGS), connections: [input.catalog.connection] }).connections[0];
@@ -52,6 +56,7 @@ export class ProjectRequests {
       }
       if (!internal && state.requests.some((r) => r.status === ProjectRequestStatus.Queued || r.status === ProjectRequestStatus.Running)) throw new TrackerError('CONFLICT', 'Предыдущий запрос к worker ещё выполняется.');
       const request: ProjectRequest = { action: input.action, path: input.path, baseBranch: input.baseBranch, newBranch: input.newBranch, catalog, model: input.action === ProjectAction.UnloadOllama ? input.model : undefined, cleanup: input.cleanup, diff: input.diff, previewPatch: input.previewPatch,
+        ...(input.action === ProjectAction.ProbeMcp ? {mcp: input.mcp} : {}),
         id: randomUUID(), status: ProjectRequestStatus.Queued, createdAt: this.now(), ...(control ? { targetWorkerId: state.workerId } : {}) };
       const retained = state.requests.filter((r, index) => r.status === ProjectRequestStatus.Queued || r.status === ProjectRequestStatus.Running || index >= state.requests.length - PROJECT_LIMITS.maxHistory + 1);
       if (control) state.executionDesired = input.action === ProjectAction.StartWorker;

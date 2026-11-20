@@ -19,6 +19,8 @@ import { ImageService } from '../services/image-service.js';
 import { TrackerError } from './errors.js';
 import type { ContainerOptions } from '../bootstrap/container.js';
 import { AutomationService } from '../automation/automation-service.js';
+import { SkillLibrary } from '../automation/skill-library.js';
+import { ProjectTeamSettings } from '../automation/base-team.js';
 import { AgentRunRepository } from '../automation/run-repository.js';
 import { ImprovementService } from '../automation/improvement-service.js';
 
@@ -290,7 +292,9 @@ export class WorkspaceManager {
     const imageService = new ImageService(finalConfig, this.logger);
     const runs = new AgentRunRepository(db);
     const improvements = new ImprovementService(runs, taskService, workspaceName);
-    const automationService = new AutomationService(runs, repos, taskService, clock, workspaceName, imageService, improvements);
+    const shared = () => this.within('default', () => this.active);
+    const library = new SkillLibrary(shared);
+    const automationService = new AutomationService(runs, repos, taskService, clock, workspaceName, imageService, improvements, library, new ProjectTeamSettings(repos.meta, shared));
 
     return {
       config: finalConfig,

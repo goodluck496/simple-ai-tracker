@@ -56,7 +56,9 @@ test('project MCP probes real stdio handshake and paginated tools; rejects unsup
     await profile();
     const lines: string[] = [];
     const result = await new ProjectEnvironment().prepare(job, text => lines.push(text));
-    assert.equal(path.resolve(result.projectMcp![0].args[0]), path.join(cwd, 'fixture.cjs'));
+    const resolved = result.projectMcp![0];
+    assert.ok(resolved.command);
+    assert.equal(path.resolve(resolved.args[0]), path.join(cwd, 'fixture.cjs'));
     assert.match(lines.join(''), /initialize\/listTools OK/);
     await assert.rejects(new ProjectEnvironment().prepare({ ...job, profile: { ...job.profile, runner: 'deepseek-harness' } }, () => {}), /requires Codex or Model API/);
     assert.equal((await new ProjectEnvironment().prepare({ ...job, profile: { ...job.profile, runner: 'model-api' } }, () => {})).projectMcp?.length, 1);

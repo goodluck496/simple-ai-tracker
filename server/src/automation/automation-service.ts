@@ -4,7 +4,7 @@ import { ProviderKind, type ProposedFix } from '../../../shared/automation/contr
 import { randomUUID, createHash } from 'node:crypto';
 import { readFileSync, statSync } from 'node:fs';
 import { COMMENT_SCREENSHOT, SCREENSHOT_LIMIT, SCREENSHOT_MAX_BYTES, SCREENSHOT_MAX_ENCODED_LENGTH, SCREENSHOT_PATH } from '../../../shared/automation/screenshots.js';
-import { DEFAULT_AUTOMATION_SETTINGS, AgentRole, RunStatus, AgentVerdict, AUTOMATION_START_TASK_STATUSES, ACTIVE_RUN_STATUSES,
+import { AgentRole, RunStatus, AgentVerdict, AUTOMATION_START_TASK_STATUSES, ACTIVE_RUN_STATUSES,
   RESUMABLE_RUN_STATUSES, OWNED_RUN_STATUSES, WRITABLE_AGENT_ROLES, EVIDENCE_AGENT_ROLES, AGENT_VERDICTS, AUTOMATION_TIMING, MergePolicy,
   type AgentOutcome, type AgentRun, type AutomationSettings, type IntegrationInfo } from '../../../shared/automation/contracts.js';
 import { TaskStatus } from '../../../shared/tasks/status.js';
@@ -28,8 +28,9 @@ import { checkBelongsToRun, checkFingerprint } from './check-evidence.js';
 import { collectMetrics, verifyRefs } from './improvement-metrics.js';
 import { ImprovementService } from './improvement-service.js';
 import { configuredCheckScripts } from './package-manager.js';
+import type { SkillLibrary } from './skill-library.js';
+import type { ProjectTeamSettings } from './base-team.js';
 
-const SETTINGS_KEY = 'automation_settings_v1';
 const LEASE_MS = AUTOMATION_TIMING.leaseMs;
 
 export class AutomationService {
@@ -37,17 +38,26 @@ export class AutomationService {
   public get projects(): ProjectRequests { return new ProjectRequests(this.repos.meta, this.runs.db); }
   public constructor(private readonly runs: AgentRunRepository, private readonly repos: Repositories,
     private readonly tasks: TaskService, private readonly clock: Clock, private readonly workspace = 'default',
-    private readonly images?: import('../services/image-service.js').ImageService,
-    private readonly improvements = new ImprovementService(runs, tasks, workspace)) {}
+    private readonly images: import('../services/image-service.js').ImageService | undefined,
+    private readonly improvements: ImprovementService,
+    public readonly skillLibrary: SkillLibrary,
+    public readonly projectTeam: ProjectTeamSettings) {}
 
   public settings(): AutomationSettings {
-    const value = this.repos.meta.get(SETTINGS_KEY);
-    return value ? { ...structuredClone(DEFAULT_AUTOMATION_SETTINGS), ...JSON.parse(value) } as AutomationSettings : structuredClone(DEFAULT_AUTOMATION_SETTINGS);
+    return this.projectTeam.read().settings;
   }
-  public configure(input: unknown): AutomationSettings {
+  private validateSettings(input: unknown): AutomationSettings {
     const settings = new AutomationSettingsValidator().validate(input);
-    this.repos.meta.set(SETTINGS_KEY, JSON.stringify(settings));
+    if (settings.skillBindings?.length) this.skillLibrary.versions(settings.skillBindings);
     return settings;
+  }
+  public configure(input: unknown, revision?: unknown, adopt = false): AutomationSettings {
+    const settings = this.validateSettings(input);
+    this.projectTeam.save(settings, revision, adopt);
+    return settings;
+  }
+  public publishTeam(input: unknown, revision: unknown) {
+    return this.projectTeam.publish(this.validateSettings(input), revision);
   }
   public taskTeam(id: string, input?: unknown) {
     this.tasks.getTaskCard(id);
@@ -220,7 +230,7 @@ export class AutomationService {
       }
       if (value.phase === 'candidate' ? run.status !== RunStatus.Integrating || run.integration?.candidateSha !== value.sha
         || run.integration.attempt !== value.attempt : value.phase !== 'stage' || run.status !== RunStatus.Running
-        || !PipelinePolicy.checkAt(run.settings, run.stage)) {
+        || !PipelinePolicy.checkAt(run.settings, run.stage, run.feature)) {
         if (!cancelled) throw new TrackerError('CONFLICT', 'Execution belongs to a different stage or integration candidate.');
       }
       if (begin) {
@@ -288,7 +298,8 @@ export class AutomationService {
       const trustedExecution = task.trustedExecution === true || hasLocal;
       const run: AgentRun = { id: randomUUID(), taskId, status: RunStatus.Queued, stage: 0, revision: 0,
         workerId: null, leaseToken: null, leaseUntil: null, settings, createdAt: now, updatedAt: now,
-        trustedExecution,
+        trustedExecution, decompositionAllowed: PipelinePolicy.canDecompose(settings, true),
+        ...(settings.skillBindings?.length ? { skillVersions: this.skillLibrary.versions(settings.skillBindings) } : {}),
         branch: null, commitSha: null, summary: '', restartedFromId: previous?.id, usageAttempts: [] };
       if (integrationRestart) {
         run.stage = settings.pipeline.length; run.integrationSourceSha = previous.commitSha!;
@@ -296,7 +307,7 @@ export class AutomationService {
       }
       this.runs.save(run);
       this.runs.event(run.id, RunStatus.Queued, 'Run queued with an immutable settings snapshot.', now);
-      if (draft !== undefined && persistSettings) this.repos.meta.set(SETTINGS_KEY, JSON.stringify(settings));
+      if (draft !== undefined && persistSettings) this.projectTeam.save(settings);
       return this.publicRun(run);
     });
   }
@@ -499,7 +510,7 @@ export class AutomationService {
         budgetElapsedMs: RunBudget.elapsed(run, Date.parse(now)), budgetUpdatedAt: now };
       updated.budgetApproval = undefined;
       if (checkIds !== undefined) {
-        if (!Array.isArray(checkIds) || !PipelinePolicy.checkAt(run.settings, run.stage)
+        if (!Array.isArray(checkIds) || !PipelinePolicy.checkAt(run.settings, run.stage, run.feature)
           || !verifyRefs(this.runs.checks(id), checkIds, run, 'stage', commitSha, run.stage))
           throw new TrackerError('VALIDATION_FAILED', 'Stage check evidence does not match the verified SHA and command set.');
         const prior = run.stageChecks ?? [];
@@ -516,7 +527,9 @@ export class AutomationService {
         updated.routing = { decision, sourceDescription: this.tasks.getTaskCard(taskId).description ?? '', createdAt: now };
         this.runs.event(id, 'routing', JSON.stringify({complexity: decision.complexity, risk: decision.risk, uncertainty: decision.uncertainty, replacements: decision.assignments.length, criteria: decision.brief.criteria.length}), now);
       }
-      if (run.routing && profile.role === AgentRole.Tester && outcome.verdict === AgentVerdict.Pass) {
+      let writerAcceptanceFailed = false;
+      if (run.routing && WRITABLE_AGENT_ROLES.includes(profile.role)) updated.acceptance = undefined;
+      if (run.routing && PipelinePolicy.reportsAcceptance(run.settings, run.stage) && outcome.verdict === AgentVerdict.Pass) {
         try {
           const brief = run.routing.decision.brief;
           const images = Array.isArray(criterionImages) && criterionImages.length ? this.attachStageScreenshots(taskId, criterionImages, now) : new Map<string, string>();
@@ -538,27 +551,32 @@ export class AutomationService {
                 }
               }
             }
+            if (WRITABLE_AGENT_ROLES.includes(profile.role)) return { ...result, status: 'failed' as const, evidence: 'No matching worker check evidence.' };
             return result;
           });
           updated.acceptance = { sha: commitSha, results };
-          if (results.some(r => r.status === 'failed')) outcome = { ...outcome, verdict: AgentVerdict.ChangesRequested, summary: 'Acceptance criteria failed. ' + outcome.summary };
+          const failures = results.filter(result => result.status === 'failed');
+          if (failures.length) {
+            writerAcceptanceFailed = WRITABLE_AGENT_ROLES.includes(profile.role);
+            outcome = { ...outcome, verdict: AgentVerdict.ChangesRequested, summary: 'Acceptance criteria failed. ' + failures.map(result => result.id + ': ' + result.evidence).join('\n') };
+            updated.summary = outcome.summary;
+          }
           if (results.some(r => r.status === 'manual')) this.tasks.addComment({ id: taskId, text: 'Требуется ручная проверка: ' + results.filter(r => r.status === 'manual').map(r => r.id).join(', '), kind: 'note', actor: 'agent' });
           this.runs.event(id, 'acceptance', JSON.stringify({sha: commitSha, total: results.length, passed: results.filter(r => r.status === 'passed').length, failed: results.filter(r => r.status === 'failed').length, manual: results.filter(r => r.status === 'manual').length}), now);
         } catch (error) { throw new TrackerError('VALIDATION_FAILED', String(error)); }
       }
-      if (run.routing && WRITABLE_AGENT_ROLES.includes(profile.role)) updated.acceptance = undefined;
       if (WRITABLE_AGENT_ROLES.includes(profile.role) && typeof outcome.commitMessage === 'string') {
         if (child) {
           if (outcome.verdict === AgentVerdict.Pass) updated.feature = { ...run.feature!, children: run.feature!.children.map(c => c.key === child.key ? { ...c, commitMessage: outcome.commitMessage, sourceSha: commitSha, state: 'review' } : c) };
         }
         else updated.mergeMessage = outcome.commitMessage;
       }
-      if (EVIDENCE_AGENT_ROLES.includes(profile.role) || PipelinePolicy.checkAt(run.settings, run.stage)) {
+      if (EVIDENCE_AGENT_ROLES.includes(profile.role) || PipelinePolicy.checkAt(run.settings, run.stage, run.feature)) {
         this.tasks.addAttachment(taskId, { kind: 'report', name: `${profile.role}-${run.id}-${run.revision}.md`,
           content: `# ${profile.role}\n\nVerdict: ${outcome.verdict}\nCommit: ${commitSha}\nBranch: ${branch}\n\n${outcome.summary}\n\n## Worker evidence\n${this.runs.events(id).filter((event) => event.kind === 'progress').slice(-10).map((event) => event.text).join('\n')}` });
       }
       const budgetReason = RunBudget.reason(run, Date.parse(now));
-      const retryWriterCheck = checkFailed && WRITABLE_AGENT_ROLES.includes(profile.role) && PipelinePolicy.checkAt(run.settings, run.stage);
+      const retryWriterCheck = (checkFailed || writerAcceptanceFailed) && WRITABLE_AGENT_ROLES.includes(profile.role) && PipelinePolicy.checkAt(run.settings, run.stage, run.feature);
       const doctorRepair = run.doctorRepair?.revision === run.revision ? run.doctorRepair : undefined;
       if (doctorRepair && (outcome.verdict !== AgentVerdict.Pass || run.stage >= doctorRepair.failedStage)) updated.doctorRepair = undefined;
       if ((budgetReason && outcome.verdict !== AgentVerdict.Questions) || outcome.verdict === AgentVerdict.Blocked
@@ -602,7 +620,7 @@ export class AutomationService {
         if (profile.role === AgentRole.Analyst) {
           if (!outcome.plan?.trim()) throw new TrackerError('VALIDATION_FAILED', 'Analyst must return a plan.');
           this.tasks.attachPlan({ id: run.taskId, planContent: outcome.plan, summary: outcome.summary, actor: 'agent' });
-          if (outcome.decomposition?.length && PipelinePolicy.canDecompose(run.settings)) {
+          if (outcome.decomposition?.length && (run.decompositionAllowed ?? PipelinePolicy.canDecompose(run.settings))) {
             if (run.feature) throw new TrackerError('CONFLICT', 'Feature was already decomposed.');
             let planned;
             try { planned = FeaturePlanning.apply({ ...run, settings: { ...run.settings, agents: run.settings.agents.filter(agent => run.settings.pipeline.includes(agent.id)) } }, outcome, this.tasks); }
@@ -984,6 +1002,14 @@ export class AutomationService {
     });
   }
 
+  public stageSkills(id: string, token: string) {
+    const run = this.owned(id, token);
+    if (!run.settings.pipeline[run.stage]) return [];
+    const role = TaskRouting.profile(run.settings, run.stage, run.routing).role;
+    const bindings = run.settings.skillBindings ?? [];
+    return (run.skillVersions ?? []).filter(ref => bindings.some(b => b.skillId === ref.id && b.roles.includes(role)))
+      .map(ref => this.skillLibrary.read(ref));
+  }
   public reviewEvidence(id: string, token: string): { name: string; base64: string }[] {
     const run = this.owned(id, token);
     return (run.reviewFeedback ?? '').split('\n').flatMap(line => {

@@ -426,6 +426,7 @@ export class TrackerToolRegistry {
         case AutomationTool.BeginStage: return json({ ok: true, attemptId: service.beginStage(id(), token(), args['phase'] === 'resolver') });
         case AutomationTool.Checkout: service.checkout(id(), token(), args['result']); return json({ ok: true });
         case AutomationTool.ReviewEvidence: return json(service.reviewEvidence(id(), token()));
+        case AutomationTool.StageSkills: return json(service.stageSkills(id(), token()));
         case AutomationTool.Integration: service.integration(id(), token(), args['result']); return json({ ok: true });
         case AutomationTool.CheckExecution: return json(service.checkExecution(id(), token(), args['result'], args['phase'] === 'begin'));
         case AutomationTool.Usage: service.usage(id(), token(), requireString(args, 'attemptId'), args['usage'], args['finished'] === true); return json({ ok: true });

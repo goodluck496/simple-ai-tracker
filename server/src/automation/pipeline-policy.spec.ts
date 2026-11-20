@@ -35,5 +35,8 @@ test('custom pipelines run only selected roles; readonly results do not merge or
     assert.equal(PipelinePolicy.checkAt({ ...settings, pipeline: ['developer', 'reviewer'] }, 0), true);
     assert.equal(PipelinePolicy.checkAt({ ...settings, pipeline: ['developer', 'tester', 'developer'] }, 2), true);
     assert.equal(PipelinePolicy.canDecompose({ ...settings, pipeline: ['analyst'] }), false);
+    const smallerTeam = { ...settings, pipeline: ['analyst', 'developer', 'reviewer'] };
+    assert.equal(PipelinePolicy.canDecompose(smallerTeam), false, 'Existing snapshots use their original decomposition rules');
+    assert.equal(PipelinePolicy.canDecompose(smallerTeam, true), true);
   } finally { app.close(); }
 });

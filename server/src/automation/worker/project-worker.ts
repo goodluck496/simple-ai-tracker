@@ -12,6 +12,8 @@ import { researchProject } from './project-research.js';
 import { RunCleanup } from './run-cleanup.js';
 import type { ExecutionControl } from './execution-supervisor.js';
 import { readProjectPackageManager } from '../package-manager.js';
+import { ProjectEnvironment } from '../runners/project-environment.js';
+import { bindProjectMcp } from '../runners/mcp-transport.js';
 
 export class ProjectWorker {
   private readonly executor = new ProcessExecutor();
@@ -49,6 +51,11 @@ export class ProjectWorker {
     const target = input.path || os.homedir();
     if (!path.isAbsolute(target)) throw new Error('Укажите абсолютную папку на машине worker.');
     const directory = await realpath(target);
+    if (input.action === ProjectAction.ProbeMcp) {
+      if (!input.mcp) throw new Error('Не указано подключение MCP.');
+      const server = bindProjectMcp(input.mcp, directory);
+      return {path: directory, mcpTools: await ProjectEnvironment.probe(server, directory, AbortSignal.timeout(PROJECT_LIMITS.commandMs))};
+    }
     if (input.action === ProjectAction.PreviewPatch) {
       if (!input.previewPatch) throw new Error('Не указан патч запуска.');
       await this.previewPatch(directory, input.previewPatch);

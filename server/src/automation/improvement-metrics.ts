@@ -16,7 +16,7 @@ export function collectMetrics(runs: AgentRunRepository, period: ImprovementPeri
     metrics.occurrences.push(...occurrences);
     if (ACTIVE_RUN_STATUSES.includes(run.status)) { metrics.active++; continue; }
     if (run.status === RunStatus.Cancelled && (run.userCancelledAt || !run.proposedFix)) { metrics.stopped++; continue; }
-    const stages = run.settings.pipeline.map((_, index) => index).filter(stage => PipelinePolicy.checkAt(run.settings, stage));
+    const stages = run.settings.pipeline.map((_, index) => index).filter(stage => PipelinePolicy.checkAt(run.settings, stage, run.feature));
     const candidateRequired = run.settings.mergePolicy === MergePolicy.Local;
     if (!run.settings.checks.length || (!stages.length && !candidateRequired)) { metrics.noRequiredChecks++; continue; }
     const checks = runs.checks(run.id);

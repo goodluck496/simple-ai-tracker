@@ -1,13 +1,13 @@
 import { AgentRole, ProviderKind, RunnerId, type ModelConnection } from './contracts.js';
 export const ROLE_OPTIONS = [
   { label: 'Роутер — сложность, критерии и модели', value: AgentRole.Router },
-  { label: 'Аналитик — план', value: AgentRole.Analyst }, { label: 'Разработчик — анализ, код, юнит-тесты', value: AgentRole.Developer },
-  { label: 'Тестировщик — ревью и проверки', value: AgentRole.Tester }, { label: 'Ревьюер — оценка кода', value: AgentRole.Reviewer },
+  { label: 'Аналитик — план', value: AgentRole.Analyst }, { label: 'Разработчик — анализ, код и тесты', value: AgentRole.Developer },
+  { label: 'Тестировщик — дополнительная проверка', value: AgentRole.Tester }, { label: 'Ревьюер — оценка кода', value: AgentRole.Reviewer },
   { label: 'Дизайнер — интерфейс', value: AgentRole.Designer }, { label: 'Визуальный валидатор — скриншоты', value: AgentRole.VisualValidator },
   { label: 'Системный доктор — диагностика сбоев', value: AgentRole.Doctor },
 ];
-export const STANDARD_TEAM_ROLES = [AgentRole.Developer, AgentRole.Tester] as const;
-export const FULL_TEAM_ROLES = [AgentRole.Analyst, AgentRole.Developer, AgentRole.Tester, AgentRole.Reviewer] as const;
+export const STANDARD_TEAM_ROLES = [AgentRole.Developer] as const;
+export const FULL_TEAM_ROLES = [AgentRole.Analyst, AgentRole.Developer, AgentRole.Reviewer] as const;
 export const ConnectionPreset = { Codex: 'codex', Claude: 'claude-code', OpenCode: 'opencode', Antigravity: 'antigravity', DeepSeek: 'deepseek-api', DeepSeekHarness: 'deepseek-harness', Ollama: 'ollama', OpenAI: 'openai-compatible', Custom: 'custom' } as const;
 export type ConnectionPreset = typeof ConnectionPreset[keyof typeof ConnectionPreset];
 export const CONNECTION_PRESETS: readonly { id: ConnectionPreset; label: string; runner: RunnerId; connection: Omit<ModelConnection, 'id'> }[] = [

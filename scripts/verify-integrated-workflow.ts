@@ -49,7 +49,7 @@ try {
   await queue.locator('.queue-main .badge-limits').getByText('Без лимитов', { exact: true }).waitFor();
   const run = app.automationService.list(task.id)[0];
   assert.equal(run.trustedExecution, true);
-  assert.deepEqual(run.settings.pipeline, ['developer', 'tester']);
+  assert.deepEqual(run.settings.pipeline, ['developer']);
   await queue.locator('.p-dialog-close-button').click();
   await openCard(); await trust.uncheck();
   await Promise.all([page.waitForResponse(response => response.request().method() === 'PATCH' && response.url().endsWith('/api/tasks/' + task.id)), card.locator('.sidebar-footer p-button').filter({ hasText: 'Сохранить' }).locator('button').click()]);
@@ -63,7 +63,7 @@ try {
   assert.ok(app.taskService.listTasks({}).some(item => item.title === 'New bounded fixture' && item.trustedExecution === false));
   mkdirSync('dist/acceptance', { recursive: true }); await page.screenshot({ path: 'dist/acceptance/integrated-workflow.png' });
   assert.deepEqual(errors, []);
-  console.log('PASS: trusted checkbox defaults/persistence, planless developer+tester launch, queue indication, immutable snapshots, create/edit, narrow layout, no browser errors. No paid models or real task data.');
+  console.log('PASS: trusted checkbox defaults/persistence, planless developer launch, queue indication, immutable snapshots, create/edit, narrow layout, no browser errors. No paid models or real task data.');
 } finally {
   await browser.close(); server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve()));
   app.close(); rmSync(root, { recursive: true, force: true });

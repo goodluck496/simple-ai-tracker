@@ -128,7 +128,7 @@ test('requirements changed while router is running cannot be published as a curr
   } finally {app.close();}
 });
 
-test('acceptance criteria only link verifiable check executions and matching browser PNGs of the same attempt and SHA', () => {
+for (const withTester of [true, false]) test(`acceptance with tester=${withTester} links checks and PNGs of the same attempt and SHA`, () => {
   const pngBytes = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+X2dIAAAAASUVORK5CYII=', 'base64');
   const pngDataUrl = `data:image/png;base64,${pngBytes.toString('base64')}`;
   const digest = createHash('sha256').update(pngDataUrl).digest('hex');
@@ -148,6 +148,11 @@ test('acceptance criteria only link verifiable check executions and matching bro
     const service = app.automationService;
     const cfg = settings();
     service.configure(cfg);
+    const legacy = service.enqueue(app.taskService.createTask({title: 'Previously queued'}).id);
+    if (!withTester) cfg.pipeline = cfg.pipeline.filter(id => id !== 'tester');
+    service.configure(cfg);
+    assert.ok(service.detail(legacy.id).run.settings.pipeline.includes('tester'));
+    service.dequeue(legacy.id);
     const task = app.taskService.createTask({ title: 'Evidence check task', description: 'Verify criterion source' });
     service.enqueue(task.id);
     const run = service.claim('test-worker')!;
@@ -160,15 +165,15 @@ test('acceptance criteria only link verifiable check executions and matching bro
     // router -> analyst -> developer
     service.beginStage(run.id, token); finish(JSON.stringify(browserDecision()));
     service.beginStage(run.id, token); finish('# Plan\n1. Build and test.');
-    service.beginStage(run.id, token); finish();
+    if (withTester) { service.beginStage(run.id, token); finish(); }
 
-    // tester stage (stage 3)
+    const acceptanceStage = withTester ? 3 : 2;
     service.beginStage(run.id, token);
     const recordCheck = (check: {
       id: string; sha: string; browserResults?: { criterionId: string; action: string; assertion: string; actual: string; screenshot: string; imageDigest: string }[];
     }) => {
       const base = {
-        id: check.id, runId: run.id, attempt: 1, stage: 3, phase: 'stage' as const,
+        id: check.id, runId: run.id, attempt: 1, stage: acceptanceStage, phase: 'stage' as const,
         revision: 0, sha: check.sha, fingerprint: fp, position: 0, command: cfg.checks[0].command, args: cfg.checks[0].args,
         at: new Date().toISOString(),
       };
@@ -187,23 +192,47 @@ test('acceptance criteria only link verifiable check executions and matching bro
     };
     recordCheck(validCheck);
 
-    // Complete tester with AC-1 referencing missing/wrong position and AC-2 referencing valid check + missing image first -> AC-2 has no browser source without image, then test with image
-    const afterTester = finish(
+    // The optional legacy tester may supply text-only unit evidence. The writer must link a verified check.
+    const afterReport = finish(
       JSON.stringify({
         results: [
-          { id: 'AC-1', status: 'passed', evidence: 'text only without checkPosition' },
+          { id: 'AC-1', status: 'passed', evidence: 'unit assertion', ...(withTester ? {} : { checkPosition: 0 }) },
           { id: 'AC-2', status: 'passed', evidence: 'clicked tab', checkPosition: 0 },
         ],
       }),
       [validCheck.id],
       [pngDataUrl],
     );
-    const ac1 = afterTester.acceptance?.results.find(r => r.id === 'AC-1');
-    const ac2 = afterTester.acceptance?.results.find(r => r.id === 'AC-2');
-    assert.equal(ac1?.source, undefined, 'Text passed without verifiable checkPosition must not produce source');
+    const ac1 = afterReport.acceptance?.results.find(r => r.id === 'AC-1');
+    const ac2 = afterReport.acceptance?.results.find(r => r.id === 'AC-2');
+    assert.equal(ac1?.source?.checkId, withTester ? undefined : validCheck.id);
     assert.ok(ac2?.source, 'Browser criterion with matching check and PNG must link source');
     assert.equal(ac2?.source?.checkId, validCheck.id);
     assert.equal(ac2?.source?.sha, sha);
     assert.ok(ac2?.source?.browser?.imageUrl, 'Browser criterion source must include saved PNG URL');
+    service.beginStage(run.id, token); assert.equal(finish().status, 'review');
+  } finally { app.close(); }
+});
+
+test('a routed writer retries the current stage when a claimed pass has no check evidence', () => {
+  const app = createContainer({ config: { dbPath: ':memory:' }, logger: new SilentLogger() });
+  try {
+    const service = app.automationService;
+    const cfg = settings();
+    service.configure({ ...cfg, pipeline: cfg.pipeline.filter(id => id !== 'tester') });
+    const task = app.taskService.createTask({ title: 'Missing evidence', description: 'Persist a value' });
+    service.enqueue(task.id);
+    const run = service.claim('fixture')!;
+    const finish = (plan: string) => {
+      service.beginStage(run.id, run.leaseToken!);
+      return service.completeStage(run.id, run.leaseToken!, { verdict: 'pass', summary: 'ok', plan }, `sat/${run.id}`, 'a'.repeat(40));
+    };
+    finish(JSON.stringify(decision()));
+    finish('1. Add the persistence test.');
+    const result = finish(JSON.stringify({ results: [{ id: 'AC-1', status: 'passed', checkPosition: 0, evidence: 'claimed green' }] }));
+    assert.equal(result.stage, 2);
+    assert.equal(result.revision, 1);
+    assert.equal(result.acceptance?.results[0].status, 'failed');
+    assert.match(result.summary, /AC-1.*worker check evidence/);
   } finally { app.close(); }
 });

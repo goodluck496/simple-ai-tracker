@@ -21,7 +21,7 @@ test('decomposition rejects missing plans, unknown dependencies, duplicates and 
   assert.throws(() => Decomposition.validate(Array.from({ length: 13 }, (_, i) => ({ ...a, key: `T${i}` }))));
 });
 
-test('feature asks before dispatch, resumes legacy budget checkpoint automatically and reviews isolated children without recursion', async () => {
+for (const withTester of [true, false]) test(`feature with tester=${withTester} resumes and checks aggregated children before merge`, async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'sat-feature-'));
   const repo = path.join(root, 'repo'); await mkdir(repo);
   const executor = new ProcessExecutor();
@@ -37,8 +37,9 @@ test('feature asks before dispatch, resumes legacy budget checkpoint automatical
     await writeFile(check, `const f=require('node:fs'),a=require('node:assert'); a.equal(f.readFileSync('alpha.txt','utf8'),'alpha'); a.equal(f.readFileSync('beta.txt','utf8'),'beta2'); f.appendFileSync(${JSON.stringify(checked)},'checked\\n');`);
     const roles = ['analyst', 'developer', 'tester', 'reviewer'] as const;
     app.automationService.configure({ ...DEFAULT_AUTOMATION_SETTINGS, repositoryPath: repo, baseBranch: 'main', mergePolicy: 'local',
+      maxAgentCalls: 6, maxInputTokens: 500000, maxRunMinutes: 20,
       connections: [{ id: 'fixture', label: 'Fixture', kind: 'native', supportsImages: false }],
-      agents: roles.map(role => ({ id: role, role, runner: 'codex', connectionId: 'fixture', model: 'fixture', instructions: '' })), pipeline: [...roles],
+      agents: roles.map(role => ({ id: role, role, runner: 'codex', connectionId: 'fixture', model: 'fixture', instructions: '' })), pipeline: roles.filter(role => withTester || role !== 'tester'),
       checks: [{ command: process.execPath, args: [check] }] });
     const task = app.taskService.createTask({ title: 'Combined feature', description: 'Preserve the original file and deliver alpha plus beta2.' });
     const run = app.automationService.enqueue(task.id);
@@ -118,12 +119,13 @@ test('feature asks before dispatch, resumes legacy budget checkpoint automatical
     const result = app.automationService.detail(run.id).run;
     assert.equal(result.status, 'merged', result.summary);
     assert.equal(analyses, 2, 'Automatic call budget reuses the completed analyst checkpoint');
-    assert.deepEqual(result.feature!.callBudget, { planned: 8, revisions: 3, resolver: 1, limit: 12 });
-    assert.equal(result.settings.maxAgentCalls, 12);
+    const budget = withTester ? { planned: 8, revisions: 3, resolver: 1, limit: 12 } : { planned: 7, revisions: 2, resolver: 1, limit: 10 };
+    assert.deepEqual(result.feature!.callBudget, budget);
+    assert.equal(result.settings.maxAgentCalls, budget.limit);
     assert.equal(result.settings.maxInputTokens, 500000); assert.equal(result.settings.maxRunMinutes, 20);
     assert.equal(result.settings.maxRevisions, 1, 'The repair count is shared by all children and stays unchanged');
     assert.equal(result.settings.pipeline.filter(id => result.settings.agents.find(a => a.id === id)?.role === 'analyst').length, 1, 'Child schedules cannot introduce recursive analysts');
-    assert.equal(childrenDirectories.size, 2); assert.equal(betaDevelopments, 2); assert.equal(reviews, 3); assert.equal(testerCalls, 1);
+    assert.equal(childrenDirectories.size, 2); assert.equal(betaDevelopments, 2); assert.equal(reviews, 3); assert.equal(testerCalls, withTester ? 1 : 0);
     assert.equal(result.feature!.children.length, 2);
     for (const child of result.feature!.children) {
       assert.equal(child.state, 'merged'); assert.equal(app.taskService.getTaskCard(child.taskId).status, 'review');
@@ -132,7 +134,7 @@ test('feature asks before dispatch, resumes legacy budget checkpoint automatical
     assert.equal(app.taskService.getTaskCard(task.id).status, 'done');
     assert.equal(await readFile(path.join(repo, 'alpha.txt'), 'utf8'), 'alpha'); assert.equal(await readFile(path.join(repo, 'beta.txt'), 'utf8'), 'beta2');
     assert.equal((await git(['rev-list', '--count', `${initial}..HEAD`])).trim(), '1', 'Main receives one aggregate squash');
-    assert.equal((await readFile(checked, 'utf8')).split('checked').length - 1, 2, 'Full checks only aggregate tester and final merge candidate');
-    assert.equal(result.usageAttempts!.length, 10, 'All children and revisions share the original call ledger');
+    assert.equal((await readFile(checked, 'utf8')).split('checked').length - 1, 2, 'Full checks only on aggregate worktree and final merge candidate');
+    assert.equal(result.usageAttempts!.length, withTester ? 10 : 9, 'All children and revisions share the original call ledger');
   } finally { app.close(); await rm(root, { recursive: true, force: true }); }
 });

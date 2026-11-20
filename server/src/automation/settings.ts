@@ -1,6 +1,7 @@
 import { AGENT_ROLES, RUNNER_IDS, RunnerId, ProviderKind, PROVIDER_KINDS, REASONING_EFFORTS, MERGE_POLICIES, AUTOMATION_LIMITS, type AutomationSettings } from '../../../shared/automation/contracts.js';
 import { TrackerError } from '../core/errors.js';
 import { PipelinePolicy } from '../../../shared/automation/pipeline-policy.js';
+import { validMcp } from '../../../shared/automation/project-mcp.js';
 const PROVIDER_URL_PROTOCOLS = new Set(['http:', 'https:']);
 
 export class AutomationSettingsValidator {
@@ -14,6 +15,19 @@ export class AutomationSettingsValidator {
     if (!Array.isArray(settings.connections) || !Array.isArray(settings.agents) || !Array.isArray(settings.pipeline)
       || !Array.isArray(settings.checks) || !Array.isArray(settings.setup) || !Array.isArray(settings.artifactPaths)) return fail('Connections, agents, pipeline, setup, checks and artifacts must be arrays.');
     const ids = new Set<string>();
+    if (settings.mcpServers !== undefined && (!Array.isArray(settings.mcpServers) || settings.mcpServers.length > 12
+      || settings.mcpServers.some(server => !validMcp(server) || !Array.isArray(server.roles) || (server.roles.length > 0 && !server.tools.length))
+      || new Set(settings.mcpServers.map(server => server.name)).size !== settings.mcpServers.length)) {
+      return fail('Проверьте имена MCP, параметры подключения и список инструментов.');
+    }
+    if (settings.skillBindings !== undefined) {
+      const bindings = settings.skillBindings;
+      if (!Array.isArray(bindings) || bindings.length > 32 || bindings.some(b => !b || typeof b.skillId !== 'string'
+        || !/^[\w-]{1,80}$/.test(b.skillId) || !Array.isArray(b.roles) || b.roles.some(role => !AGENT_ROLES.includes(role))
+        || new Set(b.roles).size !== b.roles.length) || new Set(bindings.map(b => b.skillId)).size !== bindings.length) {
+        return fail('Проверьте выбранные навыки и назначения ролям.');
+      }
+    }
     for (const connection of settings.connections) {
       if (!connection || !text(connection.id) || !/^[\w-]+$/.test(connection.id) || ids.has(connection.id)) return fail('Connection IDs must be unique.');
       ids.add(connection.id);
@@ -105,6 +119,8 @@ export class AutomationSettingsValidator {
     // Reconstruct persisted objects so unknown fields cannot carry credentials.
     return {
       repositoryPath: settings.repositoryPath, baseBranch: settings.baseBranch,
+      ...(settings.mcpServers?.length ? { mcpServers: structuredClone(settings.mcpServers) } : {}),
+      ...(settings.skillBindings?.length ? { skillBindings: settings.skillBindings.map(({ skillId, roles }) => ({skillId, roles: [...roles]})) } : {}),
       connections: settings.connections.map(({ id, label, kind, baseUrl, credentialEnv, supportsImages, reasoningEffort, nativeRunner, isLocal }) => ({ id, label, kind, baseUrl, credentialEnv, supportsImages, reasoningEffort, ...(isLocal !== undefined ? { isLocal } : (kind === ProviderKind.Ollama ? { isLocal: true } : {})), ...(kind === ProviderKind.Native && nativeRunner ? { nativeRunner } : {}) })),
       agents: settings.agents.map(({ id, role, runner, connectionId, model, instructions, nativeProfile, command, args }) => ({ id, role, runner, connectionId, model, instructions, nativeProfile, command, args })),
       ...(settings.browser ? { browser: { command: settings.browser.command, args: [...settings.browser.args], readyPath: settings.browser.readyPath } } : {}),

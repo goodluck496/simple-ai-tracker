@@ -97,6 +97,14 @@ export class NativeAgentRunner implements AgentRunner {
       }
       for (const server of job.projectMcp ?? []) {
         const inherited = servers.find(s => s.name === server.name);
+        if (server.url !== undefined) {
+          if (inherited) throw new Error('Use a distinct project MCP name to avoid inheriting account credentials: ' + server.name);
+          const key = 'mcp_servers.' + server.name;
+          args.push('-c', key + '.url=' + JSON.stringify(server.url), '-c', key + '.enabled_tools=' + JSON.stringify(server.tools),
+            '-c', key + '.default_tools_approval_mode="auto"', '-c', key + '.enabled=true');
+          if (server.bearerTokenEnvVar) args.push('-c', key + '.bearer_token_env_var=' + JSON.stringify(server.bearerTokenEnvVar));
+          continue;
+        }
         if (inherited && inherited.transport?.type !== 'stdio') throw new Error('Project MCP name conflicts with a non-stdio account server: ' + server.name);
         args.push('-c', `mcp_servers.${server.name}.command=${JSON.stringify(server.command)}`,
           '-c', `mcp_servers.${server.name}.args=${JSON.stringify(server.args)}`,

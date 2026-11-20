@@ -32,11 +32,14 @@ export class RunWorkspace {
     if (!current.split(/\r?\n/).includes('/.codegraph/')) await fs.appendFile(file, '\n/.codegraph/\n', 'utf8');
   }
   public static async atomic(file: string, value: unknown): Promise<void> {
+    await this.atomicText(file, JSON.stringify(value));
+  }
+  public static async atomicText(file: string, text: string): Promise<void> {
     await fs.mkdir(path.dirname(file), { recursive: true });
     if (await fs.realpath(path.dirname(file)) !== path.resolve(path.dirname(file))) throw new Error('Runtime directory is redirected.');
     const temporary = `${file}.${process.pid}.${randomUUID()}.tmp`;
     const handle = await fs.open(temporary, 'wx');
-    try { await handle.writeFile(JSON.stringify(value), 'utf8'); await handle.sync(); } finally { await handle.close(); }
+    try { await handle.writeFile(text, 'utf8'); await handle.sync(); } finally { await handle.close(); }
     await fs.rename(temporary, file);
   }
   public static async localDirectory(root: string, relative: string): Promise<string> {

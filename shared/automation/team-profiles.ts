@@ -22,7 +22,7 @@ export class AgentTeamProfiles {
     agent.role = role;
     if (useDefault) agent.instructions = DEFAULT_ROLE_INSTRUCTIONS[role];
   }
-  public prepare(input: AutomationSettings): { settings: AutomationSettings; repaired: boolean } {
+  public prepare(input: AutomationSettings, fillDefaultInstructions = true): { settings: AutomationSettings; repaired: boolean } {
     const settings = structuredClone(input);
     const groups = new Map<string, string[]>();
     const used = new Set(settings.agents.map((agent) => agent.id));
@@ -36,7 +36,7 @@ export class AgentTeamProfiles {
         agent.id = replacement; used.add(replacement); repaired = true;
       }
       group.push(agent.id); groups.set(original, group);
-      if (!agent.instructions.trim()) agent.instructions = DEFAULT_ROLE_INSTRUCTIONS[agent.role];
+      if (fillDefaultInstructions && !agent.instructions.trim()) agent.instructions = DEFAULT_ROLE_INSTRUCTIONS[agent.role];
     }
     const occurrence = new Map<string, number>();
     settings.pipeline = settings.pipeline.map((id) => {

@@ -2,9 +2,10 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
+import { bindProjectMcp, projectMcpTransport } from './mcp-transport.js';
+import { validMcp } from '../../../../shared/automation/project-mcp.js';
 import { RunnerId, type AgentJob } from '../../../../shared/automation/contracts.js';
-import { TaskEnvironment } from './task-environment.js';
+import { RunWorkspace } from '../worker/run-workspace.js';
 
 type Server = NonNullable<AgentJob['projectMcp']>[number];
 interface FileRule { path: string; roles?: string[]; }
@@ -16,7 +17,7 @@ const strings = (value: unknown): value is string[] => Array.isArray(value) && v
 
 /** Load policy before a model call. Receipts contain identities, never file bodies or secrets. */
 export class ProjectEnvironment {
-  public constructor(private readonly probe = ProjectEnvironment.probe) {}
+  public constructor(private readonly probe: (server: Server, cwd: string, signal: AbortSignal) => Promise<unknown> = ProjectEnvironment.probe) {}
   public async prepare(job: AgentJob, progress: (text: string) => void): Promise<AgentJob> {
     const root = await fs.realpath(job.cwd);
     const safe = async (relative: string): Promise<string> => {
@@ -68,24 +69,18 @@ export class ProjectEnvironment {
       receipts.push({ path: file, sha256: digest(text), chars: text.length });
       texts.push('--- Project file: ' + file + ' ---\n' + text);
     }
-    const servers = manifest.mcp ?? [];
+    if (manifest.mcp !== undefined && !Array.isArray(manifest.mcp)) throw new Error('Invalid project MCP list.');
+    const servers = [...(manifest.mcp ?? []), ...(job.settings?.mcpServers ?? [])];
     if (!Array.isArray(servers) || servers.length > 12) throw new Error('Invalid project MCP list.');
     const configured: Server[] = [];
     const names = new Set<string>();
     for (const server of servers) {
-      if (!server || !/^[a-zA-Z][\w-]*$/.test(server.name) || ['codegraph', 'simple-ai-tracker'].includes(server.name)
-        || names.has(server.name) || typeof server.command !== 'string' || !server.command || !strings(server.tools)
-        || !Array.isArray(server.args) || !server.args.every(v => typeof v === 'string')
-        || !Array.isArray(server.envVars) || !server.envVars.every(v => typeof v === 'string' && /^[A-Za-z_][A-Za-z0-9_]*$/.test(v))
-        || (server.roles !== undefined && !strings(server.roles))
-        || Object.keys(server).some(k => !['name', 'command', 'args', 'envVars', 'tools', 'roles'].includes(k))) throw new Error('Invalid project MCP rule.');
+      if (!validMcp(server)) throw new Error('Invalid project MCP rule.');
+      if (names.has(server.name)) throw new Error('Duplicate project MCP name in settings or manifest: ' + server.name);
       names.add(server.name);
       if (!selected(server)) continue;
       if (job.profile.runner !== RunnerId.Codex && job.profile.runner !== RunnerId.ModelApi) throw new Error('Managed project MCP requires Codex or Model API/Ollama; this CLI adapter does not support isolated project tools. No model was called.');
-      const environment = TaskEnvironment.create();
-      for (const name of server.envVars) if (!environment[name]) throw new Error('Missing or host-reserved project MCP environment variable: ' + name);
-      const bind = (value: string) => value.replaceAll('{worktreeRoot}', root);
-      const bound = { name: server.name, command: bind(server.command), args: server.args.map(bind), envVars: server.envVars, tools: server.tools };
+      const bound = bindProjectMcp(server, root);
       // A project server can depend on packages installed by worker setup.
       await job.waitForPreparation?.();
       await this.probe(bound, root, job.signal);
@@ -98,21 +93,31 @@ export class ProjectEnvironment {
         mcp: configured.map(s => ({ name: s.name, tools: s.tools, status: 'ready' })), checkedAt: new Date().toISOString() }, null, 2), 'utf8');
     for (const file of receipts) progress('Project policy loaded: ' + file.path + ' sha256=' + file.sha256.slice(0, 12) + ' chars=' + file.chars + '\n');
     progress('Environment preflight OK: ' + receipts.length + ' files, ' + configured.length + ' project MCP; role=' + job.profile.role + '\n');
-    return { ...job, projectMcp: configured, prompt: job.prompt + (texts.length ? '\nRequired project instructions (loaded by worker, do not reread unchanged files):\n' + texts.join('\n') : '') };
+    let prompt = job.prompt + (texts.length ? '\nRequired project instructions (loaded by worker, do not reread unchanged files):\n' + texts.join('\n') : '');
+    if (job.librarySkills?.length) {
+      const available = [];
+      const native = job.profile.runner !== RunnerId.ModelApi;
+      const directory = native ? await RunWorkspace.localDirectory(root, '.sat/skills/' + job.profile.role) : undefined;
+      for (const { id, name, description, version, content } of job.librarySkills) {
+        if (!/^[\w-]{1,80}$/.test(id) || !Number.isSafeInteger(version) || version < 1) throw new Error('Invalid library skill reference.');
+        const file = `${id}-v${version}.md`;
+        if (directory) await RunWorkspace.atomicText(path.join(directory, file), content);
+        available.push({ id, name, when: description, ...(directory ? { path: path.relative(root, path.join(directory, file)).split(path.sep).join('/') } : {}) });
+      }
+      prompt += '\nAvailable skills for this role. When a description applies, read the corresponding instruction once using '
+        + (native ? 'its worktree path' : 'read_skill(id)') + ':\n' + JSON.stringify(available);
+    }
+    return { ...job, projectMcp: configured, prompt };
   }
-  private static async probe(server: Server, cwd: string, signal: AbortSignal): Promise<void> {
+  public static async probe(server: Server, cwd: string, signal: AbortSignal): Promise<string[]> {
     signal.throwIfAborted();
     const client = new Client({ name: 'sat-environment-preflight', version: '1' });
-    const environment = TaskEnvironment.create();
-    const env = Object.fromEntries(server.envVars.map(name => [name, environment[name]!]));
-    const transport = new StdioClientTransport({ command: server.command, args: server.args, env, cwd, stderr: 'pipe' });
-    // Drain local diagnostics without publishing server output or secrets.
-    transport.stderr?.on('data', () => {});
+    const transport = projectMcpTransport(server, cwd);
     let timer: ReturnType<typeof setTimeout> | undefined;
     const abort = () => { void client.close(); };
     signal.addEventListener('abort', abort, { once: true });
     try {
-      await Promise.race([(async () => {
+      const available = await Promise.race([(async () => {
         await client.connect(transport);
         const tools = new Set<string>(); let cursor: string | undefined;
         for (let page = 0; page < 20; page++) {
@@ -123,8 +128,10 @@ export class ProjectEnvironment {
         }
         if (cursor) throw new Error('MCP tool inventory exceeds preflight page limit.');
         for (const name of server.tools) if (!tools.has(name)) throw new Error('Required MCP tool unavailable: ' + name);
+        return [...tools].sort();
       })(), new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error('MCP preflight timed out.')), 15000); })]);
       signal.throwIfAborted();
+      return available;
     } catch { throw new Error('Project MCP preflight failed: ' + server.name + '. Check transport, credentials and required tool names; no model was called.'); }
     finally { clearTimeout(timer); signal.removeEventListener('abort', abort); await client.close(); await transport.close(); }
   }

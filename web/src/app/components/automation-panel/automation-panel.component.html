@@ -104,6 +104,9 @@
         </div>
       </button>
 
+      <button pButton type="button" class="nav-item" [class.active]="activeTab === tab.Resources" [disabled]="isTabDisabled(tab.Resources)" (click)="selectTab(tab.Resources)">
+        <i class="pi pi-book nav-icon"></i><span class="nav-item-label">Навыки и MCP</span>
+      </button>
       <div class="nav-section-title">Быстрый переход</div>
       <button pButton type="button" class="nav-item nav-action-item" (click)="openQueue.emit(selectedRun)">
         <i class="pi pi-list nav-icon"></i>
@@ -138,6 +141,7 @@
             @switch (activeTab) {
               @case (tab.Launch) { Запуск задачи }
               @case (tab.Team) { Команда агентов и этапы }
+              @case (tab.Resources) { Навыки и MCP }
               @case (tab.Budgets) { Лимиты и бюджеты }
               @case (tab.Models) { Подключения моделей }
               @case (tab.Project) { Компьютер, проект и проверки }
@@ -359,10 +363,55 @@
       <!-- ================================================================= -->
       <!-- РАЗДЕЛ: КОМАНДА И ЭТАПЫ -->
       <!-- ================================================================= -->
+      @else if (activeTab === tab.Resources) {
+        <div class="tab-pane-content">
+          <div class="panel-card"><div class="card-body"><sat-skill-library [settings]="settings" (catalogChange)="library=$event" /></div></div>
+          <div class="panel-card"><div class="card-body"><sat-project-mcp [settings]="settings" [online]="host.online" [probe]="probeMcp" /></div></div>
+              <p-accordion>
+                <p-accordion-panel value="mcp-catalog">
+                  <p-accordion-header>Каталог MCP</p-accordion-header>
+                  <p-accordion-content>
+                    <p>Подключения из настроек дополняют <code>docs/agent-environment.json</code>. Имена серверов должны быть уникальны.</p>
+                    <ul>
+                      @for (server of mcpCatalog; track server.name) {
+                        <li><strong>{{ server.name }}</strong> · {{ server.purpose }}. {{ server.setup }}</li>
+                      }
+                    </ul>
+                  </p-accordion-content>
+                </p-accordion-panel>
+              </p-accordion>
+        </div>
+      }
       @else if (activeTab === tab.Team) {
         <div class="tab-pane-content" [attr.inert]="settingsScope === 'task' && !taskTeamReady ? '' : null">
           @if (settingsScope === 'task') {
             <p class="hint">Здесь настраиваются роли, модели, инструкции и порядок этапов для задачи {{ selectedTask }}. Новые подключения моделей добавляются в настройках проекта.</p>
+          } @else if (baseTeam) {
+            <section class="panel-card" aria-label="Базовая команда">
+              <div class="panel-card-header"><h4>Базовая команда</h4>
+                <p class="card-hint">Общие агенты, инструкции, модели, этапы, навыки и MCP для проектов трекера.</p>
+              </div>
+              <div class="card-body">
+                @if (adoptingTeam) { <p>В черновике выбрана базовая команда. Сохраните настройки проекта.</p> }
+                @else if (baseTeam.mode === 'inherited') { <p>Проект наследует базовую команду.</p> }
+                @else if (baseTeam.mode === 'custom') { <p>Проект наследует базовую команду с локальными изменениями.</p> }
+                @else if (baseTeam.mode === 'conflict') { <p>Обновление базы несовместимо с локальными изменениями. Действует последняя сохранённая команда проекта. Проверьте её или верните базовую.</p> }
+                @else if (baseTeam.team) { <p>У проекта своя команда. Чтобы включить наследование, примените базовую и сохраните проект.</p> }
+                @else { <p>Настройте команду в этом проекте и сохраните её как базовую.</p> }
+                <div class="instructions-actions">
+                  @if (baseTeam.team) {
+                    <p-button label="Вернуть базовую команду" severity="secondary" size="small" [disabled]="busy" (onClick)="useBaseTeam()" />
+                  }
+                  @if (confirmPublish) {
+                    <span>Записать текущий состав и подключения в общую базу для всех проектов?</span>
+                    <p-button label="Сохранить для всех проектов" size="small" [disabled]="busy" (onClick)="publishBaseTeam()" />
+                    <p-button label="Отмена" size="small" severity="secondary" (onClick)="confirmPublish=false" />
+                  } @else {
+                    <p-button label="Сохранить как базовую" severity="secondary" size="small" [disabled]="busy || !settings.agents.length" (onClick)="confirmPublish=true" />
+                  }
+                </div>
+              </div>
+            </section>
           }
 
           <div class="panel-card">
@@ -421,6 +470,16 @@
                       </label>
                     </div>
 
+                    <div class="agent-fields-grid">
+                      @if (settings.skillBindings?.length) {
+                        <label>Навыки роли<p-multiSelect [options]="roleResources.connected" optionLabel="name" optionValue="id" [filter]="true" [ngModel]="roleResources.skills.get(agent.role)"
+                          (ngModelChange)="assignSkills(agent.role, $event)" [disabled]="settingsScope === 'task'" ariaLabel="Навыки роли" placeholder="Выбрать навыки" appendTo="body" /></label>
+                      }
+                      @if (roleResources.assignableMcp.length) {
+                        <label>MCP роли<p-multiSelect [options]="roleResources.assignableMcp" optionLabel="name" optionValue="name" [filter]="true" [ngModel]="roleResources.mcp.get(agent.role)"
+                          (ngModelChange)="assignMcp(agent.role, $event)" [disabled]="settingsScope === 'task'" ariaLabel="MCP роли" placeholder="Выбрать MCP" appendTo="body" /></label>
+                      }
+                    </div>
                     <div class="agent-model-tools">
                       <button pButton severity="secondary" size="small" type="button" icon="pi pi-refresh" (click)="loadModels(agent)" [disabled]="!host.online || projectBusy || !agent.connectionId" [title]="modelButtonTitle(agent)">Обновить модели</button>
                       <button pButton severity="secondary" [text]="true" size="small" type="button" (click)="toggleManualModel(agent)">{{ manualModels.has(agent.id) ? 'Выбрать из списка' : 'Указать ID вручную' }}</button>
@@ -922,19 +981,7 @@
                 }
               </section>
 
-              <p-accordion>
-                <p-accordion-panel value="mcp-catalog">
-                  <p-accordion-header>Каталог MCP</p-accordion-header>
-                  <p-accordion-content>
-                    <p>Проектные MCP для Codex CLI и Model API задаются в <code>docs/agent-environment.json</code>. OpenCode использует собственный конфиг на воркере.</p>
-                    <ul>
-                      @for (server of mcpCatalog; track server.name) {
-                        <li><strong>{{ server.name }}</strong> · {{ server.purpose }}. {{ server.setup }}</li>
-                      }
-                    </ul>
-                  </p-accordion-content>
-                </p-accordion-panel>
-              </p-accordion>
+
 
               <!-- Лимиты и слияние -->
               <div class="limits-grid">

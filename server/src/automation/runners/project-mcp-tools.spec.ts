@@ -4,6 +4,10 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { createRequire } from 'node:module';
+import { createServer } from 'node:http';
+import type { AddressInfo } from 'node:net';
+import { ProjectWorker } from '../worker/project-worker.js';
+import { ProjectAction } from '../../../../shared/automation/project.js';
 import { ModelApiRunner } from './model-api-runner.js';
 import { DEFAULT_AUTOMATION_SETTINGS } from '../../../../shared/automation/contracts.js';
 import { ProjectMcpTools } from './project-mcp-tools.js';
@@ -53,4 +57,39 @@ test('MCP screenshot transport bounds images and explicitly marks unsupported ar
     {type:'image',mimeType:'image/svg+xml',data:'AAAA'}, {type:'image',mimeType:'image/png',data:'A'.repeat(2800001)}]});
   assert.deepEqual(result.images,['data:image/png;base64,AAAA']); assert.equal(result.omittedNonText,true);
   assert.equal(ProjectMcpTools.result({content:Array.from({length:6},()=>({type:'image',mimeType:'image/png',data:'AAAA'}))}).images.length,4);
+});
+
+test('worker discovers HTTP tools without executing them and exposes only approved calls', async () => {
+  const calls: string[] = [];
+  const fixture = createServer(async (req, res) => {
+    if (req.method !== 'POST') { res.writeHead(405).end(); return; }
+    let body = '';
+    for await (const chunk of req) body += chunk;
+    const message = JSON.parse(body);
+    calls.push(message.method);
+    if (message.id === undefined) { res.writeHead(202).end(); return; }
+    const results: Record<string, unknown> = {
+      initialize: {protocolVersion: message.params?.protocolVersion, capabilities: {tools:{}}, serverInfo:{name:'fixture',version:'1'}},
+      'tools/list': {tools:['lookup','other'].map(name => ({name,inputSchema:{type:'object'}}))},
+      'tools/call': {content:[{type:'text',text:'fixture result'}]},
+    };
+    res.writeHead(200, {'content-type':'application/json'}).end(JSON.stringify({jsonrpc:'2.0',id:message.id,result:results[message.method]}));
+  });
+  await new Promise<void>(resolve => fixture.listen(0, '127.0.0.1', resolve));
+  const server = {name:'search',url:'http://127.0.0.1:' + (fixture.address() as AddressInfo).port + '/mcp', tools:['lookup']};
+  const cwd = os.tmpdir();
+  const tools = new ProjectMcpTools({cwd, signal:AbortSignal.timeout(20000),projectMcp:[server]});
+  try {
+    const worker = new ProjectWorker({async call() { throw new Error('Unexpected tracker call'); }}, 'fixture');
+    const probe = await worker.execute({action:ProjectAction.ProbeMcp,path:cwd,mcp:{...server,tools:[]}});
+    assert.deepEqual(probe.mcpTools, ['lookup','other']);
+    assert.equal(calls.includes('tools/call'), false);
+    await assert.rejects(tools.call(server.name, 'other', {}), /not enabled/);
+    assert.match(JSON.stringify(await tools.call(server.name, 'lookup', {})), /fixture result/);
+    assert.equal(calls.filter(name => name === 'tools/call').length, 1);
+  } finally {
+    await tools.close();
+    fixture.closeAllConnections();
+    await new Promise<void>(resolve => fixture.close(() => resolve()));
+  }
 });

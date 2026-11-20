@@ -1,7 +1,6 @@
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
+import { projectMcpTransport } from './mcp-transport.js';
 import type { AgentJob } from '../../../../shared/automation/contracts.js';
-import { TaskEnvironment } from './task-environment.js';
 
 /** Lazy, per-job project MCP connections. No account-wide tool inventory or writable tracker access. */
 export class ProjectMcpTools {
@@ -13,12 +12,8 @@ export class ProjectMcpTools {
     if (!args || typeof args !== 'object' || Array.isArray(args)) throw new Error('MCP arguments must be an object.');
     let client = this.clients.get(server.name);
     if (!client) {
-      const source = TaskEnvironment.create();
-      const env: Record<string, string> = {};
-      for (const key of ['PATH', 'Path', 'SystemRoot', 'WINDIR', 'USERPROFILE', 'HOME', 'TEMP', 'TMP', 'PORT', ...server.envVars])
-        if (source[key] !== undefined) env[key] = source[key]!;
       client = new Client({ name: 'tracker-project-tools', version: '1' });
-      try { await client.connect(new StdioClientTransport({ command: server.command, args: server.args, cwd: this.job.cwd, env, stderr: 'ignore' })); }
+      try { await client.connect(projectMcpTransport(server, this.job.cwd)); }
       catch (error) { await client.close(); throw error; }
       this.clients.set(server.name, client);
     }
