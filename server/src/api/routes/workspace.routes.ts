@@ -3,6 +3,7 @@ import type { Router } from '../router.js';
 import { sendJson, bodyField, requireBodyField } from '../router.js';
 import { TrackerError } from '../../core/errors.js';
 import type { WorkspaceManager } from '../../core/workspace-manager.js';
+import type { WorkspaceBackground } from '../../../../shared/workspace-background.js';
 
 export function registerWorkspaceRoutes(router: Router, app: AppContainer, manager: WorkspaceManager): void {
   // GET /api/workspaces — список пространств
@@ -27,7 +28,8 @@ export function registerWorkspaceRoutes(router: Router, app: AppContainer, manag
   });
 
   router.post('/api/workspaces/:name/rename', ({ params, body, res }) => {
-    sendJson(res, 200, { workspace: manager.renameLabel(params.name, requireBodyField<string>(body, 'label'), bodyField<string>(body, 'idPrefix')) });
+    sendJson(res, 200, { workspace: manager.renameLabel(params.name, requireBodyField<string>(body, 'label'),
+      bodyField<string>(body, 'idPrefix'), bodyField<WorkspaceBackground | null>(body, 'background')) });
   });
 
   router.get('/api/workspaces/:name/prefix', ({ params, res }) => sendJson(res, 200, { idPrefix: manager.prefix(params.name) }));

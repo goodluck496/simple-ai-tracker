@@ -128,8 +128,12 @@ function isDockerContainerRunning(container = 'simple-ai-tracker') {
   }
 }
 
-function getRegisteredWorkspaces() {
-  const wsFile = path.join(ROOT, 'data', 'workspaces.json');
+function workspaceRegistry(isLocal = false) {
+  const appRoot = isLocal && process.env.SAT_HOME ? path.resolve(ROOT, process.env.SAT_HOME) : ROOT;
+  return path.join(appRoot, 'data', 'workspaces.json');
+}
+
+function getRegisteredWorkspaces(wsFile = workspaceRegistry()) {
   if (fs.existsSync(wsFile)) {
     try {
       const data = JSON.parse(fs.readFileSync(wsFile, 'utf8'));
@@ -141,9 +145,9 @@ function getRegisteredWorkspaces() {
   return [{ name: 'default', label: 'default' }];
 }
 
-function resolveWorkspace(specified) {
+function resolveWorkspace(specified, registry) {
   if (!specified) return undefined;
-  const list = getRegisteredWorkspaces();
+  const list = getRegisteredWorkspaces(registry);
   const lower = specified.toLowerCase().trim();
   const match = list.find(w => w.name.toLowerCase() === lower || (w.label && w.label.toLowerCase() === lower));
   return match ? match.name : specified;
@@ -161,9 +165,10 @@ function parseCliArgs() {
 
   const container = getArgValue('--container') ?? process.env.SAT_CONTAINER ?? 'simple-ai-tracker';
   const rawWorkspace = getArgValue('--workspace') || process.env.SAT_WORKSPACE;
-  const workspace = rawWorkspace ? resolveWorkspace(rawWorkspace) : undefined;
+  const discovered = command === 'start' && Boolean(rawWorkspace) && flags.includes('--discovered-workspace');
   const isDocker = flags.includes('--docker') ? true : flags.includes('--local') ? false : isDockerContainerRunning(container);
   const isLocal = !isDocker;
+  const workspace = discovered ? rawWorkspace : resolveWorkspace(rawWorkspace, workspaceRegistry(isLocal));
   const lines = parseInt(getArgValue('--lines') ?? '40', 10);
   const follow = flags.includes('-f') || flags.includes('--follow');
   const all = flags.includes('--all');
@@ -179,6 +184,7 @@ function parseCliArgs() {
     follow,
     all,
     autoRestart,
+    discovered,
   };
 }
 
@@ -195,7 +201,7 @@ async function buildServerIfNeeded() {
   });
 }
 
-async function startOneService(workspace, opts) {
+async function startOneService(workspace, opts, discovery) {
   const { isLocal, container } = opts;
   const isDocker = !isLocal;
   const mcpCommand = isDocker ? 'docker' : undefined;
@@ -234,6 +240,8 @@ async function startOneService(workspace, opts) {
   const env = {
     ...process.env,
     SAT_WORKSPACE: workspace,
+    SAT_WORKSPACE_DISCOVERY: workspace === 'default' ? JSON.stringify(discovery) : undefined,
+    SAT_KEEP_EXISTING_HOST: opts.discovered ? '1' : undefined,
     ...(isDocker ? { SAT_MCP_COMMAND: mcpCommand, SAT_MCP_ARGS: mcpArgs } : {}),
   };
 
@@ -272,18 +280,26 @@ async function startOneService(workspace, opts) {
     return;
   }
 
-  const reg = getRegisteredWorkspaces().find(w => w.name === workspace);
+  const reg = getRegisteredWorkspaces(discovery.registry).find(w => w.name === workspace);
   const label = reg?.label && reg.label !== workspace ? ` (${reg.label})` : '';
   console.log(`  ● ${workspace}${label}: служба активна (PID: ${pid})`);
 }
 
 async function startService(opts) {
+  const registry = workspaceRegistry(opts.isLocal);
+  const knownWorkspaces = getRegisteredWorkspaces(registry).map(w => w.name);
+  const discovery = { knownWorkspaces, registry, container: opts.isDocker ? opts.container : undefined };
+  if (opts.discovered) {
+    if (!knownWorkspaces.includes(opts.workspace)) throw new Error(`Рабочее пространство '${opts.workspace}' отсутствует в реестре.`);
+    await startOneService(opts.workspace, { ...opts, autoRestart: false }, discovery);
+    return;
+  }
   // Сборка сервера перед запуском всех служб
   await buildServerIfNeeded();
 
   const targetWorkspaces = opts.workspace
     ? [opts.workspace]
-    : getRegisteredWorkspaces().map(w => w.name);
+    : knownWorkspaces;
 
   console.log(`
 =======================================================
@@ -294,7 +310,7 @@ async function startService(opts) {
 =======================================================`);
 
   for (const ws of targetWorkspaces) {
-    await startOneService(ws, opts);
+    await startOneService(ws, opts, discovery);
   }
 
   console.log(`
@@ -373,7 +389,7 @@ async function stopService(opts) {
 
 async function statusService(opts) {
   const activeHosts = findActiveHosts();
-  const registered = getRegisteredWorkspaces();
+  const registered = getRegisteredWorkspaces(workspaceRegistry(opts.isLocal));
 
   console.log(`
 =======================================================

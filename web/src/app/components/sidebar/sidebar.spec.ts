@@ -1,64 +1,47 @@
 import '@angular/compiler';
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { signal, Injector, runInInjectionContext } from '@angular/core';
+import { HttpClient } from '@angular/common/http';
+import { Injector, runInInjectionContext } from '@angular/core';
+import { of } from 'rxjs';
 import { SidebarComponent } from './sidebar.component.js';
 import { TrackerStore } from '../../services/tracker-store.service.js';
-import type { TaskType } from '../../models/tracker.models.js';
+import { WorkspaceService } from '../../services/workspace.service.js';
 
-test('SidebarComponent manages board filter options and navigation events', () => {
-  const typeFilter = signal<TaskType | null>(null);
-  const featureFilter = signal<string | null>(null);
-  const features = signal([{ id: 'SAT-1', title: 'Header layout' }]);
-
-  const mockStore = {
-    features,
-    typeFilter,
-    featureFilter,
-    setTypeFilter(type: TaskType | null) {
-      typeFilter.set(type);
-    },
-    toggleFeatureFilter(id: string) {
-      featureFilter.set(featureFilter() === id ? null : id);
-    },
-  };
-
+test('SidebarComponent exposes navigation events and expansion state', () => {
   const injector = Injector.create({
     providers: [
-      { provide: TrackerStore, useValue: mockStore },
+      { provide: TrackerStore, useValue: {} },
+      { provide: WorkspaceService, useValue: {} },
+      { provide: HttpClient, useValue: { get: () => of({ enabled: false }) } },
     ],
   });
 
-  const component = runInInjectionContext(injector, () => new SidebarComponent());
+  try {
+    const component = runInInjectionContext(injector, () => new SidebarComponent());
+    assert.equal(component.activePage(), 'board');
+    assert.equal(component.isExpanded(), true);
+    assert.equal(component.authEnabled(), false);
+    component.isExpanded.set(false);
+    assert.equal(component.isExpanded(), false);
 
-  assert.equal(component.isExpanded(), true);
-  assert.equal(component.typeOptions.length, 3);
-  assert.deepEqual(component.featureOptions(), [{ label: 'SAT-1 — Header layout', value: 'SAT-1' }]);
+    const events: Record<string, boolean | string | null> = {};
+    component.openQueue.subscribe(runId => { events.queue = runId; });
+    component.openAutomation.subscribe(() => { events.settings = true; });
+    component.showTags.subscribe(visible => { events.tags = visible; });
+    component.showBackups.subscribe(visible => { events.backups = visible; });
+    component.showInstructions.subscribe(visible => { events.instructions = visible; });
 
-  // Test filter change handlers
-  component.onTypeChange('bug');
-  assert.equal(typeFilter(), 'bug');
+    component.onOpenQueue();
+    component.onOpenAutomation();
+    component.onShowTags();
+    component.onShowBackups();
+    component.onShowInstructions();
 
-  component.onFeatureChange('SAT-1');
-  assert.equal(featureFilter(), 'SAT-1');
-
-  component.resetBoardFilters();
-  assert.equal(typeFilter(), null);
-  assert.equal(featureFilter(), null);
-
-  // Verify that navigation methods can be called without error
-  // Since we are not using TestBed, we can't easily verify EventEmitter/Output emissions 
-  // without more complex mocking, but we ensure they don't throw.
-  component.onOpenQueue();
-  component.onOpenAutomation();
-  component.onOpenBatchAutomation();
-  component.onShowTags();
-  component.onShowBackups();
-  component.onShowInstructions();
-  
-  // Check that expanding/collapsing works
-  component.isExpanded.set(false);
-  assert.equal(component.isExpanded(), false);
-  component.isExpanded.set(true);
-  assert.equal(component.isExpanded(), true);
+    assert.deepEqual(events, {
+      queue: null, settings: true, tags: true, backups: true, instructions: true,
+    });
+  } finally {
+    injector.destroy();
+  }
 });

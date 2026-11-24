@@ -1,4 +1,6 @@
-import { ChangeDetectorRef, Component, DestroyRef, ElementRef, EventEmitter, Input, OnInit, Output, ViewChild, inject } from '@angular/core';
+import { ChangeDetectorRef, Component, DestroyRef, ElementRef, Injector, OnInit, ViewChild, afterNextRender, inject } from '@angular/core';
+import { ActivatedRoute, NavigationEnd, Router } from '@angular/router';
+import { NgTemplateOutlet } from '@angular/common';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { CdkScrollable } from '@angular/cdk/scrolling';
 import { FormsModule, ReactiveFormsModule, FormControl } from '@angular/forms';
@@ -17,6 +19,8 @@ import { MultiSelectModule } from 'primeng/multiselect';
 import { TooltipModule } from 'primeng/tooltip';
 import { PanelModule } from 'primeng/panel';
 import { TextareaModule } from 'primeng/textarea';
+import { MessageModule } from 'primeng/message';
+import { ToggleSwitchModule } from 'primeng/toggleswitch';
 import { BATCH_TASK_LIMIT } from '../../../../../shared/automation/batch';
 import { MCP_CATALOG } from '../../../../../shared/automation/mcp-catalog';
 import { PipelinePolicy } from '../../../../../shared/automation/pipeline-policy';
@@ -34,16 +38,18 @@ import { ProjectAction, ProjectRequestStatus, PROJECT_LIMITS, SETUP_PRESETS, CHE
   type PackageManagerInfo, type ProjectPassport, type ProjectInput, type ProjectRequest, type ProjectResult, type HostStatus, type CommandPreset } from '../../../../../shared/automation/project';
 import { CONNECTION_PRESETS, PROVIDER_OPTIONS, RUNNER_OPTIONS, ROLE_OPTIONS, STANDARD_TEAM_ROLES, type ConnectionPreset } from '../../../../../shared/automation/presets';
 import type { TaskSummary } from '../../models/tracker.models';
+import { TrackerStore } from '../../services/tracker-store.service';
 import { TrackerApiService } from '../../services/tracker-api.service';
 import { WorkspaceService } from '../../services/workspace.service';
 import { WorkerLaunchCommand, DEFAULT_TRACKER_CONTAINER } from '../../../../../shared/automation/launch-command';
-import { AgentTeamProfiles, DEFAULT_ROLE_INSTRUCTIONS } from '../../../../../shared/automation/team-profiles';
+import { AGENT_PROFILE_NAME_LIMIT, agentProfileName, AgentTeamProfiles, DEFAULT_ROLE_INSTRUCTIONS } from '../../../../../shared/automation/team-profiles';
+import { nativeConnectionRunner, stageAuditRunner } from '../../../../../shared/automation/stage-audit';
 import { applyTeam, type BaseTeamState } from '../../../../../shared/automation/base-team';
 import { TaskAutomationReadiness, TASK_STATUS_TITLES, TASK_SELECTION_LIMIT, type TaskReadiness, type TaskLaunchCandidate } from '../../../../../shared/automation/task-readiness';
 import { ModelCatalogKey, type ModelOption } from '../../../../../shared/automation/model-catalog';
 
 @Component({ selector: 'sat-automation-panel', standalone: true,
-  imports: [TreeModule, FormsModule, ReactiveFormsModule, SelectModule, ButtonModule, CheckboxModule, InputTextModule, TabsModule, AccordionModule, DialogModule, MultiSelectModule, TooltipModule, PanelModule, TextareaModule, PipelineFlowComponent, SkillLibraryComponent, ProjectMcpComponent, CdkScrollable],
+  imports: [NgTemplateOutlet, TreeModule, FormsModule, ReactiveFormsModule, SelectModule, ButtonModule, CheckboxModule, InputTextModule, TabsModule, AccordionModule, DialogModule, MultiSelectModule, TooltipModule, PanelModule, TextareaModule, MessageModule, ToggleSwitchModule, PipelineFlowComponent, SkillLibraryComponent, ProjectMcpComponent, CdkScrollable],
   templateUrl: './automation-panel.component.html', styleUrl: './automation-panel.component.scss' })
 export class AutomationPanelComponent implements OnInit {
   public readonly mcpCatalog = MCP_CATALOG;
@@ -98,21 +104,43 @@ export class AutomationPanelComponent implements OnInit {
     if (!result?.mcpTools) throw new Error(this.error || 'Воркер не вернул список инструментов.');
     return result.mcpTools;
   };
-  @Output() public readonly openQueue = new EventEmitter<string | null>();
+  private readonly router = inject(Router);
+  private readonly route = inject(ActivatedRoute);
+  private readonly store = inject(TrackerStore);
+  private readonly injector = inject(Injector);
+  private routedTaskId: string | null = null;
+  @ViewChild('scrollPane') private scrollPane?: ElementRef<HTMLElement>;
+  @ViewChild('firstConnectionName') private firstConnectionName?: ElementRef<HTMLInputElement>;
+  private newestConnectionId: string | null = null;
+  public readonly profileNameLimit = AGENT_PROFILE_NAME_LIMIT;
   public readonly tabs = AUTOMATION_TABS;
   public readonly tab = AutomationTab;
-  public activeTab: string | number = AutomationTab.Project;
-  public sidebarCollapsed = false;
+  public activeTab: AutomationTab = AutomationTab.Team;
+  public get sectionTitle(): string { return this.tabs.find(item => item.value === this.activeTab)!.label; }
+  public sidebarCollapsed = window.matchMedia('(max-width: 700px)').matches;
   public toggleSidebar(): void { this.sidebarCollapsed = !this.sidebarCollapsed; }
-  public isTabDisabled(value: string | number): boolean { return this.settingsScope === 'task' && (value === AutomationTab.Project || value === AutomationTab.Models || value === AutomationTab.Resources); }
-  public selectTab(value: AutomationTab): void { if (!this.isTabDisabled(value)) { this.activeTab = value; if (window.matchMedia('(max-width: 700px)').matches) this.sidebarCollapsed = true; } }
-  @Input() public initialMessage = '';
-  @Input() public set initialBatch(value: boolean) { if (value) { this.batchMode = true; this.activeTab = AutomationTab.Launch; } }
+  public selectTab(value: AutomationTab): void {
+    this.navigateSettings(value, this.settingsScope);
+    if (window.matchMedia('(max-width: 700px)').matches) this.sidebarCollapsed = true;
+  }
+  public openQueue(run: string | null): void {
+    void this.router.navigate(['/automation/runs/queue'], {
+      queryParams: run ? { run, workspace: this.workspace.current() } : undefined,
+    });
+  }
+  private navigateSettings(section: AutomationTab, scope: 'project' | 'task', batch = this.batchMode): void {
+    void this.router.navigate(['/automation/settings', section], {
+      queryParams: { scope: scope === 'task' ? scope : null, taskId: this.selectedTask,
+        workspace: this.selectedTask ? this.workspace.current() : null, batch: scope === 'project' && batch ? 1 : null },
+    });
+  }
+  public changeBatchMode(batch: boolean): void {
+    if (batch !== this.batchMode) this.navigateSettings(AutomationTab.Launch, 'project', batch);
+  }
   public batchMode = false;
   public batchTaskIds: string[] = [];
   private batchRequest?: { signature: string; id: string };
   public readonly batchLimit = BATCH_TASK_LIMIT;
-  public readonly launchModes = [{ label: 'Одна задача', value: false }, { label: 'Группа задач', value: true }];
   public get batchRows() {
     return this.batchTaskIds.map(id => {
       const option = this.taskOptions.find(option => option.value === id);
@@ -136,22 +164,16 @@ export class AutomationPanelComponent implements OnInit {
       if (this.destroyed) return;
       this.batchTaskIds = []; this.batchRequest = undefined; this.startNotice = `В очередь добавлено задач: ${response.runs.length}.`;
       await this.poll();
-      this.openQueue.emit(null);
+      this.openQueue(null);
     } catch (error) { if (!this.destroyed) this.startError = 'Ошибка запуска группы: ' + this.errorMessage(error); }
     finally { this.starting = false; this.changeDetector.markForCheck(); }
   }
-  @Input() public set initialTaskId(id: string | null) {
-    if (id) { this.taskControl.setValue(id); this.activeTab = AutomationTab.Launch; this.settingsScope = 'task'; }
-  }
-  private availableTasks: readonly TaskSummary[] = [];
+  private get availableTasks(): readonly TaskSummary[] { return this.store.tasks(); }
   private latestTasks: readonly TaskLaunchCandidate[] | null = null;
   public readonly taskSelectionLimit = TASK_SELECTION_LIMIT;
   public get taskListLimited(): boolean { return (this.latestTasks?.length ?? 0) >= TASK_SELECTION_LIMIT; }
   private taskOptionsCache: { label: string; value: string; disabled: boolean; readiness: TaskReadiness; title: string }[] = [];
   private taskOptionsSignature = '';
-  @Input() public set tasks(value: readonly TaskSummary[]) {
-    this.availableTasks = value;
-  }
   public readonly taskControl = new FormControl<string | null>(null);
   public get selectedTask(): string | null { return this.taskControl.value; }
   public settingsScope: 'project' | 'task' = 'project';
@@ -181,11 +203,33 @@ export class AutomationPanelComponent implements OnInit {
     this.taskOverridden = value.overridden; this.loadedTask = id;
   }
   public changeScope(scope: 'project' | 'task'): void {
-    this.cacheDraft(); this.settingsScope = scope;
+    const section = this.tabs.find(item => item.value === this.activeTab);
+    this.navigateSettings(scope === 'task' && !section?.task ? AutomationTab.Team : this.activeTab, scope);
+  }
+  private applyRoute(initial = false): void {
+    const { paramMap, queryParamMap } = this.route.snapshot;
+    const scope = queryParamMap.get('scope') === 'task' ? 'task' : 'project';
+    const section = this.tabs.find(item => item.value === paramMap.get('section'));
+    const linkedWorkspace = queryParamMap.get('workspace');
+    const id = !linkedWorkspace || linkedWorkspace === this.workspace.current() ? queryParamMap.get('taskId') : null;
+    const scopeChanged = scope !== this.settingsScope;
+    const taskChanged = id !== this.routedTaskId;
+    const batch = scope === 'project' && queryParamMap.get('batch') === '1';
+    const launchModeChanged = section?.value === AutomationTab.Launch && batch !== this.batchMode;
+    const tabChanged = section?.value !== this.activeTab;
+    if (!initial && (scopeChanged || taskChanged)) this.cacheDraft();
+    this.settingsScope = scope;
+    this.routedTaskId = id;
+    this.activeTab = section && (scope === 'project' || section.task) ? section.value : AutomationTab.Team;
+    this.batchMode = batch;
+    if (launchModeChanged) this.startError = '';
+    if (id !== this.selectedTask) this.taskControl.setValue(id, { emitEvent: false });
+    if (tabChanged || launchModeChanged) this.scrollPane?.nativeElement.scrollTo(0, 0);
+    this.changeDetector.markForCheck();
+    if (initial || (!scopeChanged && !(scope === 'task' && taskChanged))) return;
     this.confirmPublish = false;
-    if (this.isTabDisabled(this.activeTab)) this.activeTab = AutomationTab.Team;
     void this.act(async () => {
-      if (scope === 'task' && this.selectedTask) await this.loadTaskTeam(this.selectedTask);
+      if (scope === 'task' && id) await this.loadTaskTeam(id);
       else if (scope === 'project') this.settings = structuredClone(this.projectDraft ?? await firstValueFrom(this.http.get<AutomationSettings>('/api/automation/settings')));
     });
   }
@@ -217,10 +261,10 @@ export class AutomationPanelComponent implements OnInit {
   public returnToTaskLaunch = false;
   public configureLaunchProject(): void {
     this.returnToTaskLaunch = this.settingsScope === 'task';
-    this.changeScope('project'); this.activeTab = AutomationTab.Project;
+    this.navigateSettings(AutomationTab.Project, 'project');
   }
   public backToTaskLaunch(): void {
-    this.changeScope('task'); this.activeTab = AutomationTab.Launch; this.returnToTaskLaunch = false;
+    this.navigateSettings(AutomationTab.Launch, 'task'); this.returnToTaskLaunch = false;
   }
   public get launchAgents(): AgentProfile[] {
     const position = (id: string) => { const index = this.settings.pipeline.indexOf(id); return index < 0 ? Infinity : index; };
@@ -245,7 +289,12 @@ export class AutomationPanelComponent implements OnInit {
   @ViewChild('commandText') private commandText?: ElementRef<HTMLTextAreaElement>;
   @ViewChild('folderCommandText') private folderCommandText?: ElementRef<HTMLTextAreaElement>;
   public folderConnectOpen = false;
-  public cancelFolderConnection(): void { this.pendingFolderPick = false; this.folderConnectOpen = false; }
+  public showFolderCommand = false;
+  public cancelFolderConnection(): void {
+    this.pendingFolderPick = false;
+    this.folderConnectOpen = false;
+    this.showFolderCommand = false;
+  }
   public settings = structuredClone(DEFAULT_AUTOMATION_SETTINGS);
   private readonly modelCatalogs = new Map<string, ModelOption[]>();
   private readonly modelMessages = new Map<string, string>();
@@ -286,7 +335,7 @@ export class AutomationPanelComponent implements OnInit {
     if (!agent.connectionId) return 'Сначала выберите подключение в списке выше.';
     return this.modelMessages.get(this.modelKey(agent)) ?? 'Нажмите «Обновить модели»: список придёт с компьютера worker.';
   }
-  public modelButtonTitle(agent: AgentProfile): string {
+  public modelButtonTitle(agent: Pick<AgentProfile, 'connectionId'>): string {
     if (!this.host.online) return 'Worker не подключён. Запустите: npm run worker';
     if (!agent.connectionId) return 'Сначала выберите подключение агента';
     if (this.projectBusy) return 'Выполняется другой запрос к worker...';
@@ -332,7 +381,7 @@ export class AutomationPanelComponent implements OnInit {
   public error = ''; public notice = ''; public busy = false;
   public readonly roles = [...AGENT_ROLES];
   public readonly runners = [...RUNNER_IDS];
-  public runnerOptions(agent: AgentProfile) {
+  public runnerOptions(agent: Pick<AgentProfile, 'connectionId'>) {
     const native = this.settings.connections.find(c => c.id === agent.connectionId)?.kind === ProviderKind.Native;
     return native ? this.nativeRunnerOptions : this.apiRunnerOptions;
   }
@@ -412,7 +461,7 @@ export class AutomationPanelComponent implements OnInit {
   public readonly nativeRunnerOptions = RUNNER_OPTIONS.filter(option => option.value !== RunnerId.ModelApi);
   public readonly apiRunnerOptions = RUNNER_OPTIONS.filter(option => option.value === RunnerId.ModelApi);
   public nativeRunner(connection: ModelConnection): RunnerId {
-    return connection.nativeRunner ?? CONNECTION_PRESETS.find(p => p.connection.kind === ProviderKind.Native && p.connection.label === connection.label)?.runner ?? RunnerId.Codex;
+    return nativeConnectionRunner(connection);
   }
   public setNativeRunner(connection: ModelConnection, runner: RunnerId): void {
     connection.nativeRunner = runner; this.providerChanged(connection);
@@ -420,6 +469,12 @@ export class AutomationPanelComponent implements OnInit {
   public providerChanged(connection: ModelConnection): void {
     if (connection.kind !== ProviderKind.Native) delete connection.nativeRunner;
     for (const agent of this.settings.agents.filter(agent => agent.connectionId === connection.id)) this.selectConnection(agent);
+    const audit = this.settings.auditAgent;
+    if (audit?.connectionId === connection.id) {
+      audit.runner = stageAuditRunner(connection);
+      audit.model = '';
+      audit.enabled = false;
+    }
   }
   private scriptProject: PackageManagerInfo = { packageManager: 'npm', hasLockfile: false };
   public get packageManager(): PackageManagerInfo['packageManager'] { return this.currentScriptProject.packageManager; }
@@ -498,7 +553,6 @@ export class AutomationPanelComponent implements OnInit {
       this.notice = start ? 'Worker запущен на подключённом компьютере.' : 'Worker остановлен. Локальный хост остаётся доступен.';
     });
   }
-  public showHostConnection(): void { this.changeScope('project'); this.activeTab = AutomationTab.Project; }
   public projectBusy = false;
   private passport: ProjectPassport | null = null;
   public get projectPassport(): ProjectPassport | null {
@@ -546,14 +600,17 @@ export class AutomationPanelComponent implements OnInit {
   private connectionOptionsSignature = '';
   private connectionOptionsCache: { label: string; value: string }[] = [];
   public ngOnInit(): void {
+    this.applyRoute(true);
+    this.router.events.pipe(filter(event => event instanceof NavigationEnd), takeUntilDestroyed(this.destroyRef))
+      .subscribe(() => this.applyRoute());
     this.http.get<SkillSummary[]>('/api/automation/skills').pipe(takeUntilDestroyed(this.destroyRef)).subscribe({
       next: catalog => { this.library = catalog; this.changeDetector.markForCheck(); },
       error: () => { this.error = 'Не удалось загрузить библиотеку навыков.'; },
     });
     this.destroyRef.onDestroy(() => { this.destroyed = true; });
-    this.taskControl.valueChanges.pipe(takeUntilDestroyed(this.destroyRef)).subscribe(id => {
+    this.taskControl.valueChanges.pipe(takeUntilDestroyed(this.destroyRef)).subscribe(() => {
       this.startError = ''; this.cacheDraft();
-      if (id && this.settingsScope === 'task') void this.act(() => this.loadTaskTeam(id));
+      this.navigateSettings(this.activeTab, this.settingsScope);
       this.changeDetector.markForCheck();
     });
     void this.act(async () => {
@@ -583,7 +640,7 @@ export class AutomationPanelComponent implements OnInit {
   public addPresetConnection(id: ConnectionPreset): string {
     const preset = CONNECTION_PRESETS.find((entry) => entry.id === id)!;
     const connectionId = crypto.randomUUID();
-    this.settings.connections.push({ ...structuredClone(preset.connection), id: connectionId });
+    this.insertConnection({ ...structuredClone(preset.connection), id: connectionId });
     this.notice = `Подключение «${preset.label}» добавлено. Выберите его у нужных агентов.`;
     return connectionId;
   }
@@ -647,12 +704,10 @@ export class AutomationPanelComponent implements OnInit {
     const command = this.effectiveCommand(value);
     return [command.command, ...command.args].join(' ');
   }
-  public async pickFolder(): Promise<void> {
+  public pickFolder(): void {
     if (!this.host.online) {
       this.pendingFolderPick = true;
       this.folderConnectOpen = true;
-      this.changeDetector.detectChanges();
-      await this.copyLaunchCommand();
       return;
     }
     this.browse(this.settings.repositoryPath.trim());
@@ -836,7 +891,8 @@ export class AutomationPanelComponent implements OnInit {
       };
     } else {
       this.settings.auditAgent = { id: 'stage-audit', role: 'stage-audit', runner: RunnerId.ModelApi,
-        connectionId: '', model: '', instructions: '' };
+        connectionId: '', model: '', instructions: '', enabled: false };
+      this.manualModels.add(this.settings.auditAgent.id);
     }
     this.selectedSystemRole = null;
   }
@@ -847,23 +903,67 @@ export class AutomationPanelComponent implements OnInit {
       delete this.settings.doctorModel;
     }
   }
-  public get auditConnectionOptions() {
-    return [{ label: 'Выключено', value: '' }, ...this.settings.connections
-      .filter(connection => connection.kind !== ProviderKind.Native && (connection.isLocal ?? connection.kind === ProviderKind.Ollama))
-      .map(connection => ({ label: connection.label || connection.id, value: connection.id }))];
+  public get auditReady(): boolean {
+    const audit = this.settings.auditAgent;
+    const connection = this.settings.connections.find(entry => entry.id === audit?.connectionId);
+    if (!audit?.model.trim() || !connection) return false;
+    if (connection.kind !== ProviderKind.Native) return !!connection.baseUrl?.trim();
+    if (audit.runner === RunnerId.DeepSeekHarness) return !!audit.nativeProfile?.trim();
+    if (audit.runner === RunnerId.Custom) return !!audit.command?.trim() && Array.isArray(audit.args);
+    return true;
   }
-  public setDoctorArgs(value: string): void {
+  public changeSystemConnection(agent: AgentProfile | NonNullable<AutomationSettings['auditAgent']>, connectionId: string): void {
+    if (agent.role !== 'stage-audit') {
+      agent.connectionId = connectionId;
+      this.selectConnection(agent);
+      return;
+    }
+    if (agent.connectionId === connectionId) return;
+    if (agent.connectionId) agent.model = '';
+    agent.connectionId = connectionId;
+    this.selectConnection(agent);
+    agent.runner = stageAuditRunner(this.settings.connections.find(entry => entry.id === agent.connectionId));
+    agent.enabled = false;
+  }
+  public resetSystemInstructions(agent: AgentProfile | NonNullable<AutomationSettings['auditAgent']>): void {
+    if (agent.role === 'stage-audit') agent.instructions = this.baseTeam?.team?.auditAgent?.instructions ?? '';
+    else this.resetInstructions(agent);
+  }
+  public setSystemArgs(agent: Pick<AgentProfile, 'args'>, value: string): void {
     try {
       const parsed = JSON.parse(value);
       if (Array.isArray(parsed) && parsed.every(item => typeof item === 'string')) {
-        if (this.settings.doctorAgent) this.settings.doctorAgent.args = parsed;
+        agent.args = parsed;
       }
     } catch {
       // ignore
     }
   }
   public stageNumber(run: AgentRun): number { return Math.min(run.stage + 1, run.settings.pipeline.length); }
-  public addConnection(): void { this.settings.connections.push({ id: `connection-${crypto.randomUUID()}`, label: 'Подключение', kind: ProviderKind.Native, supportsImages: false }); }
+  public addConnection(): void {
+    this.insertConnection({ id: `connection-${crypto.randomUUID()}`, label: 'Подключение', kind: ProviderKind.Native, supportsImages: false });
+  }
+  public get displayedConnections(): readonly ModelConnection[] {
+    const connections = this.settings.connections;
+    const newest = connections.find(connection => connection.id === this.newestConnectionId);
+    return newest ? [newest, ...connections.filter(connection => connection !== newest)] : connections;
+  }
+  public removeConnection(id: string): void {
+    this.settings.connections = this.settings.connections.filter(connection => connection.id !== id);
+    const audit = this.settings.auditAgent;
+    if (audit?.connectionId === id) this.changeSystemConnection(audit, '');
+  }
+  private insertConnection(connection: ModelConnection): void {
+    this.settings.connections.push(connection);
+    if (this.activeTab !== AutomationTab.Models) return;
+    this.newestConnectionId = connection.id;
+    afterNextRender(() => {
+      const field = this.firstConnectionName?.nativeElement;
+      field?.scrollIntoView({ block: 'nearest' });
+      field?.focus({ preventScroll: true });
+      field?.select();
+    }, { injector: this.injector });
+  }
   public addAgent(role: AgentRole = AgentRole.Developer): void {
     const agent = this.teamProfiles.create(role, this.settings.connections[0]?.id ?? '');
     this.settings.agents.push(agent); this.toggleStage(agent.id, true);
@@ -874,7 +974,7 @@ export class AutomationPanelComponent implements OnInit {
     for (const role of STANDARD_TEAM_ROLES) this.addAgent(role);
     this.notice = 'Добавлен разработчик. Выберите модель. Воркер выполнит настроенные проверки проекта.';
   }
-  public selectConnection(agent: AgentProfile): void {
+  public selectConnection(agent: Pick<AgentProfile, 'connectionId' | 'runner'>): void {
     if (agent.connectionId.startsWith('preset:')) {
       const presetId = agent.connectionId.slice('preset:'.length) as ConnectionPreset;
       if (!CONNECTION_PRESETS.some(p => p.id === presetId)) return;
@@ -894,13 +994,14 @@ export class AutomationPanelComponent implements OnInit {
     Object.assign(this.settings, PipelinePolicy.reorder(this.settings, index, target));
   }
   public roleLabel(role: AgentRole): string { return ROLE_OPTIONS.find((option) => option.value === role)?.label ?? role; }
+  public profileName(agent: AgentProfile): string { return agentProfileName(agent, this.settings.agents); }
   public changeRole(agent: AgentProfile, role: AgentRole): void { this.teamProfiles.changeRole(agent, role); }
   public resetInstructions(agent: AgentProfile): void {
     const parent = this.settingsScope === 'task' ? this.projectDraft : this.baseTeam?.team;
     const original = parent?.agents.find(profile => profile.id === agent.id && profile.role === agent.role);
     agent.instructions = original?.instructions ?? DEFAULT_ROLE_INSTRUCTIONS[agent.role];
   }
-  public agentLabel(id: string): string { const agent = this.settings.agents.find((entry) => entry.id === id); return agent ? `${this.roleLabel(agent.role)} · ${agent.runner} · ${agent.model || 'выберите модель'}` : id; }
+  public agentLabel(id: string): string { const agent = this.settings.agents.find((entry) => entry.id === id); return agent ? `${this.profileName(agent)} · ${agent.runner} · ${agent.model || 'выберите модель'}` : id; }
   public save(): void { void this.act(async () => {
     if (!this.taskTeamReady) throw new Error('Сначала дождитесь загрузки команды выбранной задачи.');
     if (this.settingsScope === 'task') {
@@ -935,9 +1036,9 @@ export class AutomationPanelComponent implements OnInit {
         if (this.destroyed) return;
         this.submittedRun = run; this.selectedRun = run.id; this.repairNotice = '';
         this.startNotice = this.host.online && !this.executorReady ? `Задача ${taskId} поставлена в очередь. Исполнитель остановлен — нажмите «Запустить worker».` : this.host.online ? `Запуск ${run.id} создан для ${taskId}. Ожидает захвата worker.`
-          : `Задача ${taskId} поставлена в очередь. Worker отключён — выполнение ещё не началось. Подключите компьютер в шаге 1.`;
+          : `Задача ${taskId} поставлена в очередь. Worker отключён — выполнение ещё не началось. Подключите компьютер в разделе «Компьютер и worker».`;
         await this.poll();
-        if (!this.destroyed) this.openQueue.emit(run.id);
+        if (!this.destroyed) this.openQueue(run.id);
       } catch (error) { if (!this.destroyed) this.startError = `Ошибка запуска: ${this.errorMessage(error)}`; }
       finally { this.starting = false; this.changeDetector.markForCheck(); }
     })();
@@ -964,9 +1065,8 @@ export class AutomationPanelComponent implements OnInit {
   private async refresh(): Promise<void> {
     this.host = await firstValueFrom(this.http.get<HostStatus>('/api/automation/host'));
     if (!this.destroyed && this.host.online && this.pendingFolderPick && !this.projectBusy) {
-      this.pendingFolderPick = false;
-      this.folderConnectOpen = false;
-      void this.pickFolder();
+      this.cancelFolderConnection();
+      this.pickFolder();
     }
     const response = await firstValueFrom(this.http.get<{ runs: AgentRun[]; activeTaskIds: string[]; tasks: TaskLaunchCandidate[] }>('/api/automation/runs'));
     this.runs = response.runs; this.activeTaskIds = response.activeTaskIds ?? [];

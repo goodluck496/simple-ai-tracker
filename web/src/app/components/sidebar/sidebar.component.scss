@@ -158,3 +158,25 @@
     }
   }
 }
+.sidebar-nav-btn[aria-current='page'] {
+  background: color-mix(in srgb, var(--p-primary-color) 13%, transparent);
+  color: var(--p-primary-color);
+}
+
+@media (max-width: 768px) {
+  :host { flex: 0 0 54px; min-width: 0; }
+
+  .sat-sidebar { transition: none; }
+
+  .sat-sidebar:not(.is-expanded) {
+    width: 54px;
+    .sidebar-content, .sidebar-footer { padding-inline: 8px; }
+    .sidebar-nav-btn, .sidebar-logout-btn { padding-inline: 9px; }
+  }
+
+  .sat-sidebar.is-expanded {
+    position: absolute;
+    inset: 0 auto 0 0;
+    z-index: 12;
+  }
+}

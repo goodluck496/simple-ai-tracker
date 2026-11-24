@@ -12,6 +12,7 @@ import { StageAudit } from './stage-audit.js';
 import { readVisualArtifacts } from '../visual-artifacts.js';
 import { readProjectPackageManager } from '../package-manager.js';
 import { projectCommand } from '../../../../shared/automation/project.js';
+import { SKILL_LIMITS } from '../../../../shared/automation/skills.js';
 
 interface ToolCall { id: string; function: { name: string; arguments: string }; }
 interface Message { role: string; content: unknown; tool_calls?: ToolCall[]; tool_call_id?: string; }
@@ -60,7 +61,10 @@ export class ModelApiRunner implements AgentRunner {
     if (visual && contents.length === 1) messages.push({ role: 'system', content: 'No usable screenshot is attached. Review the current implementation through the read tools. Report code-backed findings and distinguish them from unverified rendered appearance.' });
     if (job.projectMcp?.length) messages.push({ role: 'system', content: 'Approved project MCP tools: ' + JSON.stringify(job.projectMcp.map(server => ({ server: server.name, tools: server.tools }))) + '. Call them using call_project_tool(server, tool, arguments). Supported MCP images are attached when this connection supports images. Never claim to inspect omitted content.' });
     const parameters = (name: string) => {
-      if (name === 'read_skill') return { type: 'object', properties: { id: { type: 'string', enum: job.librarySkills?.map(skill => skill.id) } }, required: ['id'], additionalProperties: false };
+      if (name === 'read_skill') return { type: 'object', properties: {
+        id: { type: 'string', enum: job.librarySkills?.map(skill => skill.id) },
+        offset: { type: 'integer', minimum: 0 },
+      }, required: ['id'], additionalProperties: false };
       const fields: Record<string, string[]> = { list_files: ['path'], read_file: ['path', 'startLine', 'endLine'], run_check: ['index'],
         write_file: ['path', 'content'], edit_file: ['path', 'oldText', 'newText'], explore_code: ['symbol'], save_progress: ['note'], inspect_changes: ['path'], call_project_tool: ['server', 'tool', 'arguments'] };
       const definitions: Record<string, unknown> = { server: { type: 'string' }, tool: { type: 'string' }, arguments: { type: 'object' },
@@ -85,7 +89,7 @@ export class ModelApiRunner implements AgentRunner {
         : name === ModelTool.Checkpoint ? 'Save a short prose note to the task through the worker. If no plan exists, save implementationPlan steps before changing source. No code or raw output.'
         : name === ModelTool.Changes ? 'Inspect current Git changes: omit path for filenames only, provide one relative path for bounded diff.'
         : name === ModelTool.Project ? 'Call one explicitly approved project MCP tool with structured arguments. The response is bounded; compatible screenshot images are attached for vision connections.'
-        : name === 'read_skill' ? 'Read the assigned library skill by ID when its description applies.'
+        : name === 'read_skill' ? 'Read the assigned library skill by ID when its description applies. For a long skill, request another chunk with offset set to nextOffset only when needed.'
         : name === ModelTool.ReadFile ? 'Read one source range of at most 40 lines using startLine/endLine.'
         : name === ModelTool.EditFile ? 'Patch an existing file by replacing exactly one oldText fragment with newText.'
         : name === ModelTool.WriteFile ? 'Create a new file only; use edit_file for existing files.'
@@ -96,7 +100,9 @@ export class ModelApiRunner implements AgentRunner {
     let formatting = false; let formattingAttempts = 0;
     let finalFormat: 'json_schema' | 'json_object' | 'prompt' = 'json_schema';
     const project = new ProjectMcpTools(job);
-    const auditDirectory = process.env.SAT_STAGE_AUDIT_DIR?.trim() || (job.settings.auditAgent?.connectionId ? path.resolve('data', 'stage-audit') : undefined);
+    const auditConfig = job.settings.auditAgent;
+    const auditDirectory = process.env.SAT_STAGE_AUDIT_DIR?.trim() ||
+      (auditConfig?.connectionId && auditConfig.enabled !== false ? path.resolve('data', 'stage-audit') : undefined);
     const audit = auditDirectory && job.auditAttempt ? new StageAudit(job, auditDirectory) : undefined;
     try {
     for (let turn = 0; job.trustedExecution || formatting || turn < Math.min(MAX_TURNS, (job.maxToolCalls ?? MAX_TURNS) + 3); turn += 1) {
@@ -236,7 +242,14 @@ export class ModelApiRunner implements AgentRunner {
     if (name === 'read_skill') {
       const skill = job.librarySkills?.find(entry => entry.id === args.id);
       if (!skill) throw new Error('Skill is not assigned to this role.');
-      return { id: skill.id, version: skill.version, content: skill.content };
+      const offset = args.offset ?? 0;
+      if (typeof offset !== 'number' || !Number.isSafeInteger(offset) || offset < 0 || offset >= skill.content.length) {
+        throw new Error('Invalid skill offset.');
+      }
+      let end = Math.min(offset + SKILL_LIMITS.readChunk, skill.content.length);
+      if (/[\uDC00-\uDFFF]/.test(skill.content.charAt(end))) end--;
+      return { id: skill.id, version: skill.version, content: skill.content.slice(offset, end),
+        ...(end < skill.content.length ? { nextOffset: end } : {}) };
     }
     if (name === ModelTool.Checkpoint) {
       if (!job.onCheckpoint) throw new Error('Worker checkpoint channel is unavailable.');

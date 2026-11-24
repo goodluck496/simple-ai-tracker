@@ -6,7 +6,7 @@ import { PopoverModule } from 'primeng/popover';
 import { ProgressBarModule } from 'primeng/progressbar';
 import { TagModule } from 'primeng/tag';
 import { TooltipModule } from 'primeng/tooltip';
-import { EMPTY, catchError, delay, exhaustMap, filter, of, switchMap, tap, timer } from 'rxjs';
+import { EMPTY, catchError, delay, exhaustMap, filter, map, of, switchMap, tap, timer } from 'rxjs';
 import type { TaskStatus, TaskType } from './models/tracker.models';
 import { TrackerStore } from './services/tracker-store.service';
 import { WorkspaceService } from './services/workspace.service';
@@ -16,10 +16,8 @@ import { TaskDialogComponent } from './components/task-dialog/task-dialog.compon
 import { TagsPanelComponent } from './components/tags-panel/tags-panel.component';
 import { BackupPanelComponent } from './components/backup-panel/backup-panel.component';
 import { InstructionsDialogComponent } from './components/instructions-dialog/instructions-dialog.component';
-import { AutomationPanelComponent } from './components/automation-panel/automation-panel.component';
-import { AutomationQueueComponent } from './components/automation-queue/automation-queue.component';
+import { NavigationEnd, Router, RouterOutlet } from '@angular/router';
 import { AutomationLaunchService } from './services/automation-launch.service';
-import { DialogModule } from 'primeng/dialog';
 import { SidebarComponent } from './components/sidebar/sidebar.component';
 
 /** Задержка перед показом полосы загрузки: быстрые ответы не мигают. */
@@ -43,9 +41,7 @@ const PROGRESS_DELAY_MS = 140;
     TagsPanelComponent,
     BackupPanelComponent,
     InstructionsDialogComponent,
-    AutomationPanelComponent,
-    AutomationQueueComponent,
-    DialogModule,
+    RouterOutlet,
   ],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './app.component.html',
@@ -57,40 +53,38 @@ export class AppComponent implements OnInit {
   public readonly store = inject(TrackerStore);
   private readonly workspace = inject(WorkspaceService);
 
-  public readonly sidebarOpen = signal(true);
+  public readonly sidebarOpen = signal(!window.matchMedia('(max-width: 768px)').matches);
 
   public readonly showTags = signal(false);
   public readonly showBackups = signal(false);
   public readonly showInstructions = signal(false);
-  public showAutomation = false;
-  public automationTaskId: string | null = null;
-  public automationMessage = '';
-  public automationBatch = false;
+  private readonly router = inject(Router);
+  private readonly currentPath = toSignal(this.router.events.pipe(
+    filter((event): event is NavigationEnd => event instanceof NavigationEnd),
+    map(event => event.urlAfterRedirects.split('?')[0]),
+  ), { initialValue: '' });
+  public readonly boardVisible = computed(() => !this.currentPath().startsWith('/automation/'));
+  public readonly runsVisible = computed(() => this.currentPath().startsWith('/automation/runs/'));
 
-  public openAutomation(taskId: string | null = null, message = ''): void {
-    this.automationBatch = false;
-    this.automationTaskId = taskId; this.automationMessage = message; this.showAutomation = true;
+  public openBoard(): void {
+    void this.router.navigate(['/']);
   }
-  public openBatchAutomation(): void { this.openAutomation(); this.automationBatch = true; }
+
+  public openAutomation(taskId: string | null = null): void {
+    void this.router.navigate(['/automation/settings', taskId ? 'launch' : 'team'], {
+      queryParams: taskId ? { scope: 'task', taskId, workspace: this.workspace.current() } : undefined,
+    });
+  }
+
   public launchTask(id: string): void {
     this.automationLauncher.preview(id).pipe(tap(runId => runId ? this.openQueue(runId) : this.openAutomation(id)),
       catchError(() => { this.openAutomation(id); return EMPTY; }), takeUntilDestroyed(this.destroyRef)).subscribe();
   }
-  public showQueue = false;
-  public queueRunId: string | null = null;
-  public queueEventId: number | null = null;
-  public readonly queueTask = signal<{ taskId: string; runId: string } | null>(null);
-  public openQueue(id: string | null): void { if (this.automationTaskId) this.showAutomation = false; this.queueRunId = id; this.queueEventId = null; this.showQueue = true; }
-  public async openQueueTask(context: { taskId: string; runId: string }): Promise<void> {
-    this.store.closeCard();
-    this.queueTask.set(context);
-    await this.store.openCard(context.taskId);
-    if (this.queueTask() === context && !this.store.openTask()) this.queueTask.set(null);
-  }
-  public closeQueueTask(): void {
-    if (!this.queueTask()) return;
-    this.queueTask.set(null);
-    this.store.closeCard();
+
+  public openQueue(id: string | null): void {
+    void this.router.navigate(['/automation/runs', id ? 'queue' : 'history'], {
+      queryParams: id ? { run: id, workspace: this.workspace.current() } : undefined,
+    });
   }
   public readonly createMode = signal(false);
   public readonly createType = signal<TaskType>('task');
@@ -115,26 +109,47 @@ export class AppComponent implements OnInit {
   private readonly POLL_INTERVAL_MS = 4000;
 
   public ngOnInit(): void {
+    const compact = window.matchMedia('(max-width: 768px)');
+    const resizeSidebar = (event: MediaQueryListEvent): void => this.sidebarOpen.set(!event.matches);
+    compact.addEventListener('change', resizeSidebar);
+    this.destroyRef.onDestroy(() => compact.removeEventListener('change', resizeSidebar));
     void this.store.init();
-    const query = new URLSearchParams(location.search);
-    const run = query.get('automationRun');
-    const event = Number(query.get('eventId'));
-    const workspace = query.get('workspace');
-    if (run && Number.isSafeInteger(event) && event > 0) {
-      if (workspace && workspace !== this.workspace.current()) {
-        void this.workspace.load().then(() => {
-          if (this.workspace.workspaces().some(item => item.name === workspace)) return this.workspace.activate(workspace);
-          return undefined;
-        });
-      } else {
-        this.openQueue(run);
-        this.queueEventId = event;
-      }
-    }
+    void this.openLinkedAutomation();
+    this.router.events.pipe(
+      filter(event => event instanceof NavigationEnd && compact.matches),
+      takeUntilDestroyed(this.destroyRef),
+    ).subscribe(() => this.sidebarOpen.set(false));
     timer(this.POLL_INTERVAL_MS, this.POLL_INTERVAL_MS).pipe(
       filter(() => !this.createMode() && !this.store.dragging()),
       exhaustMap(() => this.store.refresh(true)), takeUntilDestroyed(this.destroyRef),
     ).subscribe();
+  }
+
+  private async openLinkedAutomation(): Promise<void> {
+    const query = new URLSearchParams(location.search);
+    const legacyRun = query.get('automationRun');
+    const run = legacyRun ?? query.get('run');
+    const workspace = query.get('workspace');
+    if (!run && !query.get('taskId')) return;
+
+    if (workspace && workspace !== this.workspace.current()) {
+      try {
+        await this.workspace.load();
+        if (!this.workspace.workspaces().some(item => item.name === workspace)) return;
+        await this.workspace.activate(workspace, true);
+      } catch {
+        // The current workspace remains available if activation fails.
+      }
+      return;
+    }
+
+    if (legacyRun) {
+      const eventId = Number(query.get('eventId'));
+      await this.router.navigate(['/automation/runs/history'], {
+        queryParams: { run, workspace, eventId: Number.isSafeInteger(eventId) && eventId > 0 ? eventId : null },
+        replaceUrl: true,
+      });
+    }
   }
 
   /** Количество задач в статусе (0, если таких нет). */

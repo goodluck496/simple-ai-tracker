@@ -2,6 +2,8 @@ import { AGENT_ROLES, RUNNER_IDS, RunnerId, ProviderKind, PROVIDER_KINDS, REASON
 import { TrackerError } from '../core/errors.js';
 import { PipelinePolicy } from '../../../shared/automation/pipeline-policy.js';
 import { validMcp } from '../../../shared/automation/project-mcp.js';
+import { AGENT_PROFILE_NAME_LIMIT } from '../../../shared/automation/team-profiles.js';
+import { stageAuditRunner } from '../../../shared/automation/stage-audit.js';
 const PROVIDER_URL_PROTOCOLS = new Set(['http:', 'https:']);
 
 export class AutomationSettingsValidator {
@@ -49,6 +51,9 @@ export class AutomationSettingsValidator {
       && (!RUNNER_IDS.includes(connection.nativeRunner) || connection.nativeRunner === RunnerId.ModelApi)) return fail('Invalid native runner.');
     for (const agent of settings.agents) {
       if (!agent || !text(agent.id) || !/^[\w-]+$/.test(agent.id) || profiles.has(agent.id)) return fail('Agent IDs must be unique.');
+      if (agent.name !== undefined && (typeof agent.name !== 'string' || agent.name.trim().length > AGENT_PROFILE_NAME_LIMIT)) {
+        return fail(`Название профиля должно быть не длиннее ${AGENT_PROFILE_NAME_LIMIT} символов.`);
+      }
       profiles.set(agent.id, agent);
       if (!AGENT_ROLES.includes(agent.role) || !RUNNER_IDS.includes(agent.runner) || !text(agent.instructions)
         || !text(agent.model) || !agent.model.trim() || !ids.has(agent.connectionId)) return fail('Invalid agent profile, model or connection.');
@@ -112,17 +117,27 @@ export class AutomationSettingsValidator {
       || !Number.isSafeInteger(maxInputTokens) || maxInputTokens < 1 || maxInputTokens > 100000000
       || !Number.isSafeInteger(maxRunMinutes) || maxRunMinutes < 1 || maxRunMinutes > 240) return fail('Invalid run budget.');
     const audit = settings.auditAgent;
-    const auditConnection = audit && settings.connections.find(connection => connection.id === audit.connectionId);
-    if (audit?.connectionId && (!auditConnection?.baseUrl || auditConnection.kind === ProviderKind.Native ||
-      !(auditConnection.isLocal ?? auditConnection.kind === ProviderKind.Ollama) ||
-      typeof audit.model !== 'string' || !audit.model.trim())) return fail('Stage audit requires a local API connection and model.');
+    const auditConnection = settings.connections.find(connection => connection.id === audit?.connectionId);
+    const auditRunner = stageAuditRunner(auditConnection);
+    const auditProfile = typeof audit?.nativeProfile === 'string' ? audit.nativeProfile.trim() : '';
+    const auditCommand = typeof audit?.command === 'string' ? audit.command.trim() : '';
+    const auditArgs = Array.isArray(audit?.args) && audit.args.every(text) ? audit.args : undefined;
+    const auditModel = typeof audit?.model === 'string' ? audit.model.trim() : '';
+    if (audit?.enabled !== undefined && typeof audit.enabled !== 'boolean') return fail('Некорректное состояние аудитора этапов.');
+    if (audit?.enabled ?? !!audit?.connectionId) {
+      if (!auditConnection || !auditModel) return fail('Чтобы включить аудитора, выберите подключение и модель.');
+      if (auditRunner === RunnerId.DeepSeekHarness && !auditProfile) return fail('Укажите профиль DeepSeek Harness для аудитора.');
+      if (auditRunner === RunnerId.Custom && (!auditCommand || !auditArgs)) return fail('Укажите исполняемый файл и аргументы CLI аудитора.');
+    }
     // Reconstruct persisted objects so unknown fields cannot carry credentials.
     return {
       repositoryPath: settings.repositoryPath, baseBranch: settings.baseBranch,
       ...(settings.mcpServers?.length ? { mcpServers: structuredClone(settings.mcpServers) } : {}),
       ...(settings.skillBindings?.length ? { skillBindings: settings.skillBindings.map(({ skillId, roles }) => ({skillId, roles: [...roles]})) } : {}),
       connections: settings.connections.map(({ id, label, kind, baseUrl, credentialEnv, supportsImages, reasoningEffort, nativeRunner, isLocal }) => ({ id, label, kind, baseUrl, credentialEnv, supportsImages, reasoningEffort, ...(isLocal !== undefined ? { isLocal } : (kind === ProviderKind.Ollama ? { isLocal: true } : {})), ...(kind === ProviderKind.Native && nativeRunner ? { nativeRunner } : {}) })),
-      agents: settings.agents.map(({ id, role, runner, connectionId, model, instructions, nativeProfile, command, args }) => ({ id, role, runner, connectionId, model, instructions, nativeProfile, command, args })),
+      agents: settings.agents.map(({ id, name, role, runner, connectionId, model, instructions, nativeProfile, command, args }) => ({
+        id, ...(name?.trim() ? { name: name.trim() } : {}), role, runner, connectionId, model, instructions, nativeProfile, command, args,
+      })),
       ...(settings.browser ? { browser: { command: settings.browser.command, args: [...settings.browser.args], readyPath: settings.browser.readyPath } } : {}),
       ...(settings.routingProfileIds !== undefined ? {routingProfileIds: [...settings.routingProfileIds]} : {}),
       pipeline: settings.pipeline, checks: settings.checks.map(({ command, args }) => ({ command, args })), setup: settings.setup.map(({ command, args }) => ({ command, args })), postOperations: postOperations.map(({ command, args, background }) => ({ command, args, ...(background ? { background } : {}) })), artifactPaths: settings.artifactPaths,
@@ -132,8 +147,11 @@ export class AutomationSettingsValidator {
       timeoutMinutes: settings.timeoutMinutes, maxRevisions: settings.maxRevisions, mergePolicy: settings.mergePolicy,
       maxAgentCalls, maxStageToolCalls, maxInputTokens, maxRunMinutes,
       ...(doctorAgent ? { doctorAgent } : {}),
-      ...(auditConnection && audit ? { auditAgent: { id: 'stage-audit', role: 'stage-audit', runner: RunnerId.ModelApi,
-        connectionId: auditConnection.id, model: audit.model.trim(),
+      ...(audit ? { auditAgent: { id: 'stage-audit', role: 'stage-audit', runner: auditRunner,
+        connectionId: auditConnection?.id ?? '', model: auditModel,
+        ...(auditRunner === RunnerId.DeepSeekHarness && auditProfile ? { nativeProfile: auditProfile } : {}),
+        ...(auditRunner === RunnerId.Custom ? { command: auditCommand, args: auditArgs } : {}),
+        ...(audit.enabled !== undefined ? { enabled: audit.enabled } : {}),
         instructions: typeof audit.instructions === 'string' ? audit.instructions.trim().slice(0, 1500) : '' } } : {}),
       ...(typeof settings.doctorConnectionId === 'string' ? { doctorConnectionId: settings.doctorConnectionId } : {}),
       ...(typeof settings.doctorModel === 'string' ? { doctorModel: settings.doctorModel } : {}),

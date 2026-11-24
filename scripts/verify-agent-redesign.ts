@@ -14,37 +14,126 @@ const root = mkdtempSync(path.join(os.tmpdir(), 'sat-agent-redesign-'));
 const app = createContainer({ config: { appRoot: root, dbPath: path.join(root, 'fixture.db'), webDistDir: path.resolve(process.env.SAT_WEB_DIST ?? 'dist/web/browser') }, logger: new SilentLogger() });
 const server = createApiServer(app), browser = await chromium.launch({ headless: true });
 try {
-  app.automationService.configure({ ...structuredClone(DEFAULT_AUTOMATION_SETTINGS), repositoryPath: '/fixture',
+  app.automationService.configure({ ...structuredClone(DEFAULT_AUTOMATION_SETTINGS), repositoryPath: '/fixture', mergePolicy: 'local',
     connections: [{ id: 'native', label: 'Fixture', kind: 'native', supportsImages: false }],
-    agents: (['developer', 'tester'] as const).map(role => ({ id: role, role, runner: 'codex', connectionId: 'native', model: 'fixture', instructions: '' })),
-    pipeline: ['developer', 'tester'], checks: [{ command: 'node', args: ['--version'] }] });
+    agents: [
+      ...(['router', 'developer', 'tester', 'reviewer'] as const).map(role => ({ id: role, role, runner: 'codex' as const, connectionId: 'native', model: 'fixture', instructions: '' })),
+      { id: 'developer-alternate', role: 'developer', runner: 'codex', connectionId: 'native', model: 'fixture-alt', instructions: '' },
+    ],
+    pipeline: ['router', 'developer', 'tester', 'reviewer'], checks: [{ command: 'node', args: ['--version'] }] });
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
   const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
+  page.setDefaultTimeout(15000);
   const errors: string[] = []; page.on('pageerror', error => errors.push(error.message));
   await page.goto(`http://127.0.0.1:${(server.address() as AddressInfo).port}`);
   const sidebarToggle = page.locator('sat-sidebar .sidebar-toggle-btn');
   await sidebarToggle.waitFor();
   if (await sidebarToggle.getAttribute('aria-label') === 'Развернуть') await sidebarToggle.click();
   await page.locator('sat-sidebar button').filter({hasText:'Команда агентов'}).click();
-  const dialog = page.getByRole('dialog', { name: 'Команда агентов', exact: true });
+  const dialog = page.locator('sat-automation-panel');
   await dialog.locator('.panel-layout').waitFor();
-  await page.waitForTimeout(300); // Wait for PrimeNG's dialog entrance animation before measuring.
   const original = (await dialog.boundingBox())!;
-  for (const label of ['Запуск', 'Команда и этапы', 'Навыки и MCP', 'Модели', 'Проект и проверки']) {
-    await dialog.locator('.panel-sidebar .nav-item').filter({ hasText: label }).click();
+  const sections = {
+    launch: 'Запуск', team: 'Команда агентов', pipeline: 'Этапы и маршруты', system: 'Системные роли',
+    budgets: 'Лимиты и бюджеты', models: 'Подключения моделей', worker: 'Компьютер и worker',
+    project: 'Репозиторий и Git', checks: 'Проверки и команды', resources: 'Навыки и MCP',
+  };
+  for (const [section, label] of Object.entries(sections)) {
+    await dialog.getByRole('navigation').getByRole('button', { name: label, exact: true }).click();
+    await page.waitForURL('**/automation/settings/' + section);
+    await expect(dialog.getByRole('heading', { name: label, exact: true }).first()).toBeVisible();
     const box = (await dialog.boundingBox())!;
-    assert.ok(Math.abs(box.width - original.width) < 2 && Math.abs(box.height - original.height) < 2, `Modal geometry stays fixed on ${label}: ${JSON.stringify({ original, box })}`);
+    assert.ok(Math.abs(box.width - original.width) < 2 && Math.abs(box.height - original.height) < 2, `Page geometry stays fixed on ${label}: ${JSON.stringify({ original, box })}`);
     assert.ok(await dialog.locator('.sidebar-footer').evaluate(element => {
       const color = getComputedStyle(element).backgroundColor;
       return color !== 'transparent' && !/rgba\([^)]*,\s*0\)$/.test(color);
     }), 'Save footer has an opaque background');
   }
+  await page.goBack();
+  await page.waitForURL('**/automation/settings/checks');
+  await page.reload();
+  await expect(dialog.getByRole('heading', { name: 'Проверки и команды', exact: true })).toBeVisible();
+  assert.equal(await page.getByRole('dialog', { name: 'Команда агентов' }).count(), 0);
+  const tab = (name:string) => dialog.locator('.panel-sidebar .nav-item').filter({hasText:name}).click();
+  const parallelRuns = dialog.getByRole('spinbutton', { name: 'Параллельных слотов' });
+  const resolverCalls = dialog.getByRole('spinbutton', { name: 'Вызовов resolver' });
+  const resolveConflicts = dialog.getByRole('checkbox', { name: 'Автоматически разрешать конфликты' });
+  await tab('Лимиты и бюджеты');
+  await expect(parallelRuns).toBeVisible();
+  await expect(resolverCalls).toBeVisible();
+  await expect(resolveConflicts).toHaveCount(0);
+  await parallelRuns.fill('3');
+  await tab('Репозиторий и Git');
+  await expect(resolveConflicts).toBeVisible();
+  await expect(dialog.locator('input[type="number"]')).toHaveCount(0);
+  await tab('Лимиты и бюджеты');
+  await expect(parallelRuns).toHaveValue('3');
   const [saved] = await Promise.all([
     page.waitForResponse(response => response.request().method() === 'POST' && response.url().includes('/automation/')),
     dialog.locator('.sidebar-footer button').click(),
   ]);
   assert.ok(saved.ok(), 'Settings save succeeds');
-  const tab = (name:string) => dialog.locator('.panel-sidebar .nav-item').filter({hasText:name}).click();
+  assert.equal(app.automationService.settings().maxParallelRuns, 3);
+  await tab('Команда агентов');
+  const alternate = dialog.locator('.agent-config-card').filter({ has: page.getByText('Разработчик 2', { exact: true }) });
+  await alternate.getByRole('textbox', { name: 'Название профиля' }).fill('Разработчик интерфейса');
+  await tab('Этапы и маршруты');
+  await dialog.getByRole('button', { name: 'Как работает маршрут запуска' }).click();
+  await expect(dialog.getByText(/Роутер задачи.*критерии приёмки/)).toBeVisible();
+  await dialog.locator('sat-task-routing p-multiselect').click();
+  await page.getByRole('option', { name: 'Разработчик интерфейса · fixture-alt', exact: true }).click();
+  await page.keyboard.press('Escape');
+
+  await tab('Подключения моделей');
+  await dialog.getByRole('button', { name: 'Добавить подключение' }).click();
+  const firstConnection = dialog.locator('.connection-card').first();
+  await expect(firstConnection.getByRole('textbox', { name: 'Имя' })).toBeFocused();
+  const deleteButton = firstConnection.getByRole('button', { name: 'Удалить подключение' });
+  const cardBounds = (await firstConnection.boundingBox())!;
+  const deleteBounds = (await deleteButton.boundingBox())!;
+  assert.ok(cardBounds.x + cardBounds.width - (deleteBounds.x + deleteBounds.width) < 20);
+  assert.ok(deleteBounds.y - cardBounds.y < 20);
+  await deleteButton.click();
+  await tab('Системные роли');
+  await dialog.getByRole('combobox', { name: 'Системная роль' }).click();
+  await page.getByRole('option', { name: 'Аудитор этапов' }).click();
+  await dialog.getByRole('button', { name: 'Добавить роль' }).click();
+  const auditConnection = dialog.getByRole('combobox', { name: 'Подключение аудитора' });
+  const auditModel = dialog.getByRole('textbox', { name: 'ID модели аудитора' });
+  await expect(auditConnection).toBeEnabled();
+  await auditModel.fill('модель до подключения');
+  await auditConnection.click();
+  await page.getByRole('option', { name: 'Fixture', exact: true }).click();
+  await expect(dialog.getByRole('combobox', { name: 'Исполнитель аудитора' })).toContainText('Codex CLI');
+  await expect(auditModel).toHaveValue('модель до подключения');
+  const auditToggle = dialog.getByRole('switch', { name: 'Включить аудитора этапов' });
+  await auditToggle.check();
+  await Promise.all([page.waitForResponse(response => response.request().method() === 'POST' && response.url().endsWith('/automation/settings')),
+    dialog.locator('.sidebar-footer button').click()]);
+  assert.equal(app.automationService.settings().auditAgent?.runner, 'codex');
+  assert.equal(app.automationService.settings().auditAgent?.connectionId, 'native');
+  await auditConnection.click();
+  await expect(page.getByRole('option', { name: /Ollama.*добавить подключение/ })).toBeVisible();
+  await page.getByRole('option', { name: /DeepSeek API.*добавить подключение/ }).click();
+  await expect(auditConnection).toContainText('DeepSeek API');
+  await expect(auditModel).toHaveValue('');
+  await expect(auditToggle).not.toBeChecked();
+  await auditModel.fill('audit-fixture');
+  await auditToggle.check();
+  await Promise.all([page.waitForResponse(response => response.request().method() === 'POST' && response.url().endsWith('/automation/settings')),
+    dialog.locator('.sidebar-footer button').click()]);
+  const configured = app.automationService.settings();
+  assert.equal(configured.agents.find(agent => agent.id === 'developer-alternate')?.name, 'Разработчик интерфейса');
+  assert.deepEqual(configured.routingProfileIds, ['developer-alternate']);
+  assert.equal(configured.auditAgent?.enabled, true);
+  const remoteAuditConnection = configured.connections.find(connection => connection.id === configured.auditAgent?.connectionId);
+  assert.equal(remoteAuditConnection?.baseUrl, 'https://api.deepseek.com');
+  assert.ok(!remoteAuditConnection?.isLocal);
+  await auditToggle.uncheck();
+  await Promise.all([page.waitForResponse(response => response.request().method() === 'POST' && response.url().endsWith('/automation/settings')),
+    dialog.locator('.sidebar-footer button').click()]);
+  assert.equal(app.automationService.settings().auditAgent?.enabled, false);
+  assert.equal(app.automationService.settings().auditAgent?.model, 'audit-fixture');
   await tab('Навыки и MCP');
   const library = dialog.getByRole('region', { name: 'Навыки проекта' });
   await library.getByRole('button', { name: 'Создать навык' }).click();
@@ -112,7 +201,7 @@ try {
   await mcp.getByLabel('Аргументы команды (массив JSON)').fill('["server.mjs"]');
   await mcp.getByLabel('Разрешённые инструменты через запятую').fill('lookup');
   await mcp.getByRole('button', {name:'Применить подключение'}).click();
-  await tab('Команда и этапы');
+  await tab('Команда агентов');
   const developer = dialog.locator('.agent-config-card').filter({has:page.locator('.agent-role-badge').filter({hasText:'Разработчик'})}).first();
   await developer.locator('label').filter({hasText:'Навыки роли'}).locator('p-multiselect').click();
   await page.getByRole('option', {name:'Проверка сохранения'}).click();
@@ -140,17 +229,59 @@ try {
   await page.route(repo + '/trees/HEAD?recursive=1', route => route.fulfill({json:{tree:[
     {path:'skills/example/SKILL.md',sha:'unused',type:'blob',mode:'100644'},
     {path:'skills/test-driven-development/SKILL.md',sha:'abc',type:'blob',mode:'100644'}]}}));
-  await page.route(repo + '/blobs/abc', route => route.fulfill({contentType:'text/plain',body:'---\nname: imported-example\ndescription: >\n  Test an external instruction\n---\nUse the test fixture.'}));
+  const description = 'Test an external instruction. '.repeat(20).trim();
+  const markdown = `---\nname: imported-example\ndescription: >\n  ${description}\n---\n${'Use the test fixture.\n'.repeat(2000)}`;
+  await page.route(repo + '/blobs/abc', route => route.fulfill({ contentType: 'text/plain', body: markdown }));
   await library.getByRole('button', {name:'Каталоги и импорт'}).click();
   const importer = page.getByRole('dialog',{name:'Импорт навыка'});
+  for (const collection of ['Nx', 'NestJS', 'Angular']) await expect(importer.getByRole('button', { name: collection, exact: true })).toBeVisible();
   await importer.getByRole('button',{name:'Superpowers · разработка и тесты'}).click();
-  await importer.getByRole('button',{name:'Открыть инструкцию'}).click();
-  assert.equal(await editor.getByLabel('Когда применять').inputValue(), 'Test an external instruction');
+  const skillPath = 'skills/test-driven-development/SKILL.md';
+  await importer.getByPlaceholder('Найти файл', { exact: true }).fill('test-driven');
+  const nextImport = importer.getByRole('button', { name:'Открыть следующий на импорт' });
+  await importer.getByRole('button', { name: 'Прочитать ' + skillPath }).click();
+  const reader = page.getByRole('dialog', { name: 'imported-example' });
+  await expect(reader.locator('pre')).toHaveText(markdown);
+  await reader.getByRole('button', { name: 'Закрыть', exact: true }).click();
+  await expect(nextImport).toBeDisabled();
+  await importer.getByText(skillPath, { exact: true }).click();
+  await importer.getByRole('button', { name: 'Добавить выбранные к импорту', exact: true }).click();
+  await expect(nextImport).toBeEnabled();
+  await importer.getByPlaceholder('Найти файл', { exact: true }).fill('');
+  await importer.getByText('skills/example/SKILL.md', { exact: true }).click();
+  await importer.getByRole('button', { name: 'Добавить выбранные к импорту', exact: true }).click();
+  await page.setViewportSize({ width: 390, height: 600 });
+  await expect(nextImport).toBeInViewport();
+  assert.ok(await importer.evaluate(element => element.scrollWidth <= element.clientWidth + 2));
+  await nextImport.click();
+  await expect(editor.getByLabel('Когда применять')).toHaveValue(description);
+  const saveSkill = editor.getByRole('button', { name: 'Сохранить в библиотеку' });
+  await expect(saveSkill).toBeInViewport();
+  const footer = await saveSkill.evaluate(button => {
+    const content = button.closest('[role="dialog"]')!.querySelector<HTMLElement>('.p-dialog-content')!;
+    content.scrollTop = 0;
+    const before = button.getBoundingClientRect().top;
+    content.scrollTop = content.scrollHeight;
+    return { delta: button.getBoundingClientRect().top - before, scroll: content.scrollTop };
+  });
+  assert.ok(footer.scroll > 0);
+  assert.equal(footer.delta, 0);
+  assert.ok(await editor.evaluate(element => element.scrollWidth <= element.clientWidth + 2));
   await editor.getByRole('button',{name:'Сохранить в библиотеку'}).click();
   await editor.waitFor({state:'hidden'});
+  await expect(nextImport).toBeEnabled();
+  await expect(importer.getByText('skills/example/SKILL.md', { exact: true })).toBeVisible();
+  await importer.getByRole('button', { name: 'Отмена', exact: true }).click();
+  await importer.waitFor({ state: 'hidden' });
+  await page.setViewportSize({ width: 1440, height: 1000 });
   const imported = app.automationService.skillLibrary.list().find(s => s.name === 'imported-example')!;
   assert.equal(app.automationService.skillLibrary.read(imported).sourceUrl, repo + '/blobs/abc');
-  await tab('Команда и этапы');
+  assert.equal(app.automationService.skillLibrary.read(imported).content, markdown);
+  await library.getByRole('textbox', { name: 'Поиск по навыкам' }).fill('imported-example');
+  await library.getByRole('button', { name: 'Прочитать imported-example' }).click();
+  await expect(reader.locator('pre')).toHaveText(markdown);
+  await reader.getByRole('button', { name: 'Закрыть', exact: true }).click();
+  await tab('Команда агентов');
   const baseTeam = dialog.getByRole('region', {name:'Базовая команда'});
   await baseTeam.getByRole('button', {name:'Сохранить как базовую'}).click();
   await baseTeam.getByRole('button', {name:'Сохранить для всех проектов'}).click();
@@ -172,11 +303,28 @@ try {
   await dialog.locator('.sidebar-footer button').click();
   await baseTeam.getByText('Проект наследует базовую команду с локальными изменениями.').waitFor();
   await developer.getByRole('button', {name:'Вставить базовую инструкцию'}).click();
-  assert.equal(await instruction.inputValue(), originalText);
+  await expect(instruction).toHaveValue(originalText);
   await dialog.locator('.sidebar-footer button').click();
   await baseTeam.getByText('Проект наследует базовую команду.', {exact:true}).waitFor();
   mkdirSync('dist/acceptance', { recursive: true });
   await page.screenshot({ path: 'dist/acceptance/agent-redesign.png' });
+  await tab('Системные роли');
+  await auditModel.waitFor();
+  const auditCard = dialog.locator('[aria-label="Системный агент: Аудитор этапов"]');
+  app.automationService.projects.poll('fixture-host');
+  await Promise.all([
+    page.waitForResponse(response => response.request().method() === 'POST' && response.url().endsWith('/automation/project-requests')),
+    auditCard.getByRole('button', { name: 'Обновить модели' }).click(),
+  ]);
+  const auditCatalog = app.automationService.projects.poll('fixture-host')!;
+  assert.equal(auditCatalog.action, 'models');
+  assert.equal(auditCatalog.catalog?.connection.baseUrl, 'https://api.deepseek.com');
+  app.automationService.projects.complete(auditCatalog.id, auditCatalog.token!, { path: '', models: [{ id: 'audit-listed', label: 'Тестовая модель' }] });
+  await auditCard.getByRole('button', { name: 'Выбрать из списка' }).click();
+  await dialog.getByRole('combobox', { name: 'Модель аудитора', exact: true }).click();
+  await page.getByRole('option', { name: 'Тестовая модель', exact: true }).click();
+  await auditCard.getByRole('button', { name: 'Указать ID вручную' }).click();
+  await expect(auditModel).toHaveValue('audit-listed');
   assert.deepEqual(errors, []);
   console.log('PASS: settings layout, library search and import, MCP, shared team publication, inheritance and reset.');
 } finally {

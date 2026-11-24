@@ -8,6 +8,7 @@ import { TableModule } from 'primeng/table';
 import { TagModule } from 'primeng/tag';
 import { MessageModule } from 'primeng/message';
 import type { AgentRun, AutomationSettings } from '../../../../../shared/automation/contracts';
+import { agentProfileName } from '../../../../../shared/automation/team-profiles';
 
 @Component({ selector: 'sat-task-routing', standalone: true,
   imports: [FormsModule, PanelModule, MultiSelectModule, CheckboxModule, InputTextModule, TableModule, TagModule, MessageModule],
@@ -16,7 +17,7 @@ import type { AgentRun, AutomationSettings } from '../../../../../shared/automat
   @if (hasRouter || run?.routing) {
     <p-panel header="Подготовка задачи и выбор моделей">
       @if (editable) {
-        <p-message severity="info">Роутер сохраняет этапы и лимиты. Выберите профили, которыми разрешено заменять исполнителей той же роли. Пустой список сохраняет выбранные модели.</p-message>
+        <p>Разрешите альтернативные профили для этапов той же роли. Например, роутер может выбрать между двумя разработчиками с разными моделями.</p>
         <label for="routing-profiles">Разрешённые профили моделей</label>
         <p-multiselect inputId="routing-profiles" [options]="profiles" optionLabel="label" optionValue="value"
           [(ngModel)]="settings.routingProfileIds" placeholder="Сохранить выбранные модели" appendTo="body" [style]="{width:'100%'}" />
@@ -63,7 +64,10 @@ export class TaskRoutingComponent {
   public argsError = '';
   public readonly portToken = '{port}';
   public get hasRouter() { return this.settings.pipeline.some(id => this.settings.agents.find(a => a.id === id)?.role === 'router'); }
-  public get profiles() { return this.settings.agents.filter(a => a.role !== 'router' && a.role !== 'doctor').map(a => ({label: a.role + ' · ' + a.model + ' · ' + a.id, value:a.id})); }
+  public get profiles() {
+    return this.settings.agents.filter(agent => agent.role !== 'router' && agent.role !== 'doctor')
+      .map(agent => ({ label: this.profileLabel(agent.id), value: agent.id }));
+  }
   public get browserArgs() { return JSON.stringify(this.settings.browser?.args ?? []); }
   public setArgs(text: string) {
     try { const args = JSON.parse(text); if (!Array.isArray(args) || args.some(a => typeof a !== 'string')) throw new Error();
@@ -71,7 +75,12 @@ export class TaskRoutingComponent {
     catch { this.argsError = 'Нужен JSON-массив строк. Сохранены последние корректные аргументы.'; }
   }
   public toggleBrowser(enabled: boolean) { this.settings.browser = enabled ? {command:'npm',args:['run','dev','--','--port','{port}'],readyPath:'/'} : undefined; }
-  public model(id: string) { return this.settings.agents.find(a => a.id === id)?.model ?? id; }
+  public model(id: string) { return this.profileLabel(id); }
+  private profileLabel(id: string): string {
+    const agent = this.settings.agents.find(item => item.id === id);
+    if (!agent) return id;
+    return `${agentProfileName(agent, this.settings.agents)} · ${agent.model || 'модель не выбрана'}`;
+  }
   public get passed() { return this.run?.acceptance?.sha === this.run?.commitSha ? this.run?.acceptance?.results.filter(r => r.status === 'passed').length ?? 0 : 0; }
   public result(id: string) {
     if (!this.run?.acceptance || this.run.acceptance.sha !== this.run.commitSha) return 'Не проверено для текущего коммита';

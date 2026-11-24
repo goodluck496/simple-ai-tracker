@@ -7,12 +7,15 @@ import { provideZoneChangeDetection } from '@angular/core';
 import { providePrimeNG } from 'primeng/config';
 import Aura from '@primeng/themes/aura';
 import { AppComponent } from './app/app.component';
+import { provideRouter } from '@angular/router';
+import { appRoutes } from './app/app.routes';
 
 bootstrapApplication(AppComponent, {
   providers: [
     provideZoneChangeDetection({ eventCoalescing: true }),
     provideHttpClient(withInterceptors([workspaceInterceptor])),
     provideAnimationsAsync(),
+    provideRouter(appRoutes),
     // Тема PrimeNG: тёмная, активируется классом .p-dark на <html> (см. index.html).
     providePrimeNG({
       theme: {

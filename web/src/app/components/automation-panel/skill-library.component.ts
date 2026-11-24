@@ -8,18 +8,18 @@ import { DialogModule } from 'primeng/dialog';
 import { InputTextModule } from 'primeng/inputtext';
 import { TextareaModule } from 'primeng/textarea';
 import type { AutomationSettings } from '../../../../../shared/automation/contracts';
-import type { LibrarySkill, SkillSummary } from '../../../../../shared/automation/skills';
-import { SelectModule } from 'primeng/select';
+import { SKILL_LIMITS, type LibrarySkill, type SkillSummary } from '../../../../../shared/automation/skills';
+import { PickListModule } from 'primeng/picklist';
 import { importSkillFile, skillFiles, type SkillFile } from './skill-import';
 
 @Component({
   selector: 'sat-skill-library', standalone: true,
-  imports: [FormsModule, ButtonModule, CheckboxModule, DialogModule, InputTextModule, SelectModule, TextareaModule],
+  imports: [FormsModule, ButtonModule, CheckboxModule, DialogModule, InputTextModule, PickListModule, TextareaModule],
   template: `
     <section aria-label="Навыки проекта">
       <header><h4>Навыки проекта</h4><div><p-button label="Каталоги и импорт" severity="secondary" size="small" (onClick)="startImport()" />
         <p-button label="Создать навык" icon="pi pi-plus" severity="secondary" size="small" (onClick)="create()" /></div></header>
-      <p>Отметьте навыки проекта. Назначить их ролям можно в разделе «Команда и этапы».</p>
+      <p>Отметьте навыки проекта. Назначить их ролям можно в разделе «Команда агентов».</p>
       <input pInputText [ngModel]="query" (ngModelChange)="search($event)" aria-label="Поиск по навыкам" placeholder="Найти по названию или условию применения" />
       @if (error && !editing) { <p role="alert">{{ error }} <button pButton type="button" [text]="true" (click)="load()">Обновить</button></p> }
       @for (skill of matches.slice(0,limit); track skill.id) {
@@ -27,13 +27,15 @@ import { importSkillFile, skillFiles, type SkillFile } from './skill-import';
           <div class="skill-row">
             <p-checkbox [binary]="true" [inputId]="'bind-' + skill.id" [ngModel]="!!binding(skill.id)" (ngModelChange)="toggle(skill.id, $event)" />
             <div><label [for]="'bind-' + skill.id">{{ skill.name }}</label><small>{{ skill.description }}</small></div>
+            <p-button severity="secondary" [text]="true" size="small" icon="pi pi-book" [ariaLabel]="'Прочитать ' + skill.name" (onClick)="readSaved(skill)" />
             <p-button severity="secondary" [text]="true" size="small" icon="pi pi-pencil" [ariaLabel]="'Редактировать ' + skill.name" (onClick)="edit(skill)" />
           </div>
         </article>
       } @empty { @if (query) { <p>Навыков по этому запросу нет.</p> } }
       @if (matches.length > limit) { <p-button label="Показать ещё" [text]="true" (onClick)="limit=limit+40" /> }
     </section>
-    <p-dialog header="Импорт навыка" [(visible)]="importing" [modal]="true" appendTo="body" [closable]="!loading" [closeOnEscape]="!loading" [style]="{width:'36rem',maxWidth:'95vw'}">
+    <p-dialog header="Импорт навыка" [(visible)]="importing" [modal]="true" appendTo="body"
+      [closable]="!loading" [closeOnEscape]="!loading" [style]="importDialogSize" [contentStyle]="dialogContent">
       <div class="editor">
         <div class="collections">
           @for (bank of collections; track bank.repo) {
@@ -41,26 +43,73 @@ import { importSkillFile, skillFiles, type SkillFile } from './skill-import';
           }
         </div>
         <a href="https://skills.sh/" target="_blank" rel="noopener noreferrer">Найти другие коллекции на skills.sh</a>
-        <label>Репозиторий GitHub или URL файла Markdown<input pInputText [disabled]="loading" [(ngModel)]="source" (ngModelChange)="files=[]; selectedFile=null" /></label>
-        <p>В библиотеку копируется текст инструкции. Файлы скриптов и шаблоны из репозитория требуют отдельной установки.</p>
-        <p-button label="Загрузить по ссылке" [disabled]="loading || !source.trim()" (onClick)="discover()" />
-        @if (files.length) {
-          <p-select [options]="files" optionLabel="path" [filter]="true" filterBy="path" [(ngModel)]="selectedFile" ariaLabel="Файл навыка" appendTo="body" />
-          <p-button label="Открыть инструкцию" [disabled]="loading || !selectedFile" (onClick)="preview()" />
+        <label>Репозиторий GitHub или URL файла Markdown<input pInputText [disabled]="loading" [(ngModel)]="source" (ngModelChange)="clearCatalog()" /></label>
+        @if (loading) { <p role="status">Загрузка из каталога…</p> }
+        @if (catalogFiles.length || pendingFiles.length) {
+          <p-picklist #picker [source]="availableFiles" [target]="pendingFiles" filterBy="path"
+            sourceHeader="Файлы каталога" targetHeader="К импорту" scrollHeight="14rem" breakpoint="850px"
+            [showSourceControls]="false" [showTargetControls]="false" [disabled]="loading"
+            [responsive]="true" rightButtonAriaLabel="Добавить выбранные к импорту"
+            allRightButtonAriaLabel="Добавить все из списка к импорту"
+            leftButtonAriaLabel="Убрать выбранные из импорта" allLeftButtonAriaLabel="Очистить список импорта"
+            sourceFilterPlaceholder="Найти файл" targetFilterPlaceholder="Найти выбранный файл"
+            ariaSourceFilterLabel="Поиск файлов каталога" ariaTargetFilterLabel="Поиск выбранных файлов"
+            (onMoveToTarget)="changeQueue(picker.target)" (onMoveAllToTarget)="changeQueue(picker.target)"
+            (onMoveToSource)="changeQueue(picker.target)" (onMoveAllToSource)="changeQueue(picker.target)">
+            <ng-template #item let-file>
+              <div class="skill-file-row">
+                <span>{{ file.path }}</span>
+                <button pButton type="button" severity="secondary" [text]="true" size="small" icon="pi pi-book"
+                  [attr.aria-label]="'Прочитать ' + file.path" title="Прочитать навык" [disabled]="loading"
+                  (keydown)="$event.stopPropagation()" (click)="$event.stopPropagation(); readFile(file)"></button>
+              </div>
+            </ng-template>
+          </p-picklist>
         }
         @if (error) { <p role="alert">{{ error }}</p> }
       </div>
+      <ng-template #footer>
+        <div class="editor-footer">
+          <p-button label="Отмена" severity="secondary" [text]="true" [disabled]="loading" (onClick)="importing=false" />
+          <p-button label="Загрузить по ссылке" severity="secondary" [disabled]="loading || !source.trim()" (onClick)="discover()" />
+          <p-button label="Открыть следующий на импорт" [disabled]="loading || !pendingFiles.length" (onClick)="openNextImport()" />
+        </div>
+      </ng-template>
+    </p-dialog>
+    <p-dialog [header]="readingSkill?.name || 'Навык'" [(visible)]="readerOpen" [modal]="true" appendTo="body"
+      [style]="dialogSize" [contentStyle]="dialogContent">
+      @if (readingSkill; as skill) {
+        <div class="editor">
+          @if (skill.sourceUrl) { <a [href]="skill.sourceUrl" target="_blank" rel="noopener noreferrer">Источник инструкции</a> }
+          <p>{{ skill.description }}</p>
+          <pre class="skill-text" tabindex="0">{{ skill.content }}</pre>
+        </div>
+      }
+      <ng-template #footer>
+        <div class="editor-footer">
+          <p-button label="Закрыть" severity="secondary" [text]="true" (onClick)="readerOpen=false" />
+          @if (readingSkill && !readingSkill.id) {
+            <p-button label="Подготовить импорт" (onClick)="beginImportEdit(readingSkill)" />
+          }
+        </div>
+      </ng-template>
     </p-dialog>
     <p-dialog [header]="draft.id ? 'Изменить общий навык' : 'Новый общий навык'" [(visible)]="editing" [modal]="true" appendTo="body"
-      [closable]="!saving" [closeOnEscape]="!saving" [style]="{width: '36rem', maxWidth: '95vw'}">
+      [closable]="!saving" [closeOnEscape]="!saving" [style]="dialogSize" [contentStyle]="dialogContent" (onHide)="finishEditor()">
       <div class="editor">
         @if (draft.sourceUrl) { <a [href]="draft.sourceUrl" target="_blank" rel="noopener noreferrer">Источник инструкции</a> }
-        <label>Название<input pInputText [(ngModel)]="draft.name" maxlength="100" /></label>
-        <label>Когда применять<textarea pTextarea rows="2" maxlength="320" [(ngModel)]="draft.description"></textarea></label>
-        <label>Инструкция<textarea pTextarea rows="8" maxlength="16000" [(ngModel)]="draft.content"></textarea></label>
+        <label>Название<input pInputText [(ngModel)]="draft.name" [maxlength]="limits.name" /></label>
+        <label>Когда применять<textarea pTextarea rows="3" [maxlength]="limits.description" [(ngModel)]="draft.description"></textarea></label>
+        <label>Инструкция<textarea pTextarea rows="12" [maxlength]="limits.content" [(ngModel)]="draft.content"></textarea></label>
+        <small>{{ draft.content.length }} / {{ limits.content }} символов инструкции</small>
         @if (error) { <p role="alert">{{ error }}</p> }
-        <p-button label="Сохранить в библиотеку" [loading]="saving" [disabled]="saving || !draft.name.trim() || !draft.description.trim() || !draft.content.trim()" (onClick)="save()" />
       </div>
+      <ng-template #footer>
+        <div class="editor-footer">
+          <p-button label="Отмена" severity="secondary" [text]="true" [disabled]="saving" (onClick)="editing=false" />
+          <p-button label="Сохранить в библиотеку" [loading]="saving" [disabled]="saving || !draft.name.trim() || !draft.description.trim() || !draft.content.trim()" (onClick)="save()" />
+        </div>
+      </ng-template>
     </p-dialog>
   `,
   styles: [`
@@ -72,18 +121,33 @@ import { importSkillFile, skillFiles, type SkillFile } from './skill-import';
     h4,p {margin:0}
     article {display:grid; gap:.5rem; padding:.6rem 0; border-top:1px solid var(--p-content-border-color)}
     .skill-row div {flex:1; min-width:0; overflow-wrap:anywhere}
+    .skill-file-row {display:flex; align-items:center; gap:.45rem; width:100%; min-width:0}
+    .skill-file-row span {flex:1; min-width:0; overflow-wrap:anywhere}
+    .skill-file-row button {flex-shrink:0}
+    .skill-text {margin:0; white-space:pre-wrap; overflow-wrap:anywhere}
     small,.editor label {display:block}
     small,section>p {color:var(--p-text-muted-color)}
-    .editor label {display:grid; gap:.35rem}
-    input,textarea {width:100%}
+    .skill-row small {display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:2; overflow:hidden}
+    .editor { grid-template-columns:minmax(0, 1fr); overflow-wrap:anywhere }
+    .editor label {display:grid; grid-template-columns:minmax(0, 1fr); gap:.35rem}
+    .editor-footer {display:flex; justify-content:flex-end; flex-wrap:wrap; gap:.5rem}
+    input,textarea {width:100%; min-width:0; box-sizing:border-box}
+    textarea {resize:vertical; max-height:55dvh}
     [role=alert] {color:var(--p-red-500)}
   `]
 })
 export class SkillLibraryComponent implements OnInit {
+  readonly limits = SKILL_LIMITS;
+  readonly dialogSize = { width: 'min(56rem, 96vw)', height: 'min(52rem, 90dvh)' };
+  readonly importDialogSize = { ...this.dialogSize, width: 'min(72rem, 96vw)' };
+  readonly dialogContent = { overflowY: 'auto', overflowX: 'hidden', flex: '1 1 auto' };
   readonly collections = [
-    {label:'Superpowers · разработка и тесты',repo:'obra/superpowers',skill:'test-driven-development'},
-    {label:'Anthropic · дизайн и инструменты',repo:'anthropics/skills',skill:'frontend-design'},
-    {label:'Vercel · ревью интерфейса',repo:'vercel-labs/agent-skills',skill:'web-design-guidelines'},
+    {label:'Superpowers · разработка и тесты',repo:'obra/superpowers'},
+    {label:'Anthropic · дизайн и инструменты',repo:'anthropics/skills'},
+    {label:'Vercel · ревью интерфейса',repo:'vercel-labs/agent-skills'},
+    { label: 'Nx', repo: 'nrwl/nx-ai-agents-config/tree/main/generated/.agents/skills' },
+    { label: 'NestJS', repo: 'nestjs/agent-skills' },
+    { label: 'Angular', repo: 'angular/skills' },
   ];
   @Input({required:true}) settings!: AutomationSettings;
   private readonly http = inject(HttpClient);
@@ -102,35 +166,85 @@ export class SkillLibraryComponent implements OnInit {
   importing = false;
   loading = false;
   source = '';
-  files: SkillFile[] = [];
-  selectedFile: SkillFile | null = null;
+  catalogFiles: SkillFile[] = [];
+  availableFiles: SkillFile[] = [];
+  pendingFiles: SkillFile[] = [];
+  private readonly importedUrls = new Set<string>();
+  private editingFromImport = false;
+  readerOpen = false;
+  readingSkill: LibrarySkill | null = null;
   editing = false;
   saving = false;
   error = '';
   ngOnInit(): void { void this.load(); }
   startImport(): void {
-    this.source = ''; this.files = []; this.selectedFile = null; this.error = ''; this.importing = true;
+    this.readingSkill = null;
+    this.source = '';
+    this.pendingFiles = [];
+    this.importedUrls.clear();
+    this.clearCatalog();
+    this.importing = true;
   }
-  chooseCollection(bank: {repo:string; skill:string}): void {
+  clearCatalog(): void {
+    this.catalogFiles = [];
+    this.availableFiles = [];
+    this.error = '';
+  }
+  chooseCollection(bank: {repo:string}): void {
     this.source = 'https://github.com/' + bank.repo;
-    void this.discover(bank.skill);
+    void this.discover();
   }
-  async discover(preferred?:string): Promise<void> {
-    this.loading = true; this.error = ''; this.files = []; this.selectedFile = null;
+  async discover(): Promise<void> {
+    if (this.loading) return;
+    this.clearCatalog();
+    this.loading = true;
     try {
-      this.files = await skillFiles(this.source);
-      this.selectedFile = this.files.find(file => preferred && file.path.endsWith('/' + preferred + '/SKILL.md')) ?? this.files[0] ?? null;
-      if (!this.selectedFile) this.error = 'В этом репозитории не найден SKILL.md.';
+      this.catalogFiles = await skillFiles(this.source);
+      this.changeQueue(this.pendingFiles);
+      if (!this.catalogFiles.length) this.error = 'В этом репозитории не найден SKILL.md.';
     } catch (e) { this.error = this.importError(e); }
     finally { this.loading = false; }
   }
-  async preview(): Promise<void> {
-    if (!this.selectedFile) return;
+  changeQueue(target: SkillFile[] | undefined): void {
+    this.pendingFiles = [...(target ?? [])];
+    const queued = new Set(this.pendingFiles.map(file => file.url));
+    this.availableFiles = this.catalogFiles.filter(file => !queued.has(file.url) && !this.importedUrls.has(file.url));
+  }
+  async readFile(file: SkillFile): Promise<void> {
+    const skill = await this.loadFile(file);
+    if (skill) {
+      this.readingSkill = skill;
+      this.readerOpen = true;
+    }
+  }
+  async openNextImport(): Promise<void> {
+    const file = this.pendingFiles[0];
+    if (!file) return;
+    const skill = this.readingSkill?.sourceUrl === file.url && !this.readingSkill.id
+      ? this.readingSkill : await this.loadFile(file);
+    if (skill) this.beginImportEdit(skill);
+  }
+  private async loadFile(file: SkillFile): Promise<LibrarySkill | undefined> {
+    if (this.loading) return;
     this.loading = true; this.error = '';
     try {
-      this.draft = await importSkillFile(this.selectedFile); this.importing = false; this.editing = true;
+      return await importSkillFile(file);
     } catch (e) { this.error = this.importError(e); }
     finally { this.loading = false; }
+  }
+  beginImportEdit(skill: LibrarySkill): void {
+    this.draft = { ...skill };
+    this.readerOpen = false;
+    this.importing = false;
+    this.editingFromImport = true;
+    this.editing = true;
+  }
+  finishEditor(): void {
+    if (this.editingFromImport) {
+      this.editingFromImport = false;
+      this.error = '';
+      this.importing = true;
+    }
   }
   private importError(e: unknown): string {
     return e instanceof TypeError ? 'Проверьте URL и доступность источника для браузера (CORS).' : String(e instanceof Error ? e.message : e);
@@ -154,9 +268,19 @@ export class SkillLibraryComponent implements OnInit {
   }
   async edit(skill: SkillSummary): Promise<void> {
     try {
-      this.draft = await firstValueFrom(this.http.get<LibrarySkill>(`/api/automation/skills/${skill.id}/${skill.version}`));
+      this.draft = await this.loadSavedSkill(skill);
       this.error = ''; this.editing = true;
     } catch { this.error = 'Не удалось открыть инструкцию.'; }
+  }
+  async readSaved(skill: SkillSummary): Promise<void> {
+    try {
+      this.readingSkill = await this.loadSavedSkill(skill);
+      this.readerOpen = true;
+      this.error = '';
+    } catch { this.error = 'Не удалось открыть инструкцию.'; }
+  }
+  private loadSavedSkill(skill: SkillSummary): Promise<LibrarySkill> {
+    return firstValueFrom(this.http.get<LibrarySkill>(`/api/automation/skills/${skill.id}/${skill.version}`));
   }
   async save(): Promise<void> {
     if (this.saving) return;
@@ -168,6 +292,11 @@ export class SkillLibraryComponent implements OnInit {
       this.skills = this.draft.id ? this.skills.map(s => s.id === saved.id ? summary : s) : [...this.skills, summary];
       this.search(this.query);
       this.catalogChange.emit(this.skills);
+      if (this.editingFromImport && saved.sourceUrl) {
+        this.importedUrls.add(saved.sourceUrl);
+        this.changeQueue(this.pendingFiles.filter(file => file.url !== saved.sourceUrl));
+        this.editingFromImport = this.pendingFiles.length > 0;
+      }
       this.error = ''; this.editing = false;
     } catch (error) {
       this.error = (error as {error?:{error?:{message?:string}}}).error?.error?.message ?? 'Не удалось сохранить навык.';

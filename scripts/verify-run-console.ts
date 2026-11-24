@@ -30,10 +30,12 @@ try {
   const context = await browser.newContext({ viewport: { width: 1440, height: 1000 }, permissions: ['clipboard-read', 'clipboard-write'] });
   const page = await context.newPage(); page.setDefaultTimeout(18000);
   const errors: string[] = []; page.on('pageerror', (error) => errors.push(error.message));
-  page.on('console', (message) => { if (message.type() === 'error') errors.push(message.text()); });
+  page.on('console', (message) => { if (message.type() === 'error') errors.push(`${message.location().url}: ${message.text()}`); });
+  await page.route('**/api/auth/status', route => route.fulfill({ json: { enabled: false } }));
   await page.goto(`http://127.0.0.1:${(server.address() as AddressInfo).port}`);
-  await page.getByRole('button', { name: 'Очередь', exact: true }).click();
-  const queue = page.getByRole('dialog', { name: 'Очередь агентов' });
+  await page.getByRole('button', { name: 'Запуски агентов', exact: true }).click();
+  const queue = page.locator('sat-automation-queue');
+  await queue.getByRole('button', { name: 'Рабочая очередь', exact: true }).click();
   await queue.getByRole('button', { name: `Запуск ${task.id} ${run.id}`, exact: true }).click();
   const consoleView = queue.getByRole('region', { name: 'Консоль выполнения' });
   const log = consoleView.getByRole('log');
@@ -69,13 +71,13 @@ try {
   await select('Этап журнала', 'Подготовка');
   assert.ok(!(await log.innerText()).includes('$ npm test'));
   await select('Этап журнала', 'Все этапы');
-  await consoleView.locator('summary').click();
+  await consoleView.locator('.raw-panel button').click();
   assert.match(await consoleView.locator('.raw').innerText(), /item.completed/);
   const [download] = await Promise.all([page.waitForEvent('download'), consoleView.getByRole('button', { name: 'Скачать полный исходный журнал', exact: true }).click()]);
   const downloaded = readFileSync((await download.path())!, 'utf8');
   const raw = downloaded.trim().split('\n').map((line) => JSON.parse(line) as { kind: string; text: string });
   assert.ok(raw.filter((entry) => entry.kind === 'progress').map((entry) => entry.text).join('').includes(payload));
-  await consoleView.locator('summary').click();
+  await consoleView.locator('.raw-panel button').click();
   service.progress(run.id, run.leaseToken!, Array.from({ length: 90 }, (_, i) => `scroll fixture ${i}\n`).join(''));
   await log.getByText('scroll fixture 89', { exact: true }).waitFor();
   await log.evaluate((element) => { element.scrollTop = 0; element.dispatchEvent(new Event('scroll')); });
@@ -94,8 +96,9 @@ try {
   await page.waitForFunction(() => !document.querySelector('[aria-label="Вывод выполнения"]')?.textContent?.includes('bounded fixture'));
   assert.ok(!(await consoleView.innerText()).includes('Автопрокрутка приостановлена'));
   service.cancel(run.id);
+  await queue.getByRole('button', { name: 'История', exact: true }).click();
   await queue.getByRole('button', { name: `Запуск ${task.id} ${run.id}`, exact: true }).click();
-  await queue.getByRole('article', { name: 'Детали запуска' }).getByText('Остановлен · карточка: Планирование', { exact: true }).waitFor();
+  await queue.locator('.badge-run-status').getByText('Остановлен', { exact: true }).waitFor();
   const stopped = service.detail(run.id).run;
   assert.ok(stopped.finishedAt);
   await queue.getByRole('button', { name: 'Подробности запуска', exact: true }).click();
@@ -103,7 +106,7 @@ try {
   await queue.getByRole('complementary', { name: 'Подробности запуска' }).getByRole('button', { name: 'Закрыть подробности' }).click();
   for (const viewport of [{ width: 390, height: 844 }, { width: 844, height: 390 }, { width: 1440, height: 1000 }]) {
     await page.setViewportSize(viewport);
-    assert.ok(await queue.evaluate((element) => element.scrollWidth <= element.clientWidth + 2), 'Console must stay inside narrow dialog');
+    assert.ok(await queue.evaluate((element) => element.scrollWidth <= element.clientWidth + 2), 'Console must stay inside narrow page');
   }
   assert.deepEqual(errors, []);
   assert.ok((await log.boundingBox())!.height >= 140, 'Desktop layout must reserve usable height for the journal');

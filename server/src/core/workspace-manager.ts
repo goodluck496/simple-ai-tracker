@@ -23,11 +23,13 @@ import { SkillLibrary } from '../automation/skill-library.js';
 import { ProjectTeamSettings } from '../automation/base-team.js';
 import { AgentRunRepository } from '../automation/run-repository.js';
 import { ImprovementService } from '../automation/improvement-service.js';
+import { isWorkspaceBackground, type WorkspaceBackground } from '../../../shared/workspace-background.js';
 
 /** Одно пространство: имя, файл БД, каталог бэкапов. */
 export interface WorkspaceInfo {
   readonly name: string;
   readonly label: string;
+  readonly background?: WorkspaceBackground;
   readonly createdAt: string;
   readonly dbPath: string;
   readonly backupDir: string;
@@ -146,13 +148,16 @@ export class WorkspaceManager {
   }
 
   /** Rename the display label without changing task/worker/storage identity. */
-  public renameLabel(name: string, label: string, idPrefix?: string): WorkspaceInfo {
+  public renameLabel(name: string, label: string, idPrefix?: string, background?: WorkspaceBackground | null): WorkspaceInfo {
     const current = this.get(name);
     const prefix = idPrefix === undefined ? undefined : this.validatePrefix(idPrefix);
     if (typeof label !== 'string' || !label.trim() || label.trim().length > 100 || /[\u0000-\u001f\u007f]/.test(label)) {
       throw new TrackerError('VALIDATION_FAILED', 'Название пространства: от 1 до 100 символов без управляющих символов.');
     }
-    const renamed = { ...current, label: label.trim() };
+    if (background !== undefined && background !== null && !isWorkspaceBackground(background)) {
+      throw new TrackerError('VALIDATION_FAILED', 'Выберите фон из списка.');
+    }
+    const renamed = { ...current, label: label.trim(), ...(background !== undefined ? { background: background ?? undefined } : {}) };
     this.registry.workspaces = this.registry.workspaces.map(ws => ws.name === name ? renamed : ws);
     this.saveRegistry();
     if (prefix !== undefined) this.within(name, () => this.active.repos.meta.set('id_prefix', prefix));

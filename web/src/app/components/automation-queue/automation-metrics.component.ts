@@ -25,7 +25,6 @@ export class AutomationMetricsComponent {
   private readonly element = inject<ElementRef<HTMLElement>>(ElementRef);
   private readonly http = inject(HttpClient);
   private readonly workspace = inject(WorkspaceService);
-  @Output() public readonly navigate = new EventEmitter<'queue' | 'history'>();
   @Output() public readonly inspect = new EventEmitter<ImprovementOccurrence>();
   @Output() public readonly openTask = new EventEmitter<{ taskId: string; runId: string }>();
   @Output() public readonly periodChanged = new EventEmitter<ImprovementPeriod>();
@@ -65,6 +64,6 @@ export class AutomationMetricsComponent {
 
   public retry(): void { this.refresh.update(value => value + 1); }
   public reviewLabel(value: ImprovementOccurrence['reviewState']): string {
-    return value === 'repeated_after_done' ? 'Повтор после исправления' : value === 'repeated' ? 'Повторный случай' : 'Ознакомиться';
+    return value === 'repeated_after_done' ? 'Повтор после исправления' : 'Повторный случай';
   }
 }

@@ -20,8 +20,8 @@ const NATIVE_SUCCESS_STATUSES = new Set(['SUCCESS', 'success']);
 export class NativeAgentRunner implements AgentRunner {
   public constructor(public readonly id: RunnerId, private readonly executor = new ProcessExecutor(),
     private readonly worktreePermissions: Pick<WorktreePermissions, 'verify'> = new WorktreePermissions()) {}
-  public async run(job: AgentJob, onProgress: (text: string) => void): Promise<RunnerResult> {
-    if (this.id === RunnerId.Antigravity) {
+  public async run(job: AgentJob, onProgress: (text: string) => void, { audit = false } = {}): Promise<RunnerResult> {
+    if (this.id === RunnerId.Antigravity && !audit) {
       await this.worktreePermissions.verify(job);
       onProgress('Antigravity: YOLO включён для проверенной отдельной worktree.\n');
     }
@@ -35,16 +35,22 @@ export class NativeAgentRunner implements AgentRunner {
     const schemaPath = path.join(promptDir, 'outcome-schema.json');
     if (this.id === RunnerId.Codex || this.id === RunnerId.Antigravity) await fs.writeFile(schemaPath, JSON.stringify(AGENT_OUTCOME_SCHEMA), 'utf8');
     switch (this.id) {
-      case RunnerId.Codex: command = RunnerId.Codex; args = ['exec', '--json', '--output-schema', schemaPath, '--sandbox', 'workspace-write', '--model', model,
-        '-c', 'tool_output_token_limit=800',
-        '-c', `mcp_servers.${AGENT_TRACKER_SERVER}.enabled_tools=${JSON.stringify(AGENT_TRACKER_READ_TOOLS)}`,
-        '-c', `mcp_servers.${AGENT_TRACKER_SERVER}.default_tools_approval_mode="auto"`, '-']; stdin = job.prompt; break;
+      case RunnerId.Codex:
+        command = RunnerId.Codex;
+        args = ['exec', '--json', '--output-schema', schemaPath, '--sandbox', audit ? 'read-only' : 'workspace-write',
+          '--model', model, '-c', 'tool_output_token_limit=800'];
+        if (audit) args.push('--skip-git-repo-check');
+        else args.push('-c', `mcp_servers.${AGENT_TRACKER_SERVER}.enabled_tools=${JSON.stringify(AGENT_TRACKER_READ_TOOLS)}`,
+          '-c', `mcp_servers.${AGENT_TRACKER_SERVER}.default_tools_approval_mode="auto"`);
+        args.push('-');
+        stdin = job.prompt;
+        break;
       case RunnerId.ClaudeCode: command = 'claude'; args = ['-p', '--output-format', 'json', '--model', model]; stdin = job.prompt; break;
       case RunnerId.OpenCode: command = RunnerId.OpenCode; args = ['run', '--format', 'json', '--model', model, brief]; break;
       case RunnerId.DeepSeekHarness: command = 'dsh'; args = ['--profile', job.profile.nativeProfile!, brief]; break;
       case RunnerId.Antigravity: {
         command = NativeExecutable.antigravity();
-        args = ['--add-dir', job.cwd, '--dangerously-skip-permissions', '--output-format', 'stream-json', '--json-schema', schemaPath, '--model', model,
+        args = ['--add-dir', job.cwd, ...(audit ? [] : ['--dangerously-skip-permissions']), '--output-format', 'stream-json', '--json-schema', schemaPath, '--model', model,
           '--print-timeout', job.trustedExecution ? '0' : `${job.settings.timeoutMinutes}m`];
         if (job.sessionId) args.push('--conversation', StageNotes.session(job.sessionId));
         args.push('-p', job.sessionId ? brief + ' Continue the saved stage only. Re-read current instructions, partialCheckpoint and .sat/stage-context.json currentNote: recovered progress and repository files may have changed. Do not repeat completed research.' : brief);
@@ -52,7 +58,7 @@ export class NativeAgentRunner implements AgentRunner {
       }
       case RunnerId.Custom: {
         command = job.profile.command!;
-        const values: Record<string, string> = { promptFile, model, cwd: job.cwd, role: job.profile.role, provider: job.connection.id };
+        const values: Record<string, string> = { promptFile, model, cwd: job.cwd, role: audit ? 'stage-audit' : job.profile.role, provider: job.connection.id };
         args = (job.profile.args ?? []).map((argument) => argument.replace(/\{(\w+)\}/g, (_, key: string) => {
           if (!(key in values)) throw new Error(`Unknown runner placeholder: ${key}`);
           return values[key];
@@ -62,19 +68,21 @@ export class NativeAgentRunner implements AgentRunner {
       default: throw new Error(`Not a native runner: ${this.id}`);
     }
     if (this.id === RunnerId.Codex) {
-      // Match the host worker's transport instead of inheriting an account-wide
-      // tracker configuration which may point to a different store/runtime.
-      const trackerCommand = process.env.SAT_MCP_COMMAND ?? process.execPath;
-      const trackerArgs: unknown = JSON.parse(process.env.SAT_MCP_ARGS ?? JSON.stringify([path.resolve('dist/server/mcp.mjs')]));
-      if (!Array.isArray(trackerArgs) || !trackerArgs.every(arg => typeof arg === 'string')) throw new Error('SAT_MCP_ARGS must be a JSON string array.');
-      const trackerEnv: Record<string, string> = { SAT_WORKSPACE: process.env.SAT_WORKSPACE ?? 'default' };
-      for (const key of ['SAT_HOME', 'SAT_DB_PATH', 'SAT_BACKUP_ENABLED']) {
-        const value = process.env[key]; if (value !== undefined) trackerEnv[key] = value;
+      if (!audit) {
+        // Match the host worker's transport instead of inheriting an account-wide
+        // tracker configuration which may point to a different store/runtime.
+        const trackerCommand = process.env.SAT_MCP_COMMAND ?? process.execPath;
+        const trackerArgs: unknown = JSON.parse(process.env.SAT_MCP_ARGS ?? JSON.stringify([path.resolve('dist/server/mcp.mjs')]));
+        if (!Array.isArray(trackerArgs) || !trackerArgs.every(arg => typeof arg === 'string')) throw new Error('SAT_MCP_ARGS must be a JSON string array.');
+        const trackerEnv: Record<string, string> = { SAT_WORKSPACE: process.env.SAT_WORKSPACE ?? 'default' };
+        for (const key of ['SAT_HOME', 'SAT_DB_PATH', 'SAT_BACKUP_ENABLED']) {
+          const value = process.env[key]; if (value !== undefined) trackerEnv[key] = value;
+        }
+        args.push('-c', `mcp_servers.${AGENT_TRACKER_SERVER}.command=${JSON.stringify(trackerCommand)}`,
+          '-c', `mcp_servers.${AGENT_TRACKER_SERVER}.args=${JSON.stringify(trackerArgs)}`,
+          '-c', `mcp_servers.${AGENT_TRACKER_SERVER}.env={${Object.entries(trackerEnv).map(([key, value]) => `${JSON.stringify(key)}=${JSON.stringify(value)}`).join(',')}}`,
+          '-c', `mcp_servers.${AGENT_TRACKER_SERVER}.enabled=true`);
       }
-      args.push('-c', `mcp_servers.${AGENT_TRACKER_SERVER}.command=${JSON.stringify(trackerCommand)}`,
-        '-c', `mcp_servers.${AGENT_TRACKER_SERVER}.args=${JSON.stringify(trackerArgs)}`,
-        '-c', `mcp_servers.${AGENT_TRACKER_SERVER}.env={${Object.entries(trackerEnv).map(([key, value]) => `${JSON.stringify(key)}=${JSON.stringify(value)}`).join(',')}}`,
-        '-c', `mcp_servers.${AGENT_TRACKER_SERVER}.enabled=true`);
       // Task context is already supplied by the worker. Do not inherit unrelated
       // account-wide servers (and their large tool descriptions) in every role.
       const inventory = await this.executor.run({ command, args: ['mcp', 'list', '--json'], cwd: job.cwd,
@@ -88,14 +96,15 @@ export class NativeAgentRunner implements AgentRunner {
       let indexed = false;
       try { indexed = (await fs.stat(path.join(job.cwd, '.codegraph'))).isDirectory(); }
       catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
-      if (indexed) {
+      if (!audit && indexed) {
         const graph = servers.find(s => s.name === 'codegraph');
         if (graph?.transport?.type && graph.transport.type !== 'stdio') throw new Error('Worktree CodeGraph requires a local stdio connection.');
         const executable = NativeExecutable.codegraphMcp(job.cwd);
         args.push('-c', `mcp_servers.codegraph.command=${JSON.stringify(executable.command)}`, '-c', `mcp_servers.codegraph.args=${JSON.stringify(executable.args)}`,
           '-c', 'mcp_servers.codegraph.enabled=true', '-c', 'mcp_servers.codegraph.enabled_tools=["codegraph_explore"]', '-c', 'mcp_servers.codegraph.default_tools_approval_mode="auto"');
       }
-      for (const server of job.projectMcp ?? []) {
+      const projectServers = audit ? [] : job.projectMcp ?? [];
+      for (const server of projectServers) {
         const inherited = servers.find(s => s.name === server.name);
         if (server.url !== undefined) {
           if (inherited) throw new Error('Use a distinct project MCP name to avoid inheriting account credentials: ' + server.name);
@@ -114,8 +123,9 @@ export class NativeAgentRunner implements AgentRunner {
           '-c', `mcp_servers.${server.name}.default_tools_approval_mode="auto"`,
           '-c', `mcp_servers.${server.name}.enabled=true`);
       }
-      // Retain the repository's required code navigation only when it is indexed.
-      for (const server of servers) if (!(job.projectMcp ?? []).some(s => s.name === server.name) && server.name !== AGENT_TRACKER_SERVER && server.enabled !== false && (server.name !== 'codegraph' || !indexed)) {
+      const retainedServers = audit ? [] : [AGENT_TRACKER_SERVER, ...projectServers.map(server => server.name)];
+      if (!audit && indexed) retainedServers.push('codegraph');
+      for (const server of servers) if (server.enabled !== false && !retainedServers.includes(server.name)) {
         // Desktop-injected servers may not exist in config.toml. An enabled-only
         // override would create a transport-less entry and make Codex refuse startup.
         if (server.transport?.type === 'stdio' && server.transport.command) args.push('-c', `mcp_servers.${server.name}.command=${JSON.stringify(server.transport.command)}`);
@@ -123,7 +133,7 @@ export class NativeAgentRunner implements AgentRunner {
         args.push('-c', `mcp_servers.${server.name}.enabled=false`);
       }
     }
-    if (this.id !== RunnerId.Custom) args.push(...(job.profile.args ?? []));
+    if (!audit && this.id !== RunnerId.Custom) args.push(...(job.profile.args ?? []));
     const toolIds = new Set<string>();
     let toolThresholdReported = false;
     const nativeStop = new AbortController();

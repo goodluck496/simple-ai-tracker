@@ -36,8 +36,9 @@ try {
     await route.fulfill({ contentType: 'application/json', body: JSON.stringify(copy) });
   });
   await page.goto('http://127.0.0.1:' + (server.address() as AddressInfo).port);
-  await page.getByRole('button', { name: 'Очередь', exact: true }).click();
-  const queue = page.getByRole('dialog', { name: 'Очередь агентов' });
+  await page.getByRole('button', { name: 'Запуски агентов', exact: true }).click();
+  const queue = page.locator('sat-automation-queue');
+  await queue.getByRole('button', { name: 'Рабочая очередь', exact: true }).click();
   const card = queue.getByRole('button', { name: 'Запуск ' + task.id + ' ' + run.id, exact: true });
   await card.click();
   const indicator = queue.locator('.selected-activity .run-activity');

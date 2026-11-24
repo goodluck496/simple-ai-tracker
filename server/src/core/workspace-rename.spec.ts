@@ -20,16 +20,18 @@ test('rename workspace label persists through restart without changing IDs, stor
     const second = manager.create('second', 'Second');
     await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
     const base = 'http://127.0.0.1:' + (server.address() as AddressInfo).port;
-    const rename = (name: string, label: unknown) => fetch(base + '/api/workspaces/' + name + '/rename', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ label }),
+    const rename = (name: string, label: unknown, background?: unknown) => fetch(base + '/api/workspaces/' + name + '/rename', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ label, background }),
     });
     const response = await rename('default', '  Моё пространство  ');
     assert.equal(response.status, 200);
     assert.deepEqual(manager.get('default'), { ...original, label: 'Моё пространство' });
     assert.equal(manager.currentName, 'default');
     assert.equal(app.taskService.getTaskCard(task.id).title, 'Preserved task');
+    assert.equal((await rename('second', 'Другой проект', 'plum')).status, 200);
     assert.equal((await rename('second', 'Другой проект')).status, 200);
-    assert.deepEqual(manager.get('second'), { ...second, label: 'Другой проект' });
+    assert.equal((await rename('second', 'Другой проект', 'not-a-preset')).status, 400);
+    assert.deepEqual(manager.get('second'), { ...second, label: 'Другой проект', background: 'plum' });
     for (const label of ['', '   ', 'x'.repeat(101), 'bad\nlabel', 5, null]) assert.ok((await rename('second', label)).status >= 400);
     assert.equal((await rename('missing', 'Missing')).status, 404);
     assert.equal(manager.get('second').label, 'Другой проект');
@@ -37,7 +39,7 @@ test('rename workspace label persists through restart without changing IDs, stor
     app.close(); app = createContainer(options);
     assert.deepEqual(app.workspaceManager.get('default'), { ...original, label: 'Моё пространство' });
     assert.equal(app.taskService.getTaskCard(task.id).title, 'Preserved task');
-    assert.deepEqual(app.workspaceManager.get('second'), { ...second, label: 'Другой проект' });
+    assert.deepEqual(app.workspaceManager.get('second'), { ...second, label: 'Другой проект', background: 'plum' });
   } finally {
     server.closeAllConnections(); if (server.listening) await new Promise<void>(resolve => server.close(() => resolve()));
     app.close(); rmSync(root, { recursive: true, force: true });

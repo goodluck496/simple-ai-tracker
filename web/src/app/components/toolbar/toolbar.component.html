@@ -6,6 +6,7 @@
       type="text"
       pInputText
       class="search-input"
+      aria-label="Поиск по задачам"
       placeholder="Поиск по задачам"
       [ngModel]="store.query()"
       (ngModelChange)="onQueryInput($event)"

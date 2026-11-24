@@ -7,11 +7,13 @@
       <div class="scope-box">
         <label class="sidebar-field-label">Область настроек</label>
         <div class="scope-toggle-group">
-          <button pButton type="button" class="scope-toggle-btn" [class.active]="settingsScope === 'project'" [disabled]="busy || starting" (click)="changeScope('project')">
-            <i class="pi pi-folder"></i> Проект
+          <button pButton type="button" class="scope-toggle-btn" [class.active]="settingsScope === 'project'"
+            [attr.aria-pressed]="settingsScope === 'project'" [disabled]="busy || starting" (click)="changeScope('project')">
+            <i class="pi pi-folder" aria-hidden="true"></i> Проект
           </button>
-          <button pButton type="button" class="scope-toggle-btn" [class.active]="settingsScope === 'task'" [disabled]="busy || starting" (click)="changeScope('task')">
-            <i class="pi pi-bookmark"></i> Задача
+          <button pButton type="button" class="scope-toggle-btn" [class.active]="settingsScope === 'task'"
+            [attr.aria-pressed]="settingsScope === 'task'" [disabled]="busy || starting" (click)="changeScope('task')">
+            <i class="pi pi-bookmark" aria-hidden="true"></i> Задача
           </button>
         </div>
 
@@ -34,88 +36,18 @@
         }
       </div>
 
-      <!-- Карточка исполнителя / Worker -->
-      <div class="worker-card">
-        <div class="worker-card-header">
-          <span class="host-badge" [class.online]="host.online">
-            <span class="status-dot"></span>
-            <span class="host-badge-text">{{ executorTitle }}</span>
-          </span>
-          @if (host.execution?.hostName) {
-            <span class="host-name" [title]="host.execution?.hostName">{{ host.execution?.hostName }}</span>
-          }
-        </div>
-        @if (host.online && host.execution) {
-          <div class="worker-card-actions">
-            <button pButton severity="secondary" size="small" icon="pi pi-play" [disabled]="projectBusy || host.execution.state !== 'stopped'" (click)="controlWorker(true)">Запустить</button>
-            <button pButton severity="secondary" size="small" icon="pi pi-stop-circle" [disabled]="projectBusy || host.execution.state === 'stopped'" (click)="controlWorker(false)">Остановить</button>
-          </div>
-        } @else {
-          <button pButton severity="secondary" size="small" icon="pi pi-desktop" class="connect-host-btn" (click)="showHostConnection()">Подключить компьютер</button>
-        }
-        @if (host.execution?.error) { <div role="alert" class="worker-error">{{ host.execution?.error }}</div> }
-      </div>
     </div>
 
-    <!-- Вертикальное меню разделов -->
-    <nav class="sidebar-nav" role="tablist">
-      <div class="nav-section-title">Разделы</div>
-
-      <button pButton type="button" class="nav-item" [class.active]="activeTab === tab.Launch" (click)="selectTab(tab.Launch)">
-        <i class="pi pi-bolt nav-icon"></i>
-        <div class="nav-item-content">
-          <span class="nav-item-label">Запуск</span>
-          <span class="nav-item-sub">{{ settings.pipeline.length }} этапов</span>
-        </div>
-        @if (selectedEligibility) {
-          <span class="nav-item-dot" [class.ready]="selectedEligibility.canStart"></span>
+    <nav class="sidebar-nav" aria-label="Разделы автоматизации">
+      @for (item of tabs; track item.value) {
+        @if (settingsScope === 'project' || item.task) {
+          <button pButton type="button" class="nav-item" [class.active]="activeTab === item.value"
+            [attr.aria-current]="activeTab === item.value ? 'page' : null" (click)="selectTab(item.value)">
+            <i [class]="'pi nav-icon ' + item.icon" aria-hidden="true"></i>
+            <span class="nav-item-label">{{ item.label }}</span>
+          </button>
         }
-      </button>
-
-      <button pButton type="button" class="nav-item" [class.active]="activeTab === tab.Team" [disabled]="isTabDisabled(tab.Team)" (click)="selectTab(tab.Team)">
-        <i class="pi pi-users nav-icon"></i>
-        <div class="nav-item-content">
-          <span class="nav-item-label">Команда и этапы</span>
-          <span class="nav-item-sub">{{ settings.agents.length }} ролей</span>
-        </div>
-      </button>
-
-      <button pButton type="button" class="nav-item" [class.active]="activeTab === tab.Budgets" [disabled]="isTabDisabled(tab.Budgets)" (click)="selectTab(tab.Budgets)">
-        <i class="pi pi-sliders-h nav-icon"></i>
-        <div class="nav-item-content">
-          <span class="nav-item-label">Лимиты и бюджеты</span>
-          <span class="nav-item-sub">{{ settings.maxStageToolCalls }} инстр. · {{ settings.timeoutMinutes }} мин</span>
-        </div>
-      </button>
-
-      <button pButton type="button" class="nav-item" [class.active]="activeTab === tab.Models" [disabled]="isTabDisabled(tab.Models)" (click)="selectTab(tab.Models)">
-        <i class="pi pi-server nav-icon"></i>
-        <div class="nav-item-content">
-          <span class="nav-item-label">Модели</span>
-          <span class="nav-item-sub">{{ settings.connections.length }} подключений</span>
-        </div>
-      </button>
-
-      <button pButton type="button" class="nav-item" [class.active]="activeTab === tab.Project" [disabled]="isTabDisabled(tab.Project)" (click)="selectTab(tab.Project)">
-        <i class="pi pi-cog nav-icon"></i>
-        <div class="nav-item-content">
-          <span class="nav-item-label">Проект и проверки</span>
-          <span class="nav-item-sub">{{ settings.baseBranch || 'ветка не выбрана' }}</span>
-        </div>
-      </button>
-
-      <button pButton type="button" class="nav-item" [class.active]="activeTab === tab.Resources" [disabled]="isTabDisabled(tab.Resources)" (click)="selectTab(tab.Resources)">
-        <i class="pi pi-book nav-icon"></i><span class="nav-item-label">Навыки и MCP</span>
-      </button>
-      <div class="nav-section-title">Быстрый переход</div>
-      <button pButton type="button" class="nav-item nav-action-item" (click)="openQueue.emit(selectedRun)">
-        <i class="pi pi-list nav-icon"></i>
-        <div class="nav-item-content">
-          <span class="nav-item-label">Очередь агентов</span>
-          <span class="nav-item-sub">Мониторинг и логи</span>
-        </div>
-        <i class="pi pi-arrow-up-right external-icon"></i>
-      </button>
+      }
     </nav>
 
     <!-- Футер сайдбара с кнопкой сохранения -->
@@ -127,7 +59,7 @@
   </aside>
 
   <!-- MAIN AREA: ОСНОВНОЙ КОНТЕНТ ВЫБРАННОГО РАЗДЕЛА -->
-  <main class="panel-main" aria-label="Контент настроек">
+  <section class="panel-main" aria-label="Настройки автоматизации">
     <!-- Шапка страницы -->
     <header class="main-header">
       <div class="header-left">
@@ -138,14 +70,7 @@
         }
         <div class="header-titles">
           <h2 class="section-title">
-            @switch (activeTab) {
-              @case (tab.Launch) { Запуск задачи }
-              @case (tab.Team) { Команда агентов и этапы }
-              @case (tab.Resources) { Навыки и MCP }
-              @case (tab.Budgets) { Лимиты и бюджеты }
-              @case (tab.Models) { Подключения моделей }
-              @case (tab.Project) { Компьютер, проект и проверки }
-            }
+            {{ sectionTitle }}
           </h2>
           <span class="scope-pill">
             {{ settingsScope === 'task' ? (selectedTask ? 'Задача: ' + selectedTask : 'Задача не выбрана') : 'Пространство проекта' }}
@@ -159,38 +84,25 @@
             Вернуться к запуску задачи
           </button>
         }
-        <button pButton severity="secondary" size="small" icon="pi pi-list" (click)="openQueue.emit(selectedRun)">
+        <button pButton severity="secondary" size="small" icon="pi pi-list" (click)="openQueue(selectedRun)">
           Очередь выполнения
         </button>
       </div>
     </header>
 
-    <!-- Уведомления и предупреждения -->
-    <div class="alerts-container">
-      @if (error) { <div role="alert" class="alert-banner alert-error"><i class="pi pi-exclamation-triangle"></i> <span>{{ error }}</span></div> }
-      @if (notice) { <div role="status" class="alert-banner alert-info"><i class="pi pi-info-circle"></i> <span>{{ notice }}</span></div> }
-      @if (repairNotice) { <div role="status" class="alert-banner alert-warning"><i class="pi pi-exclamation-circle"></i> <span>{{ repairNotice }}</span></div> }
-      @if (initialMessage) { <div role="alert" class="alert-banner alert-error"><i class="pi pi-exclamation-triangle"></i> <span>{{ initialMessage }}</span></div> }
-    </div>
-
     <!-- Основная прокручиваемая область -->
-    <div class="main-scroll-pane" cdkScrollable>
+    <div #scrollPane class="main-scroll-pane" cdkScrollable>
       <!-- ================================================================= -->
       <!-- РАЗДЕЛ: ЗАПУСК ЗАДАЧИ -->
       <!-- ================================================================= -->
       @if (activeTab === tab.Launch) {
         <div class="tab-pane-content">
-          @if (settingsScope === 'project') {
-            <div class="panel-card">
-              <div class="panel-card-header">
-                <h4>Режим запуска</h4>
-                <p class="card-hint">Запуск одной задачи или постановка атомарной группы задач в очередь</p>
-              </div>
-              <div class="card-body">
-                <p-select [options]="launchModes" optionLabel="label" optionValue="value" [(ngModel)]="batchMode" ariaLabel="Режим запуска" appendTo="body" />
-              </div>
-            </div>
-          }
+          <div class="launch-modes" role="group" aria-label="Режим запуска">
+            <button pButton type="button" size="small" severity="secondary" [text]="true" [disabled]="starting"
+              [attr.aria-pressed]="!batchMode" (click)="changeBatchMode(false)">Одна задача</button>
+            <button pButton type="button" size="small" severity="secondary" [text]="true" [disabled]="starting"
+              [attr.aria-pressed]="batchMode" (click)="changeBatchMode(true)">Группа задач</button>
+          </div>
 
           @if (launchConfigurationProblems.length) {
             <div class="panel-card warning-card" role="status">
@@ -213,7 +125,7 @@
               </div>
               <p class="card-hint">Источник: {{ settingsScope === 'task' ? 'команда выбранной задачи' : 'настройки проекта' }}. Отметьте только нужных исполнителей для нового запуска.</p>
               <button pButton type="button" severity="secondary" size="small" [text]="true"
-                [disabled]="busy || !taskTeamReady" (click)="selectTab(tab.Team)">Настроить маршрут</button>
+                [disabled]="busy || !taskTeamReady" (click)="selectTab(tab.Pipeline)">Настроить маршрут</button>
             </div>
             <div class="card-body">
               <div class="launch-agent-list">
@@ -223,7 +135,7 @@
                     <p-checkbox [inputId]="'run-stage-' + agent.id" [binary]="true" [ngModel]="stageIndex >= 0" (ngModelChange)="toggleStage(agent.id, $event)" [disabled]="busy || !taskTeamReady" />
                     <span class="stage-number" aria-hidden="true">{{ stageIndex >= 0 ? stageIndex + 1 : '—' }}</span>
                     <label class="stage-identity" [for]="'run-stage-' + agent.id" [title]="agentLabel(agent.id)">
-                      <strong class="stage-role-name">{{ roleLabel(agent.role) }}</strong>
+                      <strong class="stage-role-name">{{ profileName(agent) }}</strong>
                       <span class="stage-runner-meta">{{ agent.runner }} · {{ agent.model || 'модель не выбрана' }}</span>
                     </label>
                   </div>
@@ -349,14 +261,11 @@
               <div class="card-body">
                 <p>ID: <code>{{ run.id }}</code> · этап {{ stageNumber(run) }} / {{ run.settings.pipeline.length }}</p>
                 <p>{{ run.summary }}</p>
-                <p-button label="Открыть в очереди" severity="secondary" size="small" icon="pi pi-external-link" (onClick)="openQueue.emit(run.id)" />
+                <p-button label="Открыть в очереди" severity="secondary" size="small" icon="pi pi-external-link" (onClick)="openQueue(run.id)" />
               </div>
             </div>
           }
 
-          @if (startError) { <p role="alert" class="error">{{ startError }}</p> }
-          @if (startNotice) { <p role="status" class="alert-banner alert-info">{{ startNotice }}</p> }
-          @if (pollError) { <p role="alert" class="error">{{ pollError }}</p> }
         </div>
       }
 
@@ -385,7 +294,7 @@
       @else if (activeTab === tab.Team) {
         <div class="tab-pane-content" [attr.inert]="settingsScope === 'task' && !taskTeamReady ? '' : null">
           @if (settingsScope === 'task') {
-            <p class="hint">Здесь настраиваются роли, модели, инструкции и порядок этапов для задачи {{ selectedTask }}. Новые подключения моделей добавляются в настройках проекта.</p>
+            <p class="hint">Здесь настраиваются роли, модели и инструкции для задачи {{ selectedTask }}. Новые подключения моделей добавляются в настройках проекта.</p>
           } @else if (baseTeam) {
             <section class="panel-card" aria-label="Базовая команда">
               <div class="panel-card-header"><h4>Базовая команда</h4>
@@ -416,16 +325,6 @@
 
           <div class="panel-card">
             <div class="panel-card-header">
-              <h4>Маршрут запуска</h4>
-            </div>
-            <div class="card-body">
-              <sat-pipeline-flow [settings]="settings" [editable]="!busy" [browserEditable]="settingsScope === 'project'" (reorder)="moveStage($event.from, $event.to)"
-                (includeAgent)="toggleStage($event, true)" (createAgent)="addAgent($event)" (excludeAgent)="toggleStage($event, false)" />
-            </div>
-          </div>
-
-          <div class="panel-card">
-            <div class="panel-card-header">
               <div class="card-title-row">
                 <h4>Агенты команды</h4>
                 @if (!settings.agents.length) {
@@ -437,16 +336,20 @@
             <div class="card-body">
               <div class="agents-stack">
                 @for (agent of settings.agents; track agent.id; let i = $index) {
-                  <div class="agent-config-card" [attr.aria-label]="'Агент: ' + roleLabel(agent.role)">
+                  <div class="agent-config-card" [attr.aria-label]="'Агент: ' + profileName(agent)">
                     <div class="agent-card-header">
                       <div class="agent-role-badge">
                         <i class="pi pi-user"></i>
-                        <strong>{{ roleLabel(agent.role) }}</strong>
+                        <strong>{{ profileName(agent) }}</strong>
                       </div>
                       <button pButton severity="secondary" [text]="true" size="small" icon="pi pi-trash" (click)="removeAgent(agent.id)" title="Убрать агента"></button>
                     </div>
 
                     <div class="agent-fields-grid">
+                      <label class="profile-name-field">
+                        <span>Название профиля</span>
+                        <input pInputText [(ngModel)]="agent.name" [maxlength]="profileNameLimit" [placeholder]="profileName(agent)" />
+                      </label>
                       <label>
                         <span>Роль</span>
                         <p-select [options]="roleOptions" optionLabel="label" optionValue="value" [ngModel]="agent.role" (ngModelChange)="changeRole(agent, $event)" appendTo="body" />
@@ -522,6 +425,24 @@
           </div>
 
 
+        </div>
+      }
+      @else if (activeTab === tab.Pipeline) {
+        <div class="tab-pane-content" [attr.inert]="!taskTeamReady ? '' : null">
+          <div class="panel-card">
+            <div class="panel-card-header">
+              <h4>Маршрут запуска</h4>
+            </div>
+            <div class="card-body">
+              <sat-pipeline-flow [settings]="settings" [editable]="!busy" [browserEditable]="settingsScope === 'project'" (reorder)="moveStage($event.from, $event.to)"
+                (includeAgent)="toggleStage($event, true)" (createAgent)="addAgent($event)" (excludeAgent)="toggleStage($event, false)" />
+            </div>
+          </div>
+
+        </div>
+      }
+      @else if (activeTab === tab.System) {
+        <div class="tab-pane-content">
           @if (settingsScope === 'project') {
             <div class="panel-card doctor-system-card">
               <div class="panel-card-header">
@@ -530,105 +451,99 @@
               </div>
               <div class="card-body system-role-list">
                 @if (doctorAgent; as doctorAgent) {
-                  <div class="agent-config-card doctor-agent-card" [attr.aria-label]="'Системный агент: ' + roleLabel(doctorAgent.role)">
+                  <ng-container *ngTemplateOutlet="systemAgentCard; context: { $implicit: doctorAgent, audit: false }" />
+                }
+                @if (settings.auditAgent; as auditAgent) {
+                  <ng-container *ngTemplateOutlet="systemAgentCard; context: { $implicit: auditAgent, audit: true }" />
+                }
+                <ng-template #systemAgentCard let-agent let-audit="audit">
+                  <div class="agent-config-card doctor-agent-card"
+                    [attr.aria-label]="'Системный агент: ' + (audit ? 'Аудитор этапов' : roleLabel(agent.role))">
                     <div class="agent-card-header">
                       <div class="agent-role-badge">
-                        <i class="pi pi-wrench"></i>
-                        <strong>{{ roleLabel(doctorAgent.role) }}</strong>
+                        <i class="pi" [class.pi-chart-bar]="audit" [class.pi-wrench]="!audit" aria-hidden="true"></i>
+                        <strong>{{ audit ? 'Аудитор этапов' : roleLabel(agent.role) }}</strong>
                       </div>
                       <button pButton severity="secondary" [text]="true" type="button" icon="pi pi-times"
-                        aria-label="Убрать настройки Pipeline Doctor" (click)="removeSystemRole('doctorAgent')"></button>
+                        [attr.aria-label]="audit ? 'Убрать аудитора этапов' : 'Убрать настройки Pipeline Doctor'"
+                        (click)="removeSystemRole(audit ? 'auditAgent' : 'doctorAgent')"></button>
                     </div>
 
                     <div class="agent-fields-grid">
                       <label>
                         <span>Исполнитель</span>
-                        <p-select [options]="runnerOptions(doctorAgent)" optionLabel="label" optionValue="value" [(ngModel)]="doctorAgent.runner" ariaLabel="Исполнитель агента Doctor" appendTo="body" />
+                        <p-select [options]="runnerOptions(agent)" optionLabel="label" optionValue="value"
+                          [(ngModel)]="agent.runner" [disabled]="audit" [ariaLabel]="audit ? 'Исполнитель аудитора' : 'Исполнитель агента Doctor'" appendTo="body" />
                       </label>
                       <label>
                         <span>Подключение</span>
-                        <p-select [options]="connectionOptions" optionLabel="label" optionValue="value" [(ngModel)]="doctorAgent.connectionId" (onChange)="selectConnection(doctorAgent)" [filter]="true" filterPlaceholder="Поиск подключения" ariaLabel="Подключение агента Doctor" appendTo="body" />
+                        <p-select [options]="connectionOptions" optionLabel="label" optionValue="value"
+                          [ngModel]="agent.connectionId" (ngModelChange)="changeSystemConnection(agent, $event)"
+                          [filter]="true" filterPlaceholder="Поиск подключения" placeholder="Выберите подключение"
+                          [ariaLabel]="audit ? 'Подключение аудитора' : 'Подключение агента Doctor'" appendTo="body" />
                       </label>
                       <label class="grow-field">
                         <span>Модель</span>
-                        @if (manualModels.has(doctorAgent.id)) {
-                          <input pInputText [(ngModel)]="doctorAgent.model" placeholder="ID модели" />
+                        @if (manualModels.has(agent.id)) {
+                          <input pInputText [(ngModel)]="agent.model" placeholder="ID модели"
+                            [attr.aria-label]="audit ? 'ID модели аудитора' : 'ID модели агента Doctor'" />
                         } @else {
-                          <p-select [options]="modelOptions(doctorAgent)" optionLabel="label" optionValue="id" [(ngModel)]="doctorAgent.model"
-                            [filter]="true" filterBy="label,id" filterPlaceholder="Поиск модели" placeholder="Выберите модель" ariaLabel="Модель агента Doctor" appendTo="body" />
+                          <p-select [options]="modelOptions(agent)" optionLabel="label" optionValue="id" [(ngModel)]="agent.model"
+                            [filter]="true" filterBy="label,id" filterPlaceholder="Поиск модели" placeholder="Выберите модель"
+                            [ariaLabel]="audit ? 'Модель аудитора' : 'Модель агента Doctor'" appendTo="body" />
                         }
                       </label>
                     </div>
 
                     <div class="agent-model-tools">
-                      <button pButton severity="secondary" size="small" type="button" icon="pi pi-refresh" (click)="loadModels(doctorAgent)" [disabled]="!host.online || projectBusy || !doctorAgent.connectionId" [title]="modelButtonTitle(doctorAgent)">Обновить модели</button>
-                      <button pButton severity="secondary" [text]="true" size="small" type="button" (click)="toggleManualModel(doctorAgent)">{{ manualModels.has(doctorAgent.id) ? 'Выбрать из списка' : 'Указать ID вручную' }}</button>
-                      <span class="model-status-text">{{ modelMessage(doctorAgent) }}</span>
+                      <button pButton severity="secondary" size="small" type="button" icon="pi pi-refresh"
+                        (click)="loadModels(agent)" [disabled]="!host.online || projectBusy || !agent.connectionId"
+                        [title]="modelButtonTitle(agent)">Обновить модели</button>
+                      <button pButton severity="secondary" [text]="true" size="small" type="button" (click)="toggleManualModel(agent)">
+                        {{ manualModels.has(agent.id) ? 'Выбрать из списка' : 'Указать ID вручную' }}
+                      </button>
+                      <span class="model-status-text">{{ modelMessage(agent) }}</span>
                     </div>
+
+                    @if (audit) {
+                      <div class="agent-model-tools">
+                        <label class="checkbox-inline">
+                          <p-toggleswitch [disabled]="!auditReady && !(agent.enabled ?? !!agent.connectionId)"
+                            [ngModel]="agent.enabled ?? !!agent.connectionId" (ngModelChange)="agent.enabled = $event"
+                            ariaLabel="Включить аудитора этапов" />
+                          <span>Включить аудитора</span>
+                        </label>
+                        <span class="card-hint">{{ auditReady ? 'Аудитор получает метрики этапов и инструкции роли.' : 'Для включения выберите подключение и модель и заполните поля исполнителя.' }}</span>
+                      </div>
+                    }
 
                     <p-accordion>
                       <p-accordion-panel value="instructions">
                         <p-accordion-header>Инструкции роли</p-accordion-header>
                         <p-accordion-content>
-                          <textarea pTextarea rows="4" [(ngModel)]="doctorAgent.instructions" class="instructions-textarea" placeholder="Правила и системный промпт роли..."></textarea>
+                          <textarea pTextarea rows="4" [(ngModel)]="agent.instructions" [attr.maxlength]="audit ? 1500 : null"
+                            class="instructions-textarea" placeholder="Правила и системный промпт роли..."></textarea>
                           <div class="instructions-actions">
-                            <button pButton severity="secondary" size="small" type="button" (click)="resetInstructions(doctorAgent)">Вставить базовую инструкцию</button>
+                            <button pButton severity="secondary" size="small" type="button" (click)="resetSystemInstructions(agent)">Вставить базовую инструкцию</button>
                           </div>
                         </p-accordion-content>
                       </p-accordion-panel>
                     </p-accordion>
 
-                    @if (doctorAgent.runner === runnerId.Custom) {
+                    @if (agent.runner === runnerId.DeepSeekHarness) {
+                      <label class="extra-field">
+                        <span>Профиль DeepSeek Harness на worker</span>
+                        <input pInputText [(ngModel)]="agent.nativeProfile" />
+                      </label>
+                    }
+                    @if (agent.runner === runnerId.Custom) {
                       <div class="custom-runner-fields">
-                        <label><span>Исполняемый файл</span><input pInputText [(ngModel)]="doctorAgent.command" /></label>
-                        <label><span>Аргументы JSON: &#123;promptFile&#125;, &#123;model&#125;, &#123;cwd&#125;, &#123;role&#125;</span><input pInputText [ngModel]="json(doctorAgent.args || [])" (ngModelChange)="setDoctorArgs($event)" /></label>
+                        <label><span>Исполняемый файл</span><input pInputText [(ngModel)]="agent.command" /></label>
+                        <label><span>Аргументы JSON: &#123;promptFile&#125;, &#123;model&#125;, &#123;cwd&#125;, &#123;role&#125;</span><input pInputText [ngModel]="json(agent.args || [])" (ngModelChange)="setSystemArgs(agent, $event)" /></label>
                       </div>
                     }
                   </div>
-                }
-                @if (settings.auditAgent; as auditAgent) {
-                  <div class="agent-config-card doctor-agent-card">
-                    <div class="agent-card-header">
-                      <div class="agent-role-badge"><i class="pi pi-chart-bar"></i><strong>Аудитор этапов</strong></div>
-                      <button pButton severity="secondary" [text]="true" type="button" icon="pi pi-times"
-                        aria-label="Убрать аудитора этапов" (click)="removeSystemRole('auditAgent')"></button>
-                    </div>
-                    <div class="agent-fields-grid">
-                      <label>
-                        <span>Подключение</span>
-                        <p-select [options]="auditConnectionOptions" optionLabel="label" optionValue="value"
-                          [(ngModel)]="auditAgent.connectionId" (onChange)="auditAgent.model = ''"
-                          ariaLabel="Подключение аудитора" appendTo="body" />
-                      </label>
-                      <label class="grow-field">
-                        <span>Модель</span>
-                        @if (manualModels.has(auditAgent.id)) {
-                          <input pInputText [(ngModel)]="auditAgent.model" [disabled]="!auditAgent.connectionId" placeholder="ID модели" />
-                        } @else {
-                          <p-select [options]="modelOptions(auditAgent)" optionLabel="label" optionValue="id"
-                            [(ngModel)]="auditAgent.model" [disabled]="!auditAgent.connectionId" [filter]="true"
-                            filterBy="label,id" placeholder="Выберите модель" ariaLabel="Модель аудитора" appendTo="body" />
-                        }
-                      </label>
-                    </div>
-                    <div class="agent-model-tools">
-                      <button pButton severity="secondary" size="small" type="button" icon="pi pi-refresh"
-                        (click)="loadModels(auditAgent)" [disabled]="!host.online || projectBusy || !auditAgent.connectionId">Обновить модели</button>
-                      <button pButton severity="secondary" [text]="true" size="small" type="button"
-                        (click)="toggleManualModel(auditAgent)">{{ manualModels.has(auditAgent.id) ? 'Выбрать из списка' : 'Указать ID вручную' }}</button>
-                      <span class="model-status-text">{{ modelMessage(auditAgent) }}</span>
-                    </div>
-                    <p-accordion>
-                      <p-accordion-panel value="audit-instructions">
-                        <p-accordion-header>Инструкции роли аудитора</p-accordion-header>
-                        <p-accordion-content>
-                          <textarea pTextarea rows="4" maxlength="1500" [(ngModel)]="auditAgent.instructions"
-                            class="instructions-textarea" placeholder="На что обращать внимание при оценке этапов"></textarea>
-                        </p-accordion-content>
-                      </p-accordion-panel>
-                    </p-accordion>
-                  </div>
-                }
+                </ng-template>
                 @if (availableSystemRoles.length) {
                   <div class="agent-model-tools">
                     <p-select [options]="availableSystemRoles" optionLabel="label" optionValue="value"
@@ -720,28 +635,17 @@
               </div>
 
               @if (settingsScope === 'project') {
-                <h5 class="limits-subheading">Интеграция и параллельное выполнение</h5>
+                <h5 class="limits-subheading">Параллельные запуски</h5>
                 <div class="limits-grid">
-                  <label>
-                    <span>Слияние <i class="pi pi-info-circle help-icon" [pTooltip]="fieldTooltips['mergePolicy']"></i></span>
-                    <p-select [options]="mergePolicies" [(ngModel)]="settings.mergePolicy" appendTo="body" [pTooltip]="fieldTooltips['mergePolicy']" />
-                  </label>
                   <label>
                     <span>Параллельных слотов <i class="pi pi-info-circle help-icon" [pTooltip]="fieldTooltips['maxParallelRuns']"></i></span>
                     <input pInputText type="number" [(ngModel)]="settings.maxParallelRuns" min="1" max="8" [pTooltip]="fieldTooltips['maxParallelRuns']" />
                   </label>
-                  <label>
-                    <span>Зависимости <i class="pi pi-info-circle help-icon" [pTooltip]="fieldTooltips['dependencyMode']"></i></span>
-                    <p-select [options]="dependencyModes" [(ngModel)]="settings.dependencyMode" appendTo="body" [pTooltip]="fieldTooltips['dependencyMode']" />
-                  </label>
                 </div>
 
                 @if (settings.mergePolicy === 'local') {
+                  <h5 class="limits-subheading">Лимиты автоматического слияния</h5>
                   <div class="merge-options-box">
-                    <label class="checkbox-inline">
-                      <p-checkbox [binary]="true" [(ngModel)]="settings.resolveConflicts" ariaLabel="Автоматически разрешать конфликты" />
-                      <span>Автоматически разрешать конфликты <i class="pi pi-info-circle help-icon" [pTooltip]="fieldTooltips['resolveConflicts']"></i></span>
-                    </label>
                     <div class="resolver-grid">
                       <label><span>Попыток интеграции <i class="pi pi-info-circle help-icon" [pTooltip]="fieldTooltips['maxMergeAttempts']"></i></span><input pInputText type="number" [(ngModel)]="settings.maxMergeAttempts" min="1" max="3" [pTooltip]="fieldTooltips['maxMergeAttempts']" /></label>
                       <label><span>Вызовов resolver <i class="pi pi-info-circle help-icon" [pTooltip]="fieldTooltips['resolveConflicts']"></i></span><input pInputText type="number" [(ngModel)]="settings.maxResolverCalls" min="0" max="3" /></label>
@@ -786,10 +690,13 @@
             </div>
             <div class="card-body">
               <div class="connections-stack">
-                @for (connection of settings.connections; track $index; let i = $index) {
+                @for (connection of displayedConnections; track connection.id) {
                   <div class="connection-card">
+                    <button pButton type="button" severity="danger" [text]="true" size="small" icon="pi pi-trash"
+                      class="connection-delete" (click)="removeConnection(connection.id)"
+                      aria-label="Удалить подключение" title="Удалить подключение"></button>
                     <div class="connection-row">
-                      <label><span>Имя</span><input pInputText [(ngModel)]="connection.label" /></label>
+                      <label><span>Имя</span><input #firstConnectionName pInputText [(ngModel)]="connection.label" /></label>
                       <label><span>Тип провайдера</span><p-select [options]="providerOptions" optionLabel="label" optionValue="value" [(ngModel)]="connection.kind" (onChange)="providerChanged(connection)" appendTo="body" /></label>
                       <label class="checkbox-inline">
                         <p-checkbox [binary]="true" [(ngModel)]="connection.supportsImages" [ariaLabel]="'Поддержка изображений: ' + connection.label" />
@@ -799,7 +706,6 @@
                         <p-checkbox [binary]="true" [(ngModel)]="connection.isLocal" [ariaLabel]="'Локальная модель (без лимитов): ' + connection.label" />
                         <span>Локальная модель (без лимитов)</span>
                       </label>
-                      <button pButton severity="secondary" [text]="true" size="small" icon="pi pi-trash" (click)="settings.connections.splice(i, 1)" title="Удалить подключение"></button>
                     </div>
 
                     @if (connection.kind !== providerKind.Native) {
@@ -843,12 +749,32 @@
       <!-- ================================================================= -->
       <!-- РАЗДЕЛ: ПРОЕКТ И ПРОВЕРКИ -->
       <!-- ================================================================= -->
-      @else if (activeTab === tab.Project) {
+      @else if (activeTab === tab.Worker) {
         <div class="tab-pane-content">
+      <!-- Карточка исполнителя / Worker -->
+      <div class="worker-card">
+        <div class="worker-card-header">
+          <span class="host-badge" [class.online]="host.online">
+            <span class="status-dot"></span>
+            <span class="host-badge-text">{{ executorTitle }}</span>
+          </span>
+          @if (host.execution?.hostName) {
+            <span class="host-name" [title]="host.execution?.hostName">{{ host.execution?.hostName }}</span>
+          }
+        </div>
+        @if (host.online && host.execution) {
+          <div class="worker-card-actions">
+            <button pButton severity="secondary" size="small" icon="pi pi-play" [disabled]="projectBusy || host.execution.state !== 'stopped'" (click)="controlWorker(true)">Запустить</button>
+            <button pButton severity="secondary" size="small" icon="pi pi-stop-circle" [disabled]="projectBusy || host.execution.state === 'stopped'" (click)="controlWorker(false)">Остановить</button>
+          </div>
+        }
+        @if (host.execution?.error) { <div role="alert" class="worker-error">{{ host.execution?.error }}</div> }
+      </div>
+
           <!-- Подключение компьютера -->
           <div class="panel-card">
             <div class="panel-card-header">
-              <h4>1. Подключение компьютера worker</h4>
+              <h4>Подключение компьютера</h4>
               <p class="card-hint">Подключите worker один раз на время работы для доступа к локальным файлам и CLI</p>
             </div>
             <div class="card-body">
@@ -861,7 +787,6 @@
                 <button pButton severity="secondary" [text]="true" size="small" (click)="showLaunchCommand = !showLaunchCommand; launchNotice = ''">{{ showLaunchCommand ? 'Скрыть команду' : 'Показать команду' }}</button>
               </div>
 
-              @if (launchNotice) { <p role="status" class="alert-banner alert-info">{{ launchNotice }}</p> }
 
               @if (showLaunchCommand) {
                 <div class="command-box">
@@ -885,10 +810,13 @@
             </div>
           </div>
 
-          <!-- Папка проекта и ветка -->
+        </div>
+      }
+      @else if (activeTab === tab.Project) {
+        <div class="tab-pane-content">
           <div class="panel-card">
             <div class="panel-card-header">
-              <h4>2. Папка проекта и Git</h4>
+              <h4>Папка проекта и Git</h4>
               <p class="card-hint">Укажите путь к Git-репозиторию на компьютере worker</p>
             </div>
             <div class="card-body">
@@ -897,13 +825,13 @@
                   <span>Папка Git-проекта на worker <i class="pi pi-info-circle help-icon" [pTooltip]="fieldTooltips['repositoryPath']"></i></span>
                   <input pInputText [disabled]="projectBusy" [ngModel]="settings.repositoryPath" (ngModelChange)="setProjectPath($event)" (blur)="readProjectIfNeeded($event)" (keydown.enter)="readProjectIfNeeded()" placeholder="E:\projects\my-app" [pTooltip]="fieldTooltips['repositoryPath']" />
                 </label>
-                <p-button data-project-picker [label]="host.online ? 'Выбрать папку' : 'Подключить и выбрать'" severity="secondary" size="small" icon="pi pi-folder-open" [disabled]="projectBusy || (!host.online && !launchCommand)" (onClick)="pickFolder()" />
+                <p-button data-project-picker label="Выбрать папку" severity="secondary" size="small" icon="pi pi-folder-open" [disabled]="projectBusy" (onClick)="pickFolder()" />
                 <p-button data-project-picker label="Прочитать проект" severity="secondary" size="small" icon="pi pi-refresh" [disabled]="projectBusy || !host.online || !settings.repositoryPath" (onClick)="inspect()" />
               </div>
 
               @if (pendingFolderPick) {
                 <div class="alert-banner alert-warning">
-                  <span>Выполните команду в PowerShell. Когда worker подключится, выбор откроется автоматически.</span>
+                  <span>Когда worker подключится, выбор папки откроется автоматически.</span>
                   <button pButton severity="secondary" size="small" (click)="cancelFolderConnection()">Отменить</button>
                 </div>
               }
@@ -981,42 +909,28 @@
                 }
               </section>
 
-
-
-              <!-- Лимиты и слияние -->
+              <h5 class="limits-subheading">Слияние и рабочие копии</h5>
               <div class="limits-grid">
-                <label><span>Лимит одного вызова агента (мин) <i class="pi pi-info-circle help-icon" [pTooltip]="fieldTooltips['timeoutMinutes']"></i></span><input pInputText type="number" [(ngModel)]="settings.timeoutMinutes" [min]="limits.timeoutMinutes.min" [max]="limits.timeoutMinutes.max" [pTooltip]="fieldTooltips['timeoutMinutes']" /></label>
-                <label><span>Доработок <i class="pi pi-info-circle help-icon" [pTooltip]="fieldTooltips['maxRevisions']"></i></span><input pInputText type="number" [(ngModel)]="settings.maxRevisions" [min]="limits.revisions.min" [max]="limits.revisions.max" [pTooltip]="fieldTooltips['maxRevisions']" /></label>
-                <label><span>Всего минут работы агентов <i class="pi pi-info-circle help-icon" [pTooltip]="fieldTooltips['maxRunMinutes']"></i></span><input pInputText type="number" [(ngModel)]="settings.maxRunMinutes" min="1" max="240" [pTooltip]="fieldTooltips['maxRunMinutes']" /></label>
-                <label><span>Вызовов агентов <i class="pi pi-info-circle help-icon" [pTooltip]="fieldTooltips['maxAgentCalls']"></i></span><input pInputText type="number" [(ngModel)]="settings.maxAgentCalls" min="1" max="100" [pTooltip]="fieldTooltips['maxAgentCalls']" /></label>
-                <label><span>Операций инструментами <i class="pi pi-info-circle help-icon" [pTooltip]="fieldTooltips['maxStageToolCalls']"></i></span><input pInputText type="number" [(ngModel)]="settings.maxStageToolCalls" min="1" max="200" [pTooltip]="fieldTooltips['maxStageToolCalls']" /></label>
-                <label><span>Лимит входных токенов <i class="pi pi-info-circle help-icon" [pTooltip]="fieldTooltips['maxInputTokens']"></i></span><input pInputText type="number" [(ngModel)]="settings.maxInputTokens" min="1" max="100000000" [pTooltip]="fieldTooltips['maxInputTokens']" /></label>
                 <label><span>Слияние <i class="pi pi-info-circle help-icon" [pTooltip]="fieldTooltips['mergePolicy']"></i></span><p-select [options]="mergePolicies" [(ngModel)]="settings.mergePolicy" appendTo="body" [pTooltip]="fieldTooltips['mergePolicy']" /></label>
-                <label><span>Параллельных слотов <i class="pi pi-info-circle help-icon" [pTooltip]="fieldTooltips['maxParallelRuns']"></i></span><input pInputText type="number" [(ngModel)]="settings.maxParallelRuns" min="1" max="8" [pTooltip]="fieldTooltips['maxParallelRuns']" /></label>
                 <label><span>Зависимости <i class="pi pi-info-circle help-icon" [pTooltip]="fieldTooltips['dependencyMode']"></i></span><p-select [options]="dependencyModes" [(ngModel)]="settings.dependencyMode" appendTo="body" [pTooltip]="fieldTooltips['dependencyMode']" /></label>
               </div>
 
               @if (settings.mergePolicy === 'local') {
-                <div class="merge-options-box">
-                  <label class="checkbox-inline">
-                    <p-checkbox [binary]="true" [(ngModel)]="settings.resolveConflicts" ariaLabel="Автоматически разрешать конфликты" />
-                    <span>Автоматически разрешать конфликты <i class="pi pi-info-circle help-icon" [pTooltip]="fieldTooltips['resolveConflicts']"></i></span>
-                  </label>
-                  <div class="resolver-grid">
-                    <label><span>Попыток интеграции <i class="pi pi-info-circle help-icon" [pTooltip]="fieldTooltips['maxMergeAttempts']"></i></span><input pInputText type="number" [(ngModel)]="settings.maxMergeAttempts" min="1" max="3" [pTooltip]="fieldTooltips['maxMergeAttempts']" /></label>
-                    <label><span>Вызовов resolver <i class="pi pi-info-circle help-icon" [pTooltip]="fieldTooltips['resolveConflicts']"></i></span><input pInputText type="number" [(ngModel)]="settings.maxResolverCalls" min="0" max="3" /></label>
-                    <label><span>Минут на resolver <i class="pi pi-info-circle help-icon" [pTooltip]="fieldTooltips['timeoutMinutes']"></i></span><input pInputText type="number" [(ngModel)]="settings.resolverTimeoutMinutes" min="1" max="10" /></label>
-                    <label><span>Инструментов resolver <i class="pi pi-info-circle help-icon" [pTooltip]="fieldTooltips['maxStageToolCalls']"></i></span><input pInputText type="number" [(ngModel)]="settings.maxResolverToolCalls" min="1" max="40" /></label>
-                  </div>
-                </div>
+                <label class="checkbox-inline">
+                  <p-checkbox [binary]="true" [(ngModel)]="settings.resolveConflicts" ariaLabel="Автоматически разрешать конфликты" />
+                  <span>Автоматически разрешать конфликты <i class="pi pi-info-circle help-icon" [pTooltip]="fieldTooltips['resolveConflicts']"></i></span>
+                </label>
               }
             </div>
           </div>
 
-          <!-- Подготовка и проверки -->
+        </div>
+      }
+      @else if (activeTab === tab.Checks) {
+        <div class="tab-pane-content">
           <div class="panel-card">
             <div class="panel-card-header">
-              <h4>3. Автопроверки, подготовка и пост-операции (CI/CD)</h4>
+              <h4>Подготовка, проверки и пост-операции</h4>
               <p class="card-hint">Worker автоматически выполняет эти команды по фазам: подготовка до агентов, проверки после разработки, пост-операции после завершения конвейера.</p>
             </div>
             <div class="card-body">
@@ -1165,27 +1079,38 @@
         </div>
       }
     </div>
-  </main>
+    <div class="settings-feedback">
+      @if (error || startError || pollError) {
+        <p-message severity="error" [closable]="true" (onClose)="error = ''; startError = ''; pollError = ''">{{ error || startError || pollError }}</p-message>
+      }
+      @if (notice || startNotice || launchNotice) {
+        <p-message severity="success" [closable]="true" (onClose)="notice = ''; startNotice = ''; launchNotice = ''">{{ notice || startNotice || launchNotice }}</p-message>
+      }
+      @if (repairNotice) {
+        <p-message severity="warn" [closable]="true" (onClose)="repairNotice = ''">{{ repairNotice }}</p-message>
+      }
+    </div>
+  </section>
 </div>
 
 <!-- Модалка ожидания подключения компьютера для выбора папки -->
 <p-dialog header="Подключить компьютер для выбора папки" [visible]="folderConnectOpen" (visibleChange)="!$event && cancelFolderConnection()"
   [modal]="true" appendTo="body" [style]="{width: '44rem', maxWidth: 'calc(100vw - 2rem)'}">
-  <p>После подключения SAT покажет каталоги компьютера воркера прямо в этой панели.</p>
-  <p class="hint">На компьютере нужны Node.js 22+, Docker CLI, Git и CodeGraph. Docker должен быть запущен.</p>
-  <ol class="folder-connect-steps">
-    <li>Скопируйте команду ниже.</li>
-    <li>Выполните её в PowerShell на компьютере с проектом.</li>
-    <li>После подключения список каталогов откроется автоматически.</li>
-  </ol>
-  <label class="field-label-block">
-    <span>Команда подключения</span>
-    <textarea pTextarea #folderCommandText readonly rows="6" [value]="launchCommand" class="powershell-textarea" aria-label="Команда подключения для выбора папки"></textarea>
-  </label>
-  @if (launchNotice) { <p role="status" class="alert-banner alert-info">{{ launchNotice }}</p> }
   <p role="status" class="waiting-text"><i class="pi pi-spin pi-spinner"></i> Ожидаем подключения компьютера…</p>
+  @if (showFolderCommand) {
+    <p>Выполните команду в PowerShell на компьютере с проектом. На нём нужны Node.js 22+, запущенный Docker и Git.</p>
+    <label class="field-label-block">
+      <span>Команда подключения</span>
+      <textarea pTextarea #folderCommandText readonly rows="6" [value]="launchCommand" class="powershell-textarea" aria-label="Команда подключения для выбора папки"></textarea>
+    </label>
+    @if (launchNotice) { <p role="status" class="alert-banner alert-info">{{ launchNotice }}</p> }
+  }
   <ng-template pTemplate="footer">
     <p-button label="Отменить ожидание выбора" severity="secondary" (onClick)="cancelFolderConnection()" />
-    <p-button label="Скопировать команду" icon="pi pi-copy" (onClick)="copyLaunchCommand()" />
+    @if (showFolderCommand) {
+      <p-button label="Скопировать команду" icon="pi pi-copy" (onClick)="copyLaunchCommand()" />
+    } @else {
+      <p-button label="Подключить вручную" (onClick)="showFolderCommand = true" />
+    }
   </ng-template>
 </p-dialog>

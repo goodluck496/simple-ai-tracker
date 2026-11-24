@@ -4,8 +4,8 @@
 /* Вся шапка — один спокойный ряд одинаковых по высоте контролов */
 :host {
   display: block;
-  flex: 1 1 auto;
-  max-width: 600px;
+  flex: 1 1 0;
+  max-width: 62rem;
   min-width: 0;
 }
 
@@ -13,7 +13,7 @@
   display: flex;
   align-items: center;
   gap: 12px;
-  flex-wrap: nowrap;
+  flex-wrap: wrap;
   min-width: 0;
 }
 
@@ -24,9 +24,8 @@
   align-items: center;
   gap: 6px;
   height: 32px;
-  min-width: 140px;
-  max-width: 420px;
-  flex: 1 1 auto;
+  min-width: min(100%, 18rem);
+  flex: 1 1 18rem;
   padding: 0 4px 0 10px;
   background: t.$sat-surface;
   border: 1px solid t.$sat-border;
@@ -182,16 +181,25 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  flex-wrap: nowrap;
-  flex-shrink: 0;
+  flex-wrap: wrap;
+  min-width: 0;
 }
 
-:host ::ng-deep .filter-select {
-  width: 140px;
+.filter-select {
+  width: clamp(7rem, 10vw, 8.75rem);
+  min-width: 0;
+}
 
-  .p-select {
+@media (max-width: 680px) {
+  .toolbar { gap: 0.45rem; }
+  .search-box { flex-basis: 100%; }
+  .filters {
+    display: grid;
     width: 100%;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
+  .filter-select { width: 100%; }
+  .reset-btn { grid-column: 1 / -1; justify-self: start; }
 }
 
 .reset-btn {

@@ -2,12 +2,14 @@ import { HttpClient } from '@angular/common/http';
 import { Injectable, inject, signal, computed } from '@angular/core';
 import { firstValueFrom } from 'rxjs';
 import { WORKSPACE_STORAGE_KEY } from './workspace.interceptor';
+import type { WorkspaceBackground } from '../../../../shared/workspace-background';
 
 const API_BASE = '/api';
 
 export interface Workspace {
   readonly name: string;
   readonly label: string;
+  readonly background?: WorkspaceBackground;
   readonly createdAt: string;
   readonly dbPath: string;
   readonly backupDir: string;
@@ -38,11 +40,6 @@ export class WorkspaceService {
     return workspace ? workspace.label : currentName;
   });
 
-  /** Опции для p-select. */
-  public readonly options = computed(() =>
-    this.workspaces().map((ws) => ({ label: ws.label, value: ws.name })),
-  );
-
   /** Загрузить список пространств. */
   public async load(): Promise<void> {
     this.loadingSignal.set(true);
@@ -66,8 +63,8 @@ export class WorkspaceService {
     await this.load();
   }
 
-  public async rename(name: string, label: string, idPrefix?: string): Promise<void> {
-    await firstValueFrom(this.http.post(`${API_BASE}/workspaces/${encodeURIComponent(name)}/rename`, { label, idPrefix }));
+  public async rename(name: string, label: string, idPrefix?: string, background?: WorkspaceBackground | null): Promise<void> {
+    await firstValueFrom(this.http.post(`${API_BASE}/workspaces/${encodeURIComponent(name)}/rename`, { label, idPrefix, background }));
     await this.load();
   }
 
@@ -76,10 +73,15 @@ export class WorkspaceService {
   }
 
   /** Переключить активное пространство. */
-  public async activate(name: string): Promise<void> {
+  public async activate(name: string, keepLink = false): Promise<void> {
     await firstValueFrom(this.http.post(`${API_BASE}/workspaces/${encodeURIComponent(name)}/activate`, {}));
     sessionStorage.setItem(WORKSPACE_STORAGE_KEY, name);
     this.currentSignal.set(name);
+    if (!keepLink) {
+      const url = new URL(window.location.href);
+      for (const key of ['workspace', 'automationRun', 'run', 'eventId', 'taskId', 'scope', 'details', 'panel']) url.searchParams.delete(key);
+      window.history.replaceState(window.history.state, '', url);
+    }
     window.location.reload();
   }
 

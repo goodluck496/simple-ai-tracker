@@ -1,10 +1,6 @@
 <section class="metrics" aria-labelledby="metrics-heading" [attr.aria-busy]="state().loading">
   <header class="metrics-header">
     <div><h2 id="metrics-heading" tabindex="-1">Метрики автоматизации</h2><p>Успешность проверок и пользовательская приёмка</p></div>
-    <nav aria-label="Представления очереди">
-      <button pButton type="button" severity="secondary" [outlined]="true" (click)="navigate.emit('queue')">Рабочая очередь</button>
-      <button pButton type="button" severity="secondary" [text]="true" (click)="navigate.emit('history')">История</button>
-    </nav>
   </header>
   <div class="period-controls">
     <div class="period-field">
@@ -56,9 +52,14 @@
         <ng-template #body let-occurrence>
           <tr>
             <td><strong>{{ occurrence.taskId }}</strong><span class="cell-line">{{ occurrence.at | date:'dd.MM.yyyy HH:mm' }}</span><span class="cell-line">{{ occurrence.phase }}@if (occurrence.role) { · {{ occurrence.role }} }</span></td>
-            <td><span>{{ occurrence.fact }}</span><span class="cell-line review-state">{{ reviewLabel(occurrence.reviewState) }}</span></td>
+            <td>
+              <span>{{ occurrence.fact }}</span>
+              @if (occurrence.reviewState !== 'new') {
+                <span class="cell-line">{{ reviewLabel(occurrence.reviewState) }}</span>
+              }
+            </td>
             <td><div class="row-actions">
-              <button pButton type="button" size="small" [outlined]="true" (click)="inspect.emit(occurrence)" [attr.aria-label]="'Открыть событие ' + occurrence.eventId + ' задачи ' + occurrence.taskId">Событие</button>
+              <button pButton type="button" size="small" [outlined]="true" (click)="inspect.emit(occurrence)" [attr.aria-label]="'Открыть событие ' + occurrence.eventId + ' задачи ' + occurrence.taskId">Ознакомиться</button>
               <button pButton type="button" size="small" severity="secondary" [text]="true" [disabled]="!occurrence.improvementTaskId" (click)="openTask.emit({ taskId: occurrence.improvementTaskId, runId: '' })" [attr.aria-label]="occurrence.improvementTaskId ? 'Открыть подзадачу ' + occurrence.improvementTaskId : 'Подзадача ещё не создана'">{{ occurrence.improvementTaskId || 'Подзадача ещё не создана' }}</button>
             </div></td>
           </tr>

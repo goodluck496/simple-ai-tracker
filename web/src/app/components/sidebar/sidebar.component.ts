@@ -1,4 +1,4 @@
-import { ChangeDetectionStrategy, Component, inject, model, output, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, inject, input, model, output, signal } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { HttpClient } from '@angular/common/http';
 import { toSignal } from '@angular/core/rxjs-interop';
@@ -36,11 +36,12 @@ export class SidebarComponent {
   );
 
   public readonly isExpanded = model<boolean>(true);
+  public readonly activePage = input<'board' | 'runs' | 'settings'>('board');
+  public readonly openBoard = output<void>();
   public readonly showWorkspaceDialog = signal(false);
 
   public readonly openQueue = output<string | null>();
   public readonly openAutomation = output<void>();
-  public readonly openBatchAutomation = output<void>();
   public readonly showTags = output<boolean>();
   public readonly showBackups = output<boolean>();
   public readonly showInstructions = output<boolean>();
@@ -51,10 +52,6 @@ export class SidebarComponent {
 
   public onOpenAutomation(): void {
     this.openAutomation.emit();
-  }
-
-  public onOpenBatchAutomation(): void {
-    this.openBatchAutomation.emit();
   }
 
   public onShowTags(): void {

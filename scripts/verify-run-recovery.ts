@@ -26,8 +26,9 @@ try {
   const context=await browser.newContext({viewport:{width:1440,height:1000}});await context.tracing.start({screenshots:true,snapshots:true});
   const page=await context.newPage();page.setDefaultTimeout(15000);const errors:string[]=[];page.on('pageerror',e=>errors.push(e.message));
   await page.goto(`http://127.0.0.1:${(server.address() as AddressInfo).port}`);
-  await page.locator('sat-sidebar').getByText('Очередь задач',{exact:true}).click();
+  await page.locator('sat-sidebar').getByText('Запуски агентов',{exact:true}).click();
   await page.getByRole('button',{name:`Запуск ${task.id} ${run.id}`,exact:true}).click();
+  await page.getByRole('button',{name:'Подробности запуска',exact:true}).click();
   await page.getByText('Изменить агентов запуска',{exact:true}).click();
   const editor=page.locator('sat-run-profile-editor');
   await editor.locator('p-select').nth(0).click();
@@ -44,11 +45,16 @@ try {
   await page.screenshot({path:'.sat/screenshots/run-profile-editor.png',fullPage:true});
   service.fail(run.id,run.leaseToken!,'Requirements changed after routing; restart the run.');
   await page.getByText('Анализ сбоя',{exact:true}).click();
-  const dialog=page.getByRole('dialog',{name:/Предлагаемое исправление|Анализ/});
+  await page.waitForURL(url => url.searchParams.get('panel') === 'diagnosis');
   await page.getByText('Причина подтверждена',{exact:true}).waitFor();
   await page.getByText('План восстановления',{exact:true}).waitFor();
   await page.getByText('Обновить требования и продолжить',{exact:true}).waitFor();
   assert.equal(await page.locator('.fix-diff-section').count(),0);
+  await page.reload();
+  await page.getByRole('heading',{name:'Анализ сбоя',exact:true}).waitFor();
+  await page.getByText('Причина подтверждена',{exact:true}).waitFor();
+  await page.getByRole('button',{name:'К запуску',exact:true}).click();
+  await page.waitForURL(url => !url.searchParams.has('panel') && url.searchParams.get('run') === run.id);
   await page.screenshot({path:'.sat/screenshots/run-diagnosis.png',fullPage:true});
   assert.deepEqual(errors,[]);await context.tracing.stop({path:'.sat/run-recovery-trace.zip'});
   console.log(JSON.stringify({passed:true,durationMs:Date.now()-started,pageErrors:errors.length,modelCalls:0,runIdPreserved:true}));

@@ -20,7 +20,7 @@ import { McpRegistryComponent } from './mcp-registry.component';
           <p-button icon="pi pi-times" [text]="true" [ariaLabel]="'Отключить MCP ' + server.name" (onClick)="disconnect(server.name)" />
         </div>
       }
-      <p>Сохраните подключения в настройках проекта и назначьте их ролям в разделе «Команда и этапы». Поддерживаются Codex CLI и Model API.</p>
+      <p>Сохраните подключения в настройках проекта и назначьте их ролям в разделе «Команда агентов». Поддерживаются Codex CLI и Model API.</p>
     </section>
     <p-dialog header="Подключение MCP" [(visible)]="editing" [modal]="true" appendTo="body" [closable]="!checking" [closeOnEscape]="!checking" [style]="{width:'36rem',maxWidth:'95vw'}">
       <fieldset [disabled]="checking">
@@ -129,7 +129,7 @@ export class ProjectMcpComponent {
   apply(): void {
     try {
       const server = this.value();
-      if (!server.tools.length && server.roles?.length) throw new Error('Сервер назначен ролям. Выберите для них инструменты или снимите назначение в разделе «Команда и этапы».');
+      if (!server.tools.length && server.roles?.length) throw new Error('Сервер назначен ролям. Выберите для них инструменты или снимите назначение в разделе «Команда агентов».');
       const current = this.settings.mcpServers ?? [];
       this.settings.mcpServers = this.original ? current.map(s => s === this.original ? server : s) : [...current,server];
       this.editing = false;

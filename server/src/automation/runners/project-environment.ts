@@ -5,6 +5,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { bindProjectMcp, projectMcpTransport } from './mcp-transport.js';
 import { validMcp } from '../../../../shared/automation/project-mcp.js';
 import { RunnerId, type AgentJob } from '../../../../shared/automation/contracts.js';
+import { SKILL_LIMITS } from '../../../../shared/automation/skills.js';
 import { RunWorkspace } from '../worker/run-workspace.js';
 
 type Server = NonNullable<AgentJob['projectMcp']>[number];
@@ -102,7 +103,10 @@ export class ProjectEnvironment {
         if (!/^[\w-]{1,80}$/.test(id) || !Number.isSafeInteger(version) || version < 1) throw new Error('Invalid library skill reference.');
         const file = `${id}-v${version}.md`;
         if (directory) await RunWorkspace.atomicText(path.join(directory, file), content);
-        available.push({ id, name, when: description, ...(directory ? { path: path.relative(root, path.join(directory, file)).split(path.sep).join('/') } : {}) });
+        const when = description.length > SKILL_LIMITS.promptDescription
+          ? description.slice(0, SKILL_LIMITS.promptDescription - 1) + '…'
+          : description;
+        available.push({ id, name, when, ...(directory ? { path: path.relative(root, path.join(directory, file)).split(path.sep).join('/') } : {}) });
       }
       prompt += '\nAvailable skills for this role. When a description applies, read the corresponding instruction once using '
         + (native ? 'its worktree path' : 'read_skill(id)') + ':\n' + JSON.stringify(available);

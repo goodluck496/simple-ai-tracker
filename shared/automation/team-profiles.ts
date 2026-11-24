@@ -1,4 +1,15 @@
 import { AgentRole, RunnerId, type AgentProfile, type AutomationSettings } from './contracts.js';
+import { ROLE_OPTIONS } from './presets.js';
+
+export const AGENT_PROFILE_NAME_LIMIT = 100;
+
+export function agentProfileName(agent: AgentProfile, agents: readonly AgentProfile[]): string {
+  if (agent.name?.trim()) return agent.name.trim();
+  const role = ROLE_OPTIONS.find(option => option.value === agent.role)?.label.split(' — ')[0] ?? agent.role;
+  const peers = agents.filter(profile => profile.role === agent.role);
+  const position = peers.findIndex(profile => profile.id === agent.id);
+  return peers.length > 1 && position >= 0 ? `${role} ${position + 1}` : role;
+}
 
 export const DEFAULT_ROLE_INSTRUCTIONS: Readonly<Record<AgentRole, string>> = {
   [AgentRole.Router]: 'Оцени сложность, риск и неопределённость задачи. Подготовь критерии приёмки и предложи разрешённые профили для следующих этапов. Не меняй код и лимиты.',

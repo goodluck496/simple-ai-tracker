@@ -257,6 +257,7 @@
 .nav-item {
   display: flex;
   align-items: center;
+  justify-content: flex-start;
   gap: 0.75rem;
   padding: 0.6rem 0.75rem;
   border-radius: 0.45rem;
@@ -852,6 +853,7 @@
 }
 
 .connection-card {
+  position: relative;
   padding: 0.85rem;
   border-radius: 0.45rem;
   background: rgba(0, 0, 0, 0.25);
@@ -860,7 +862,14 @@
   flex-direction: column;
   gap: 0.6rem;
 
+  .connection-delete {
+    position: absolute;
+    inset-block-start: 0.6rem;
+    inset-inline-end: 0.6rem;
+  }
+
   .connection-row {
+    padding-inline-end: 2.5rem;
     display: flex;
     flex-wrap: wrap;
     align-items: flex-end;
@@ -872,6 +881,13 @@
       gap: 0.2rem;
       font-size: 0.78rem;
       color: #94a3b8;
+    }
+
+    .checkbox-inline {
+      min-height: 2rem;
+      flex-direction: row;
+      align-items: center;
+      gap: 0.4rem;
     }
   }
 
@@ -1129,12 +1145,6 @@
   }
 }
 
-.folder-connect-steps {
-  padding-left: 1.25rem;
-  font-size: 0.85rem;
-  line-height: 1.6;
-}
-
 .waiting-text {
   font-size: 0.85rem;
   color: #38bdf8;
@@ -1385,6 +1395,17 @@ code {
   color: #cbd5e1;
 }
 
+.launch-modes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+
+  button[aria-pressed='true'] {
+    background: color-mix(in srgb, var(--p-primary-color) 14%, transparent);
+    color: var(--p-primary-color);
+  }
+}
+
 .field-hint {
   font-size: 0.7rem;
   color: #64748b;
@@ -1404,4 +1425,19 @@ code {
   }
   .mobile-navigation-close { display: block; padding: 0.5rem; }
   .panel-main { width: 100%; min-width: 0; }
+}
+.settings-feedback {
+  position: absolute;
+  inset-inline-end: 1rem;
+  bottom: 1rem;
+  z-index: 6;
+  display: grid;
+  gap: 0.5rem;
+  max-width: min(32rem, calc(100% - 2rem));
+  max-height: min(14rem, 35dvh);
+  overflow: auto;
+  overflow-wrap: anywhere;
+}
+.profile-name-field {
+  grid-column: 1 / -1;
 }

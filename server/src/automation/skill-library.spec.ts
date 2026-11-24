@@ -8,6 +8,7 @@ import { SilentLogger } from '../core/logger.js';
 import { DEFAULT_AUTOMATION_SETTINGS, type AgentJob } from '../../../shared/automation/contracts.js';
 import { ProjectEnvironment } from './runners/project-environment.js';
 import { ModelApiRunner } from './runners/model-api-runner.js';
+import { SKILL_LIMITS } from '../../../shared/automation/skills.js';
 
 test('a shared skill has project-specific roles and queued runs retain their assigned revision', async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'sat-skill-library-'));
@@ -29,7 +30,9 @@ test('a shared skill has project-specific roles and queued runs retain their ass
       queued = service.enqueue(app.taskService.createTask({title:'Check skill version'}).id).id;
     });
     assert.equal(app.automationService.settings().skillBindings, undefined);
-    const updated = library.save({ ...skill, content: 'Skill body version two.' }, skill.id);
+    const longInstruction = 'Skill body version two.\n'.repeat(2000);
+    const updated = library.save({ ...skill, description: 'When checking. '.repeat(40), content: longInstruction }, skill.id);
+    assert.equal(library.read(updated).content, longInstruction);
     assert.equal(updated.version, 2);
     assert.throws(() => library.save(skill, skill.id), /уже изменён/);
     app.close();
@@ -54,14 +57,16 @@ test('a shared skill has project-specific roles and queued runs retain their ass
 test('API and native roles receive a short catalog with skill text available on demand', async () => {
   const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'sat-skill-worker-'));
   try {
-    const skill = {id:'fixture', version:3, name:'Fixture', description:'When X happens', content:'UNIQUE_FULL_SKILL'};
+    const firstChunk = 'x'.repeat(SKILL_LIMITS.readChunk - 1);
+    const remainder = '😀 END_OF_SKILL';
+    const skill = {id:'fixture', version:3, name:'Fixture', description:'When X happens. ' + 'metadata '.repeat(100), content:firstChunk + remainder};
     const job: AgentJob = { cwd, runId:'fixture', prompt:'Do the task.', signal:AbortSignal.timeout(10000),
       profile:{ id:'dev',role:'developer',runner:'model-api',model:'fixture',connectionId:'n',instructions:'' },
       connection:{id:'n',kind:'openai-compatible',baseUrl:'http://fixture',label:'fixture',supportsImages:false},
       settings:DEFAULT_AUTOMATION_SETTINGS, librarySkills:[skill] };
     const env = new ProjectEnvironment();
     const api = await env.prepare(job, () => {});
-    assert.match(api.prompt, /When X happens/); assert.ok(!api.prompt.includes(skill.content));
+    assert.match(api.prompt, /When X happens/); assert.ok(!api.prompt.includes(skill.description)); assert.ok(!api.prompt.includes(skill.content));
     const native = await env.prepare({...job,profile:{...job.profile,runner:'codex'}}, () => {});
     assert.match(native.prompt, /\.sat\/skills\/developer\/fixture-v3.md/);
     assert.ok(!native.prompt.includes(skill.content));
@@ -72,7 +77,12 @@ test('API and native roles receive a short catalog with skill text available on 
       const call = (name: string, args: object) => Response.json({choices:[{message:{tool_calls:[{id:'call',function:{name,arguments:JSON.stringify(args)}}]}}]});
       if (turn++ === 0) { assert.ok(!body.includes(skill.content)); return call('read_skill',{id:'unassigned'}); }
       if (turn === 2) { assert.match(body,/not assigned/); return call('read_skill',{id:'fixture'}); }
-      assert.ok(body.includes(skill.content));
+      if (turn === 3) {
+        assert.ok(body.includes(firstChunk));
+        assert.ok(!body.includes('END_OF_SKILL'));
+        return call('read_skill', { id:'fixture', offset: firstChunk.length });
+      }
+      assert.ok(body.includes(remainder));
       return call('finish_task',{verdict:'pass',summary:'ok'});
     }).run(api, () => {});
     const legacy = await env.prepare({...job,librarySkills:undefined}, () => {});

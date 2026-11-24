@@ -49,6 +49,7 @@ export interface ModelConnection {
 
 export interface AgentProfile {
   id: string;
+  name?: string;
   role: AgentRole;
   runner: RunnerId;
   connectionId: string;
@@ -104,7 +105,7 @@ export interface AutomationSettings {
   doctorConnectionId?: string;
   doctorModel?: string;
   doctorAgent?: AgentProfile;
-  auditAgent?: Pick<AgentProfile, 'id' | 'runner' | 'connectionId' | 'model' | 'instructions'> & { role: 'stage-audit' };
+  auditAgent?: Pick<AgentProfile, 'id' | 'runner' | 'connectionId' | 'model' | 'instructions' | 'nativeProfile' | 'command' | 'args'> & { role: 'stage-audit'; enabled?: boolean };
 }
 
 export const DEFAULT_AUTOMATION_SETTINGS: AutomationSettings = {

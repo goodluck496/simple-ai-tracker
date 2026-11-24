@@ -92,6 +92,19 @@ test('native adapters preserve model, prompt and native result/error envelopes',
     assert.ok(executor.request!.args.includes('mcp_servers.blender.enabled_tools=["lookup"]'));
     assert.ok(executor.request!.args.includes('mcp_servers.blender.env_vars=["PROJECT_TOKEN"]'));
     assert.equal(executor.request!.args.includes('mcp_servers.blender.enabled=false'), false);
+    const auditJob = { cwd, prompt: 'Audit metrics', profile: { model: 'm' },
+      signal: AbortSignal.timeout(5000), settings: DEFAULT_AUTOMATION_SETTINGS } as AgentJob;
+    await new NativeAgentRunner('codex', executor).run(auditJob, () => undefined, { audit: true });
+    const auditArgs = executor.request!.args;
+    assert.ok(auditArgs.includes('--skip-git-repo-check'));
+    assert.equal(auditArgs[auditArgs.indexOf('--sandbox') + 1], 'read-only');
+    assert.ok(auditArgs.includes('mcp_servers.simple-ai-tracker.enabled=false'));
+    assert.ok(auditArgs.includes('mcp_servers.codegraph.enabled=false'));
+    executor.output = '{"status":"SUCCESS","structured_output":{"verdict":"pass","summary":"audit"}}';
+    await new NativeAgentRunner('antigravity', executor, {
+      async verify() { assert.fail('An audit uses a temporary directory'); },
+    }).run(auditJob, () => undefined, { audit: true });
+    assert.ok(!executor.request!.args.includes('--dangerously-skip-permissions'));
     executor.output = '{"is_error":true,"result":"auth failed"}';
     await assert.rejects(new NativeAgentRunner('claude-code', executor).run({ cwd, prompt: 'Test error envelope', profile: { model: 'm' }, signal: AbortSignal.timeout(5000) } as AgentJob, () => undefined), /failed/);
   } finally { await rm(cwd, { recursive: true, force: true }); }

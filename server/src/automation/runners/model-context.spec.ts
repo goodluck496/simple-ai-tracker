@@ -10,69 +10,98 @@ import { ProcessExecutor, type ProcessRequest } from './process-executor.js';
 import { AutomationSettingsValidator } from '../settings.js';
 import { DEFAULT_AUTOMATION_SETTINGS, type AgentJob } from '../../../../shared/automation/contracts.js';
 
-test('stage audit saves numeric evidence and calls the local auditor outside the agent request loop', async () => {
-  const root = await mkdtemp(path.join(os.tmpdir(), 'sat-stage-audit-'));
-  const originalFetch = globalThis.fetch;
-  const previousDirectory = process.env.SAT_STAGE_AUDIT_DIR;
-  const id = randomUUID();
-  const directory = path.join(root, 'audit');
-  const sentinel = 'PRIVATE_SOURCE_SENTINEL';
-  let requests = 0;
-  let auditInput: unknown;
-  let releaseAudit!: () => void;
-  const auditGate = new Promise<void>(resolve => { releaseAudit = resolve; });
-  try {
-    process.env.SAT_STAGE_AUDIT_DIR = directory;
-    await writeFile(path.join(root, 'source.ts'), sentinel);
-    globalThis.fetch = async (url, options) => {
-      assert.equal(url, 'http://audit-fixture.invalid:12600/v1/chat/completions');
-      auditInput = JSON.parse(String(options?.body));
-      await auditGate;
-      return Response.json({ choices: [{ message: { content: '{"findings":[{"signal":"repeatedReads","suggestion":"Повторно используйте ранее прочитанный диапазон."}]}' } }] });
-    };
-    const request: typeof fetch = async () => {
-      requests++;
-      const message = requests < 3 ? { tool_calls: [{ id: String(requests), function: {
-        name: 'read_file', arguments: '{"path":"source.ts","startLine":1,"endLine":1}',
-      } }] } : { content: '{"verdict":"pass","summary":"done"}' };
-      return Response.json({ choices: [{ message }], usage: { prompt_tokens: requests * 20, completion_tokens: 4 } });
-    };
-    const job: AgentJob = { runId: 'fixture', cwd: root, prompt: sentinel,
-      auditAttempt: { id, workspace: 'fixture', taskId: 'T-1', stage: 0, revision: 0, handoffBytes: 10 },
-      profile: { id: 'dev', role: 'developer', runner: 'model-api', connectionId: 'test', model: 'test', instructions: '' },
-      connection: { id: 'test', label: 'fixture', kind: 'openai-compatible', baseUrl: 'http://fixture.invalid', supportsImages: false },
-      settings: new AutomationSettingsValidator().validate({ ...DEFAULT_AUTOMATION_SETTINGS,
-        connections: [{ id: 'auditor', label: 'Local', kind: 'ollama', baseUrl: 'http://audit-fixture.invalid:12600', supportsImages: false }],
-        auditAgent: { id: 'stage-audit', role: 'stage-audit', runner: 'model-api', connectionId: 'auditor', model: 'local-fixture', instructions: 'Сначала оцените повторные чтения.' },
-      }), signal: AbortSignal.timeout(5000) };
-    await new ModelApiRunner(new ProcessExecutor(), request).run(job, () => {});
-    releaseAudit();
-    const auditFile = path.join(directory, id + '.audit.json');
-    let assessment = '';
-    const deadline = Date.now() + 10000;
-    while (Date.now() < deadline) {
-      assessment = await readFile(auditFile, 'utf8').catch(() => '');
-      if (assessment) break;
-      await delay(25);
+for (const kind of ['ollama', 'openai-compatible', 'native'] as const) {
+  test(`stage audit with ${kind} saves numeric evidence outside the agent request loop`, async () => {
+    const native = kind === 'native';
+    const remote = kind === 'openai-compatible';
+    const baseUrl = remote ? 'https://audit-fixture.invalid/v1' : 'http://audit-fixture.invalid:12600';
+    const credentialEnv = 'SAT_TEST_AUDIT_KEY';
+    const previousKey = process.env[credentialEnv];
+    const root = await mkdtemp(path.join(os.tmpdir(), 'sat-stage-audit-'));
+    const originalFetch = globalThis.fetch;
+    const previousDirectory = process.env.SAT_STAGE_AUDIT_DIR;
+    const id = randomUUID();
+    const directory = path.join(root, 'audit');
+    const sentinel = 'PRIVATE_SOURCE_SENTINEL';
+    let requests = 0;
+    let auditInput: unknown;
+    let releaseAudit!: () => void;
+    const auditGate = new Promise<void>(resolve => { releaseAudit = resolve; });
+    try {
+      process.env.SAT_STAGE_AUDIT_DIR = directory;
+      if (remote) process.env[credentialEnv] = 'fixture-secret';
+      await writeFile(path.join(root, 'source.ts'), sentinel);
+      const fixture = path.join(root, 'auditor.cjs');
+      const findings = { findings: [{ signal: 'repeatedReads', suggestion: 'Повторно используйте ранее прочитанный диапазон.' }] };
+      if (native) await writeFile(fixture, `
+        const assert = require('node:assert/strict');
+        const fs = require('node:fs');
+        assert.equal(process.argv[3], 'audit-fixture');
+        assert.equal(process.argv[4], 'stage-audit');
+        assert.notEqual(process.cwd(), __dirname);
+        const prompt = fs.readFileSync(process.argv[2], 'utf8');
+        assert.match(prompt, /Сначала оцените повторные чтения/);
+        assert.doesNotMatch(prompt, /PRIVATE_SOURCE_SENTINEL|source\.ts/);
+        console.log(JSON.stringify(${JSON.stringify({ verdict: 'pass', summary: JSON.stringify(findings) })}));
+      `);
+      globalThis.fetch = async (url, options) => {
+        assert.ok(!native, 'Native connection must invoke the configured CLI');
+        assert.equal(url, `${baseUrl}${remote ? '' : '/v1'}/chat/completions`);
+        assert.equal(new Headers(options?.headers).get('Authorization'), remote ? 'Bearer fixture-secret' : null);
+        auditInput = JSON.parse(String(options?.body));
+        await auditGate;
+        return Response.json({ choices: [{ message: { content: JSON.stringify(findings) } }] });
+      };
+      const request: typeof fetch = async () => {
+        requests++;
+        const message = requests < 3 ? { tool_calls: [{ id: String(requests), function: {
+          name: 'read_file', arguments: '{"path":"source.ts","startLine":1,"endLine":1}',
+        } }] } : { content: '{"verdict":"pass","summary":"done"}' };
+        return Response.json({ choices: [{ message }], usage: { prompt_tokens: requests * 20, completion_tokens: 4 } });
+      };
+      const job: AgentJob = { runId: 'fixture', cwd: root, prompt: sentinel,
+        auditAttempt: { id, workspace: 'fixture', taskId: 'T-1', stage: 0, revision: 0, handoffBytes: 10 },
+        profile: { id: 'dev', role: 'developer', runner: 'model-api', connectionId: 'test', model: 'test', instructions: '' },
+        connection: { id: 'test', label: 'fixture', kind: 'openai-compatible', baseUrl: 'http://fixture.invalid', supportsImages: false },
+        settings: new AutomationSettingsValidator().validate({ ...DEFAULT_AUTOMATION_SETTINGS,
+          connections: [{ id: 'auditor', label: 'Audit', kind, ...(native ? { nativeRunner: 'custom' } : { baseUrl }), credentialEnv: remote ? credentialEnv : undefined, supportsImages: false }],
+          auditAgent: { id: 'stage-audit', role: 'stage-audit', runner: 'model-api', connectionId: 'auditor', model: 'audit-fixture', enabled: true, instructions: 'Сначала оцените повторные чтения.',
+            ...(native ? { command: process.execPath, args: [fixture, '{promptFile}', '{model}', '{role}'] } : {}) },
+        }), signal: AbortSignal.timeout(5000) };
+      assert.equal(job.settings.auditAgent?.runner, native ? 'custom' : 'model-api');
+      await new ModelApiRunner(new ProcessExecutor(), request).run(job, () => {});
+      releaseAudit();
+      const auditFile = path.join(directory, id + '.audit.json');
+      let assessment = '';
+      const deadline = Date.now() + 10000;
+      while (Date.now() < deadline) {
+        assessment = await readFile(auditFile, 'utf8').catch(() => '');
+        if (assessment) break;
+        await delay(25);
+      }
+      assert.ok(assessment, 'The background audit should be saved');
+      const raw = await readFile(path.join(directory, id + '.json'), 'utf8');
+      const record = JSON.parse(raw);
+      assert.equal(record.evidence.tools.read_file.repeated, 1);
+      assert.equal(record.evidence.firstInputTokens, 20);
+      assert.equal(record.evidence.peakInputTokens, 60);
+      assert.equal(JSON.parse(assessment).findings[0].observed, 1);
+      if (!native) {
+        assert.equal((auditInput as { model: string }).model, 'audit-fixture');
+        assert.match(JSON.stringify(auditInput), /Сначала оцените повторные чтения/);
+      }
+      assert.doesNotMatch(raw + assessment + JSON.stringify(auditInput), /PRIVATE_SOURCE_SENTINEL|source\.ts/);
+    } finally {
+      releaseAudit();
+      globalThis.fetch = originalFetch;
+      if (previousDirectory === undefined) delete process.env.SAT_STAGE_AUDIT_DIR;
+      else process.env.SAT_STAGE_AUDIT_DIR = previousDirectory;
+      if (previousKey === undefined) delete process.env[credentialEnv];
+      else process.env[credentialEnv] = previousKey;
+      await rm(root, { recursive: true, force: true });
     }
-    assert.ok(assessment, 'The background audit should be saved');
-    const raw = await readFile(path.join(directory, id + '.json'), 'utf8');
-    const record = JSON.parse(raw);
-    assert.equal(record.evidence.tools.read_file.repeated, 1);
-    assert.equal(record.evidence.firstInputTokens, 20);
-    assert.equal(record.evidence.peakInputTokens, 60);
-    assert.equal(JSON.parse(assessment).findings[0].observed, 1);
-    assert.equal((auditInput as { model: string }).model, 'local-fixture');
-    assert.match(JSON.stringify(auditInput), /Сначала оцените повторные чтения/);
-    assert.doesNotMatch(raw + assessment + JSON.stringify(auditInput), /PRIVATE_SOURCE_SENTINEL|source\.ts/);
-  } finally {
-    releaseAudit();
-    globalThis.fetch = originalFetch;
-    if (previousDirectory === undefined) delete process.env.SAT_STAGE_AUDIT_DIR;
-    else process.env.SAT_STAGE_AUDIT_DIR = previousDirectory;
-    await rm(root, { recursive: true, force: true });
-  }
-});
+  });
+}
 
 test('API agents read bounded ranges, apply exact patches and do not echo tool results into progress', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'sat-model-context-')); const originalFetch = globalThis.fetch;

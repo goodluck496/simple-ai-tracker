@@ -36,10 +36,10 @@ export class RunProfileEditorComponent {
   public get available() {return !this.run.cleanup && !this.run.feature && ['queued','running','failed','waiting','interrupted','cancelled'].includes(this.run.status);}
   public get stages() {return this.run.settings.pipeline.flatMap((id,index)=>{
     const agent=this.run.settings.agents.find(a=>a.id===id);
-    return index>=this.run.stage && !(index===this.run.stage && this.run.status==='running') ? [{value:index,label:`${index+1}. ${agent?.role} · ${agent?.model}`}]:[];
+    return index>=this.run.stage && !(index===this.run.stage && this.run.status==='running') ? [{value:index,label:`${index+1}. ${agent?.name || agent?.role} · ${agent?.model}`}]:[];
   });}
   public get profiles() {const role=this.run.settings.agents.find(a=>a.id===this.run.settings.pipeline[this.stage ?? -1])?.role;
-    return this.configured?.agents.filter(a=>a.role===role).map(a=>({value:a.id,label:`${a.runner} · ${a.model} · ${a.id}`})) ?? [];}
+    return this.configured?.agents.filter(a=>a.role===role).map(a=>({value:a.id,label:`${a.runner} · ${a.model} · ${a.name || a.id}`})) ?? [];}
   public open() {this.editing=true;this.error='';this.stage=null;this.profileId='';this.editingRunId=this.run.id;
     const id=this.run.id;this.http.get<AutomationSettings>('/api/automation/settings').pipe(takeUntilDestroyed(this.destroyRef)).subscribe({next:value=>{if(this.run.id===id)this.configured=value;},error:()=>this.error='Не удалось загрузить профили проекта.'});}
   public selectStage(stage:number) {this.stage=stage;this.expectedProfileId=this.run.settings.pipeline[stage];this.profileId='';this.model='';}

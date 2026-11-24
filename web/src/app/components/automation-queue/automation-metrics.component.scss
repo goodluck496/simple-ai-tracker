@@ -22,13 +22,13 @@ dd { margin: 0.5rem 0 0; font-size: 1.5rem; font-weight: 650; }
 dd span { font-size: 0.875rem; font-weight: 400; color: var(--p-text-muted-color); }
 .counters p { margin-bottom: 0; }
 .cell-line { display: block; margin-top: 0.4rem; }
-.review-state { color: var(--p-primary-color); }
 .metrics button:focus-visible { outline: 2px solid var(--p-primary-color); outline-offset: 3px; }
 :host ::ng-deep .metrics-table table { table-layout: fixed; width: 100%; }
 :host ::ng-deep .metrics-table :is(th, td) { white-space: normal; overflow-wrap: anywhere; vertical-align: top; }
 :host ::ng-deep .metrics-table th:first-child { width: 24%; }
 :host ::ng-deep .metrics-table th:last-child { width: 27%; }
 @media (max-width: 700px) {
+  .metrics { overflow-wrap: anywhere; }
   .metrics button { min-height: 2.75rem; }
   .ratio-grid, .counters { grid-template-columns: 1fr; }
   .period-field { width: 100%; }

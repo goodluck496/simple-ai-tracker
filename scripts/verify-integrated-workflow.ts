@@ -41,16 +41,16 @@ try {
   await page.setViewportSize({ width: 1440, height: 1000 });
   await card.getByRole('button', { name: 'Закрыть', exact: true }).click();
   await page.getByRole('button', { name: 'Запустить в разработку ' + task.id, exact: true }).first().click();
-  const launch = page.getByRole('dialog', { name: 'Команда агентов', exact: true });
+  const launch = page.locator('sat-automation-panel');
   const enqueue = launch.locator('p-button').filter({ hasText: 'Поставить в очередь' }).locator('button').first();
   await enqueue.waitFor();
   await enqueue.click(); // Actionability waits for the asynchronous task-team preview.
-  const queue = page.getByRole('dialog', { name: 'Очередь агентов', exact: true });
+  const queue = page.locator('sat-automation-queue');
   await queue.locator('.queue-main .badge-limits').getByText('Без лимитов', { exact: true }).waitFor();
   const run = app.automationService.list(task.id)[0];
   assert.equal(run.trustedExecution, true);
   assert.deepEqual(run.settings.pipeline, ['developer']);
-  await queue.locator('.p-dialog-close-button').click();
+  await page.getByRole('button', { name: 'Доска задач' }).click();
   await openCard(); await trust.uncheck();
   await Promise.all([page.waitForResponse(response => response.request().method() === 'PATCH' && response.url().endsWith('/api/tasks/' + task.id)), card.locator('.sidebar-footer p-button').filter({ hasText: 'Сохранить' }).locator('button').click()]);
   assert.equal(app.taskService.getTaskCard(task.id).trustedExecution, false);

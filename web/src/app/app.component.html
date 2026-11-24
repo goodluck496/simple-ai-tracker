@@ -20,6 +20,7 @@
       </div>
     </div>
 
+    @if (boardVisible()) {
     <!-- Тулбар: поиск и теги -->
     <sat-toolbar />
 
@@ -65,22 +66,24 @@
         </div>
       </p-popover>
     </div>
+    }
   </header>
 
   <div class="content-area">
     <!-- Сайдбар приложения -->
     <sat-sidebar
       [(isExpanded)]="sidebarOpen"
+      [activePage]="boardVisible() ? 'board' : runsVisible() ? 'runs' : 'settings'"
+      (openBoard)="openBoard()"
       (openQueue)="openQueue($event)"
       (openAutomation)="openAutomation()"
-      (openBatchAutomation)="openBatchAutomation()"
       (showTags)="showTags.set($event)"
       (showBackups)="showBackups.set($event)"
       (showInstructions)="showInstructions.set($event)"
     />
 
     <!-- Канбан-доска -->
-    <main class="board-wrapper">
+    <main class="board-wrapper" [hidden]="!boardVisible()">
       <sat-board
         [automationPending]="automationLauncher.pending()" (startRequested)="launchTask($event)"
         (addRequested)="onQuickAdd($event.status)"
@@ -88,6 +91,7 @@
         (deleteRequested)="onDeleteTask($event.id)"
       />
     </main>
+    <div class="routed-page" [hidden]="boardVisible()"><router-outlet /></div>
   </div>
 
   <!-- Полоса загрузки: тонкая, ровно под шапкой, не сдвигает доску -->
@@ -98,11 +102,11 @@
   </div>
 
   @if (store.error(); as error) {
-    <div class="app-error">{{ error }}</div>
+    <div class="app-error" role="alert">{{ error }}</div>
   }
 
   <!-- Боковая карточка задачи -->
-  @if (!queueTask() && store.openTask(); as card) {
+  @if (!runsVisible() && store.openTask(); as card) {
     <sat-task-dialog [task]="card" (closed)="closeCard()" />
   } @else if (createMode()) {
     <sat-task-dialog
@@ -123,25 +127,4 @@
   }
 
   <sat-instructions-dialog [(visible)]="showInstructions" />
-  <p-dialog header="Команда агентов" [(visible)]="showAutomation" [modal]="true" [style]="{ width: '1280px', maxWidth: '98vw', height: '92dvh', maxHeight: '98dvh' }" [contentStyle]="{ overflow: 'hidden', display: 'flex', minHeight: '0' }">
-    @if (showAutomation) { <sat-automation-panel [tasks]="store.tasks()" [initialTaskId]="automationTaskId" [initialBatch]="automationBatch" [initialMessage]="automationMessage" (openQueue)="openQueue($event)" /> }
-  </p-dialog>
-  <p-dialog header="Очередь агентов" [(visible)]="showQueue" [modal]="true" [closeOnEscape]="!queueTask()" [closable]="!queueTask()"
-    (onHide)="closeQueueTask()" [style]="{ width: '100vw', maxWidth: '100vw', height: '100dvh', maxHeight: '100dvh', margin: '0' }" [contentStyle]="{ overflow: 'hidden', display: 'flex', minHeight: '0' }">
-    @if (showQueue) {
-      @defer (on immediate) {
-        <sat-automation-queue #queue [runId]="queueRunId" [eventId]="queueEventId" [attr.inert]="queueTask() && store.openTask() ? '' : null"
-          (openTask)="openQueueTask($event)" (resumedFromCard)="closeQueueTask()"
-          (configure)="showQueue = false; openAutomation()" (changed)="store.refresh(true)" />
-        @if (queueTask(); as origin) {
-          @if (store.openTask(); as card) {
-            <sat-task-dialog [task]="card" [canResumeRun]="card.id === origin.taskId && queue.canResumeFromCard(origin.runId)"
-              [resumeRunBusy]="queue.busy()" [resumeRunError]="queue.error()"
-              (closed)="closeQueueTask()" (questionUpdated)="queue.refreshRun()"
-              (resumeRun)="queue.resumeFromCard(origin.runId)" />
-          }
-        }
-      } @placeholder { <p>Загрузка очереди…</p> }
-    }
-  </p-dialog>
 </div>

@@ -61,8 +61,9 @@ try {
     await route.fulfill({ json: { ...body, selectedEvent: { id: 987654, runId: run.id, at: now, kind: 'failed', text: 'Исходное CLI-событие за пределами страницы журнала.' } } });
   });
   await page.goto(`http://127.0.0.1:${(server.address() as AddressInfo).port}`);
-  await page.locator('sat-sidebar button').filter({ hasText: 'Очередь задач' }).click();
-  const queue = page.getByRole('dialog', { name: 'Очередь агентов' });
+  await page.locator('sat-sidebar button').filter({ hasText: 'Запуски агентов' }).click();
+  const queue = page.locator('sat-automation-queue');
+  const evidenceDetails = queue.getByRole('button', { name: 'Подробности события' });
   await queue.getByRole('button', { name: 'Метрики', exact: true }).click();
   const metrics = queue.locator('sat-automation-metrics');
   await metrics.getByText('1 / 2', { exact: true }).waitFor();
@@ -75,10 +76,20 @@ try {
   await page.screenshot({ path: path.join(screenshots, 'sat55-metrics-desktop.png') });
   await metrics.getByRole('button', { name: `Открыть событие 987654 задачи ${task.id}` }).focus(); await page.keyboard.press('Enter');
   await queue.getByText('Исходное CLI-событие за пределами страницы журнала.', { exact: true }).waitFor();
+  assert.equal(await evidenceDetails.getAttribute('aria-expanded'), 'false');
+  const evidenceHeight = await queue.locator('.selected-evidence').evaluate(element => element.clientHeight);
+  assert.ok(evidenceHeight < 150, 'Evidence opens in a compact summary');
+  await evidenceDetails.click();
   assert.equal(await queue.getByText('Причина не установлена', { exact: true }).count(), 1); checks++;
   assert.equal(await queue.locator('.evidence-context').getByText('2', { exact: true }).count(), 1);
   assert.equal(await queue.locator('.evidence-context').getByText('a'.repeat(40), { exact: true }).count(), 1);
-  assert.equal(await queue.locator('#evidence-heading').evaluate(el => el === document.activeElement), true); checks++;
+  await page.setViewportSize({ width: 1440, height: 460 });
+  const journal = queue.getByRole('log', { name: 'Вывод выполнения' });
+  await journal.scrollIntoViewIfNeeded();
+  assert.ok(await queue.locator('.queue-main').evaluate(el => el.scrollTop > 0), 'The run can scroll to the journal with details expanded');
+  await page.setViewportSize({ width: 1440, height: 1100 });
+  await queue.locator('.queue-main').evaluate(el => el.scrollTo(0, 0));
+  checks++;
   await page.screenshot({ path: path.join(screenshots, 'sat55-evidence-desktop.png') });
   await queue.getByRole('button', { name: 'К метрикам', exact: true }).click();
   await metrics.getByText('1 / 2', { exact: true }).waitFor();
@@ -86,6 +97,7 @@ try {
   evidenceMode = 'error';
   await metrics.getByRole('button', { name: `Открыть событие 987655 задачи ${task.id}` }).click();
   await queue.getByText(/Не удалось открыть исходное событие/).waitFor();
+  await evidenceDetails.click();
   assert.equal(await queue.getByText('Не записана', { exact: true }).count(), 1);
   assert.equal(await queue.getByText('Не записан', { exact: true }).count(), 1); checks++;
   evidenceMode = 'slow';
@@ -99,8 +111,8 @@ try {
   await metrics.getByRole('button', { name: `Открыть подзадачу ${improvement.id}` }).click();
   await page.waitForFunction(() => Array.from(document.querySelectorAll('input')).some(input => input.value === 'Улучшение после сбоя' && input.getBoundingClientRect().width > 0)); checks++;
   // Reload closes the task card and gives each following state a clean navigation entry.
-  await page.reload(); await page.locator('sat-sidebar button').filter({ hasText: 'Очередь задач' }).click();
-  await queue.getByRole('button', { name: 'Метрики', exact: true }).click();
+  await page.reload();
+  assert.ok(new URL(page.url()).pathname.endsWith('/automation/runs/metrics'));
   await metrics.getByText('1 / 2', { exact: true }).waitFor();
   responseMode = 'slow'; await metrics.getByRole('button', { name: 'Обновить метрики' }).click();
   await metrics.getByText('Загрузка метрик…', { exact: true }).waitFor();
@@ -127,11 +139,11 @@ try {
   assert.equal(await page.getByRole('button', { name: 'Продолжить запуск', exact: true }).count(), 0, 'An improvement card must not resume the source task run');
   await page.getByRole('button', { name: 'Закрыть', exact: true }).last().click(); checks++;
   await queue.getByRole('button', { name: 'К метрикам', exact: true }).click();
-  await metrics.getByRole('button', { name: 'История', exact: true }).click();
+  await queue.getByRole('button', { name: 'История', exact: true }).click();
   await metrics.waitFor({ state: 'detached' });
   assert.equal(await metrics.count(), 0);
   await queue.getByRole('button', { name: 'Метрики', exact: true }).click();
-  await metrics.getByRole('button', { name: 'Рабочая очередь', exact: true }).click();
+  await queue.getByRole('button', { name: 'Рабочая очередь', exact: true }).click();
   await metrics.waitFor({ state: 'detached' });
   assert.equal(await metrics.count(), 0); checks++;
   assert.deepEqual(errors, []); checks++;

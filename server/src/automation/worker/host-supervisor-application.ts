@@ -7,6 +7,7 @@ import { McpTrackerChannel } from './mcp-client.js';
 import { ProjectWorker } from './project-worker.js';
 import { ExecutionSupervisor } from './execution-supervisor.js';
 import { RuntimeCoordinator, getRuntimeHostDirectory } from './runtime-coordinator.js';
+import { watchWorkspaceRegistry } from './workspace-discovery.js';
 import { AutomationTool } from '../../../../shared/automation/protocol.js';
 import { PROJECT_LIMITS, type HostStatus } from '../../../../shared/automation/project.js';
 
@@ -17,6 +18,10 @@ export class HostSupervisorApplication {
     const hostDir = getRuntimeHostDirectory(workspace, process.env.SAT_MCP_COMMAND, process.env.SAT_MCP_ARGS);
     const coordinator = new RuntimeCoordinator(path.join(hostDir, 'coordination.sqlite'));
     let lease = coordinator.tryAcquire('host');
+    if (!lease && process.env.SAT_KEEP_EXISTING_HOST === '1') {
+      coordinator.close();
+      throw new Error('Локальный хост этого пространства уже занят.');
+    }
     if (!lease) {
       process.stderr.write('Обнаружен ранее запущенный хост воркера. Принудительное завершение старого процесса...\n');
       await coordinator.forceRelease('host');
@@ -31,6 +36,7 @@ export class HostSupervisorApplication {
     let initial = true; let resumeExecution = false; let wantExecution = false;
     const control = { status: () => execution.status(), async start() { wantExecution = true; return execution.start(); }, async stop() { wantExecution = false; return execution.stop(); } };
     try {
+      if (workspace === 'default') watchWorkspaceRegistry(controller.signal);
       while (!controller.signal.aborted) {
         const channel = new McpTrackerChannel(workspace);
         try {
@@ -60,6 +66,7 @@ export class HostSupervisorApplication {
         if (!controller.signal.aborted) await delay(1000, undefined, { signal: controller.signal }).catch(() => undefined);
       }
     } finally {
+      controller.abort();
       await execution.stop().catch(error => process.stderr.write(`${String(error)}\n`));
       process.off('SIGINT', stop); process.off('SIGTERM', stop); lease.release(); coordinator.close();
     }

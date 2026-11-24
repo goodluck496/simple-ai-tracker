@@ -11,7 +11,7 @@ import { AgentRole, WRITABLE_AGENT_ROLES,
   type AgentProfile, type AgentRun, type AutomationSettings, type PipelineRoute } from '../../../../../shared/automation/contracts';
 import { PipelinePolicy } from '../../../../../shared/automation/pipeline-policy';
 import { ROLE_OPTIONS } from '../../../../../shared/automation/presets';
-import { DEFAULT_ROLE_INSTRUCTIONS } from '../../../../../shared/automation/team-profiles';
+import { agentProfileName, DEFAULT_ROLE_INSTRUCTIONS } from '../../../../../shared/automation/team-profiles';
 
 @Component({
   selector: 'sat-pipeline-flow',
@@ -56,7 +56,7 @@ export class PipelineFlowComponent {
       const agent = this.settings.agents.find(profile => profile.id === id);
       return {
         id, index, agent, key: this.settings.pipeline.indexOf(id) === index ? id : `${id}:${index}`,
-        label: agent ? this.roleLabel(agent.role) : id,
+        label: agent ? agentProfileName(agent, this.settings.agents) : id,
         checks: PipelinePolicy.checkAt(this.settings, index) ? this.settings.checks : [],
         gate: PipelinePolicy.isGate(this.settings, index),
         writer: !!agent && WRITABLE_AGENT_ROLES.includes(agent.role),
@@ -75,7 +75,7 @@ export class PipelineFlowComponent {
   public get problem() { return PipelinePolicy.routeProblem(this.settings) ?? PipelinePolicy.routerProblem(this.settings); }
   public get stageOptions() {
     const existing = this.settings.agents.filter(agent => !this.settings.pipeline.includes(agent.id)).map(agent => ({
-      label: `${this.roleLabel(agent.role)} · ${agent.model || 'модель не выбрана'}`, value: `profile:${agent.id}`,
+      label: `${agentProfileName(agent, this.settings.agents)} · ${agent.model || 'модель не выбрана'}`, value: `profile:${agent.id}`,
     }));
     return [
       ...(existing.length ? [{ label: 'Агенты команды вне маршрута', items: existing }] : []),

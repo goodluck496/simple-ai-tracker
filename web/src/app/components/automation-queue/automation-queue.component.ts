@@ -1,13 +1,15 @@
 import { RunProfileEditorComponent } from './run-profile-editor.component';
-import { DialogModule } from 'primeng/dialog';
 import type { ProposedFix } from '../../../../../shared/automation/contracts';
-import { ChangeDetectionStrategy, Component, DestroyRef, ElementRef, EventEmitter, Input, Output, afterRenderEffect, computed, effect, inject, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, DestroyRef, ElementRef, OnInit, afterRenderEffect, computed, effect, inject, signal } from '@angular/core';
+import { ActivatedRoute, NavigationEnd, Router } from '@angular/router';
 import { DatePipe, DecimalPipe } from '@angular/common';
 import { TableModule } from 'primeng/table';
 import { ButtonModule } from 'primeng/button';
 import { FormsModule } from '@angular/forms';
 import { SelectModule } from 'primeng/select';
 import { PanelModule } from 'primeng/panel';
+import { PopoverModule } from 'primeng/popover';
+import { MessageModule } from 'primeng/message';
 import { InputTextModule } from 'primeng/inputtext';
 import { InputNumberModule } from 'primeng/inputnumber';
 import { PROJECT_LIMITS, ProjectAction, ProjectRequestStatus, type ProjectDiff, type ProjectRequest } from '../../../../../shared/automation/project';
@@ -15,6 +17,7 @@ import type { ModelCatalogInput, ModelOption } from '../../../../../shared/autom
 import { CheckboxModule } from 'primeng/checkbox';
 import { TokenMeter } from '../../../../../shared/automation/token-usage';
 import { RunBudget } from '../../../../../shared/automation/budget';
+import { agentProfileName } from '../../../../../shared/automation/team-profiles';
 import { runFailure } from '../../../../../shared/automation/run-failure';
 import { RunConsoleComponent } from '../run-console/run-console.component';
 import { RunActivityComponent } from './run-activity.component';
@@ -28,6 +31,8 @@ import { QUEUE_LANES, QUEUE_LIMITS, RUN_EVENT_TITLES, RUN_PHASE_TITLES, RUN_STAT
 import { ROLE_OPTIONS } from '../../../../../shared/automation/presets';
 import { TASK_STATUS_TITLES } from '../../../../../shared/automation/task-readiness';
 import { WorkspaceService } from '../../services/workspace.service';
+import { TrackerStore } from '../../services/tracker-store.service';
+import { TaskDialogComponent } from '../task-dialog/task-dialog.component';
 import { filterQueueItems } from './queue-search';
 import { formatQueueDate, sortRunHistory } from './queue-dates';
 
@@ -36,24 +41,35 @@ import { AutomationMetricsComponent } from './automation-metrics.component';
 import type { CheckEvidence, ImprovementOccurrence, ImprovementPeriod } from '../../../../../shared/automation/improvement-metrics';
 import { publicUrl } from '../../services/public-url';
 
-@Component({ selector: 'sat-automation-queue', standalone: true, imports: [RunProfileEditorComponent, DatePipe, DecimalPipe, RunConsoleComponent, RunActivityComponent, TableModule, ButtonModule, FormsModule, CheckboxModule, DialogModule, SelectModule, PanelModule, InputTextModule, InputNumberModule, PipelineFlowComponent, AutomationMetricsComponent],
+type RunsView = 'queue' | 'history' | 'metrics';
+type RunPage = 'diagnosis' | 'commit-diff' | 'branch-diff';
+const HISTORY_LANES = ['attention', 'finished', 'running', 'queued'] as const;
+
+@Component({ selector: 'sat-automation-queue', standalone: true, imports: [RunProfileEditorComponent, DatePipe, DecimalPipe, RunConsoleComponent, RunActivityComponent, TableModule, ButtonModule, FormsModule, CheckboxModule, SelectModule, PanelModule, PopoverModule, MessageModule, InputTextModule, InputNumberModule, PipelineFlowComponent, AutomationMetricsComponent, TaskDialogComponent],
   changeDetection: ChangeDetectionStrategy.OnPush, templateUrl: './automation-queue.component.html', styleUrl: './automation-queue.component.scss' })
-export class AutomationQueueComponent {
+export class AutomationQueueComponent implements OnInit {
   private readonly element = inject<ElementRef<HTMLElement>>(ElementRef);
   private readonly http = inject(HttpClient);
   private readonly destroyRef = inject(DestroyRef);
   private readonly workspace = inject(WorkspaceService);
+  private readonly route = inject(ActivatedRoute);
+  private readonly router = inject(Router);
+  public readonly store = inject(TrackerStore);
   private readonly refresh = new Subject<void>();
   public readonly selectedId = signal<string | null>(null);
-  @Input() public set runId(value: string | null) { this.selectedOccurrence.set(null); this.sourceEventId.set(null); this.metricsMode.set(false); this.selectedId.set(value); if (value) this.historyMode.set(true); }
-  @Input() public set eventId(value: number | null) { this.sourceEventId.set(value); }
-  public readonly historyMode = signal(false);
-  public readonly metricsMode = signal(false);
+  public readonly view = signal<RunsView>('queue');
+  public readonly historyMode = computed(() => this.view() === 'history');
+  public readonly metricsMode = computed(() => this.view() === 'metrics');
+  public readonly views = [
+    { id: 'queue', label: 'Рабочая очередь' }, { id: 'history', label: 'История' }, { id: 'metrics', label: 'Метрики' },
+  ] as const;
+  private routedRun: string | null = null;
   public readonly selectedOccurrence = signal<ImprovementOccurrence | null>(null);
   public readonly metricsPeriod = signal<ImprovementPeriod | null>(null);
   public readonly evidenceLoading = signal(false);
   public readonly evidenceError = signal('');
   public readonly sourceEventId = signal<number | null>(null);
+  public readonly evidenceExpanded = signal(false);
   public readonly evidenceImageUrl = publicUrl;
   private readonly selectedEventId = computed(() => this.selectedOccurrence()?.eventId ?? this.sourceEventId());
   public readonly historyTask = signal('');
@@ -65,21 +81,24 @@ export class AutomationQueueComponent {
   public readonly confirmation = signal<'cleanup' | 'delete' | null>(null);
   public discard = false;
   private readonly selectedCache = signal<QueueItem | undefined>(undefined);
-  @Output() public readonly openTask = new EventEmitter<{ taskId: string; runId: string }>();
-  @Output() public readonly resumedFromCard = new EventEmitter<void>();
-  @Output() public readonly configure = new EventEmitter<void>();
-  @Output() public readonly changed = new EventEmitter<void>();
+  public readonly taskContext = signal<{ taskId: string; runId: string } | null>(null);
   public readonly error = signal('');
   public readonly pollError = signal('');
+  private readonly dismissedPollError = signal('');
+  public readonly pollFeedback = computed(() => this.pollError() === this.dismissedPollError() ? '' : this.pollError());
+  public dismissPollError(): void { this.dismissedPollError.set(this.pollError()); }
   public readonly queueConnected = signal(false);
   private readonly receivedAt = signal(performance.now());
   private readonly clock = toSignal(timer(0, ACTIVITY_TIMING.tickMs).pipe(map(() => performance.now())), { initialValue: performance.now() });
   public readonly dataFresh = computed(() => this.queueConnected() && this.clock() - this.receivedAt() < ACTIVITY_TIMING.snapshotMs);
   public readonly notice = signal('');
   public readonly busy = signal(false);
-  public readonly showFixDialog = signal(false);
-  public readonly currentFix = signal<ProposedFix | null>(null);
-  public readonly fixingRunId = signal<string | null>(null);
+  public readonly runPage = signal<RunPage | null>(null);
+  private readonly diagnosed = signal<{ runId: string; fix: ProposedFix } | null>(null);
+  public readonly currentFix = computed(() => {
+    const diagnosis = this.diagnosed();
+    return diagnosis?.runId === this.selectedId() ? diagnosis.fix : this.selected()?.proposedFix;
+  });
   public readonly budgetEditing = signal(false);
   public deployPreviewPatch = false;
   public budgetCalls = 6;
@@ -126,18 +145,30 @@ export class AutomationQueueComponent {
     }
     return undefined;
   });
-  public readonly snapshot = toSignal(combineLatest([toObservable(this.historyMode), toObservable(this.historyTask), merge(timer(0, AUTOMATION_TIMING.pollMs), this.refresh)]).pipe(
-    switchMap(([history, task]) => this.http.get<QueueSnapshot>(history ? `/api/automation/history${task ? '?taskId=' + encodeURIComponent(task) : ''}` : '/api/automation/queue').pipe(
-      tap(() => { this.receivedAt.set(performance.now()); this.queueConnected.set(true); this.pollError.set(''); }),
+  private readonly listContext = computed(() => ({ view: this.view(), task: this.historyTask() }));
+  private readonly emptySnapshot: QueueSnapshot = { items: [], host: { online: false }, serverTime: new Date().toISOString() };
+  private readonly listResponse = toSignal(combineLatest([toObservable(this.listContext), merge(timer(0, AUTOMATION_TIMING.pollMs), this.refresh)]).pipe(
+    switchMap(([context]) => context.view === 'metrics' ? EMPTY : this.http.get<QueueSnapshot>(
+      context.view === 'history' ? `/api/automation/history${context.task ? '?taskId=' + encodeURIComponent(context.task) : ''}` : '/api/automation/queue',
+    ).pipe(
+      tap(() => {
+        this.receivedAt.set(performance.now()); this.queueConnected.set(true);
+        this.pollError.set(''); this.dismissedPollError.set('');
+      }),
+      map(snapshot => ({ context, snapshot })),
       catchError((error: unknown) => { this.queueConnected.set(false); this.pollError.set(this.message(error)); return EMPTY; }),
     )),
-  ), { initialValue: { items: [], host: { online: false }, serverTime: new Date().toISOString() } as QueueSnapshot });
+  ));
+  public readonly snapshot = computed(() => {
+    const response = this.listResponse();
+    return response?.context === this.listContext() ? response.snapshot : this.emptySnapshot;
+  });
   public readonly now = computed(() => Date.parse(this.snapshot().serverTime) + Math.max(0, this.clock() - this.receivedAt()));
   public readonly selected = computed(() => {
     const id = this.selectedId();
     const snapshot = this.snapshot().items.find(run => run.id === id);
     const detail = this.detail()?.item;
-    if (detail?.id === id && (!snapshot || detail.updatedAt >= snapshot.updatedAt)) return detail;
+    if (detail?.id === id && (!snapshot || detail.updatedAt > snapshot.updatedAt)) return detail;
     return snapshot ?? (this.selectedCache()?.id === id ? this.selectedCache() : undefined);
   });
   public readonly detail = toSignal(combineLatest([toObservable(this.selectedId), toObservable(this.selectedEventId), toObservable(this.workspace.current), merge(timer(0, AUTOMATION_TIMING.pollMs), this.refresh)]).pipe(
@@ -188,6 +219,7 @@ export class AutomationQueueComponent {
     return map;
   });
   public items(lane: QueueLane): QueueItem[] { return this.laneItems().get(lane) ?? []; }
+  public visibleCount(): number { return this.visibleLanes().reduce((sum, lane) => sum + this.items(lane.id).length, 0); }
   public archivedItems(): AgentRun[] { return sortRunHistory(this.archived() ?? []); }
   public timestamp(value: string | undefined): string { return formatQueueDate(value); }
   public total(lane: QueueLane): number { return this.snapshot().items.filter((item) => QueuePresentation.lane(item) === lane).length; }
@@ -209,7 +241,7 @@ export class AutomationQueueComponent {
       next: settings => {
         const options = settings.agents.filter(agent => agent.role === role).flatMap(agent => {
           const connection = settings.connections.find(entry => entry.id === agent.connectionId);
-          return connection ? [{ id: agent.id, label: `${agent.runner} · ${connection.label} · ${agent.model}`, model: agent.model,
+          return connection ? [{ id: agent.id, label: `${agentProfileName(agent, settings.agents)} · ${connection.label} · ${agent.model}`, model: agent.model,
             catalog: { runner: agent.runner, connection } }] : [];
         });
         this.replacement.set({ runId: run.id, options });
@@ -278,7 +310,7 @@ export class AutomationQueueComponent {
       return [{ kind: 'meta', text: line, old: undefined, next: undefined }];
     });
   });
-  public loadRunDiff(id: string, wholeRun: boolean): void {
+  private loadRunDiff(id: string, wholeRun: boolean): void {
     const pending = { id, wholeRun, loading: true };
     this.runDiff.set(pending);
     this.awaitProject(this.http.post<ProjectRequest>(`/api/automation/runs/${id}/diff`, { wholeRun }))
@@ -305,10 +337,90 @@ export class AutomationQueueComponent {
   public currentRole(item: QueueItem): string { return item.status === RunStatus.Integrating ? 'Интеграция' : item.phase === 'waiting-slot' ? 'Ожидание слота' : this.role(item.pipeline.at(item.stage)?.role ?? ''); }
   public duration(at: string | undefined): string { return at ? `${Math.max(0, Math.floor((this.now() - Date.parse(at)) / 1000))} с` : 'нет данных'; }
   public progress(text: string): string { return RunProgressText.format(text); }
-  public select(id: string, occurrence: ImprovementOccurrence | null = null): void { this.metricsMode.set(false); this.selectedOccurrence.set(occurrence); this.sourceEventId.set(null); this.selectedCache.set(this.snapshot().items.find(run => run.id === id)); this.selectedId.set(id); this.error.set(''); this.confirmation.set(null); }
-  public viewMetrics(): void { this.metricsMode.set(true); this.clearMetricSelection(); this.showDetails.set(false); }
-  public clearMetricSelection(): void { this.selectedOccurrence.set(null); this.sourceEventId.set(null); this.selectedId.set(null); this.selectedCache.set(undefined); this.error.set(''); }
-  public inspectOccurrence(occurrence: ImprovementOccurrence): void { this.select(occurrence.runId, occurrence); this.historyMode.set(true); this.showDetails.set(false); }
+  public ngOnInit(): void {
+    this.applyRoute();
+    this.router.events.pipe(filter(event => event instanceof NavigationEnd), takeUntilDestroyed(this.destroyRef))
+      .subscribe(() => this.applyRoute());
+    this.destroyRef.onDestroy(() => this.closeTask());
+  }
+  private applyRoute(): void {
+    const { paramMap, queryParamMap } = this.route.snapshot;
+    const requestedView = paramMap.get('view');
+    const view = requestedView === 'history' || requestedView === 'metrics' ? requestedView : 'queue';
+    const task = view === 'history' ? queryParamMap.get('taskId') ?? '' : '';
+    const linkedWorkspace = queryParamMap.get('workspace');
+    const run = view === 'metrics' || (linkedWorkspace && linkedWorkspace !== this.workspace.current()) ? null : queryParamMap.get('run');
+    const event = Number(queryParamMap.get('eventId'));
+    const eventId = run && Number.isSafeInteger(event) && event > 0 ? event : null;
+    const page = queryParamMap.get('panel');
+    const runPage = run && (page === 'diagnosis' || page === 'commit-diff' || page === 'branch-diff') ? page : null;
+    const viewChanged = this.view() !== view || this.historyTask() !== task;
+    if (viewChanged || this.routedRun !== run) {
+      if (run !== this.selectedId()) this.budgetEditing.set(false);
+      this.closeTask();
+      this.selectedId.set(run);
+      this.selectedCache.set(undefined);
+      this.confirmation.set(null);
+      this.error.set('');
+    }
+    if (viewChanged) {
+      this.activeLaneFilter.set('all');
+      this.search.set('');
+      this.pollError.set('');
+    }
+    if ((viewChanged || this.routedRun !== run) && window.matchMedia('(max-width: 768px)').matches) {
+      this.leftSidebarOpen.set(!run);
+    }
+    this.view.set(view);
+    this.historyTask.set(task);
+    if (eventId !== this.sourceEventId() || run !== this.routedRun) {
+      this.evidenceExpanded.set(false);
+      if (eventId) this.leftSidebarOpen.set(false);
+    }
+    this.routedRun = run;
+    this.sourceEventId.set(eventId);
+    const occurrence = this.selectedOccurrence();
+    if (occurrence && (occurrence.runId !== run || occurrence.eventId !== eventId)) this.selectedOccurrence.set(null);
+    this.showDetails.set(!!run && queryParamMap.get('details') === '1');
+    this.runPage.set(runPage);
+    if (run && (runPage === 'commit-diff' || runPage === 'branch-diff')) {
+      const wholeRun = runPage === 'branch-diff';
+      const diff = this.runDiff();
+      if (diff?.id !== run || diff.wholeRun !== wholeRun) this.loadRunDiff(run, wholeRun);
+    } else {
+      this.runDiff.set(null);
+    }
+  }
+  public navigate(view: RunsView, run: string | null = null, taskId = '', eventId: number | null = null, details = false, panel: RunPage | null = null): void {
+    void this.router.navigate(['/automation/runs', view], {
+      queryParams: { run, taskId: taskId || null, eventId, workspace: run ? this.workspace.current() : null, details: details ? 1 : null, panel },
+    });
+  }
+  public select(id: string): void { this.navigate(this.view(), id, this.historyTask()); }
+  public viewMetrics(): void { this.navigate('metrics'); }
+  public inspectOccurrence(occurrence: ImprovementOccurrence): void {
+    this.selectedOccurrence.set(occurrence);
+    this.navigate('history', occurrence.runId, '', occurrence.eventId);
+  }
+  public inspectRun(visible: boolean): void {
+    const id = this.selectedId();
+    if (id) this.navigate(this.view(), id, this.historyTask(), this.sourceEventId(), visible);
+  }
+  public openRunPage(id: string, panel: RunPage | null): void {
+    this.navigate(this.view(), id, this.historyTask(), this.sourceEventId(), this.showDetails(), panel);
+  }
+  public configure(): void { void this.router.navigate(['/automation/settings/worker']); }
+  public async openTask(context: { taskId: string; runId: string }): Promise<void> {
+    this.store.closeCard();
+    this.taskContext.set(context);
+    await this.store.openCard(context.taskId);
+    if (this.taskContext() === context && !this.store.openTask()) this.taskContext.set(null);
+  }
+  public closeTask(): void {
+    if (!this.taskContext()) return;
+    this.taskContext.set(null);
+    this.store.closeCard();
+  }
   public toggleLeftSidebar(): void { this.leftSidebarOpen.update(v => !v); }
   private loadInspectorWidth(): number {
     try {
@@ -328,7 +440,7 @@ export class AutomationQueueComponent {
     const onMouseMove = (moveEvent: MouseEvent): void => {
       const deltaX = startX - moveEvent.clientX;
       const minWidth = 380;
-      const leftWidth = this.leftSidebarOpen() ? 360 : 0;
+      const leftWidth = this.leftSidebarOpen() ? 360 : 44;
       const minCenterWidth = 460;
       const maxAllowed = Math.max(minWidth, window.innerWidth - leftWidth - minCenterWidth);
       const maxWidth = Math.min(880, maxAllowed);
@@ -352,7 +464,7 @@ export class AutomationQueueComponent {
     if (current > 660) {
       this.inspectorWidth.set(560);
     } else {
-      const leftWidth = this.leftSidebarOpen() ? 360 : 0;
+      const leftWidth = this.leftSidebarOpen() ? 360 : 44;
       const maxAvailable = Math.max(480, window.innerWidth - leftWidth - 500);
       const wide = Math.min(840, Math.max(640, maxAvailable));
       this.inspectorWidth.set(wide);
@@ -361,7 +473,6 @@ export class AutomationQueueComponent {
       localStorage.setItem('sat-queue-inspector-width', String(this.inspectorWidth()));
     } catch {}
   }
-  public switchMode(history: boolean): void { this.metricsMode.set(false); this.selectedOccurrence.set(null); this.sourceEventId.set(null); this.historyMode.set(history); if (!history) this.historyTask.set(''); this.activeLaneFilter.set('all'); }
   public checkOutcome(check: CheckEvidence): string {
     switch (check.outcome.kind) {
       case 'exit': return `Код выхода ${check.outcome.code}`;
@@ -372,8 +483,12 @@ export class AutomationQueueComponent {
   }
   public filteredLanes() { return this.activeLaneFilter() === 'all' ? this.visibleLanes() : this.visibleLanes().filter(lane => lane.id === this.activeLaneFilter()); }
   public totalActive(): number { return this.items('queued').length + this.items('running').length; }
-  public viewHistory(taskId = ''): void { this.switchMode(true); this.historyTask.set(taskId); this.refresh.next(); }
-  public visibleLanes() { return this.historyMode() ? this.lanes : this.lanes.filter(lane => lane.id === 'queued' || lane.id === 'running'); }
+  public viewHistory(taskId = ''): void { this.navigate('history', taskId ? this.selectedId() : null, taskId); }
+  public visibleLanes() {
+    return this.historyMode()
+      ? HISTORY_LANES.map(id => this.lanes.find(lane => lane.id === id)!)
+      : this.lanes.filter(lane => lane.id === 'queued' || lane.id === 'running');
+  }
   public manage(item: QueueItem): boolean { return !['queued', 'running', 'integrating', 'waiting'].includes(item.status); }
   public requestConfirmation(action: 'cleanup' | 'delete'): void { this.confirmation.set(action); this.discard = false; }
   public confirm(item: QueueItem): void {
@@ -381,33 +496,40 @@ export class AutomationQueueComponent {
     this.busy.set(true); this.error.set('');
     const body = action === 'delete' ? { force: this.discard || item.cleanup?.state === 'failed' } : { discard: this.discard };
     this.http.post(`/api/automation/runs/${item.id}/${action}`, body).pipe(finalize(() => this.busy.set(false)), takeUntilDestroyed(this.destroyRef)).subscribe({
-      next: () => { this.confirmation.set(null); if (action === 'delete') { this.selectedId.set(null); this.selectedCache.set(undefined); } this.refresh.next(); this.changed.emit(); },
+      next: () => { this.confirmation.set(null); if (action === 'delete') this.clearRun(); this.refresh.next(); void this.store.refresh(true); },
       error: (error: unknown) => this.error.set(this.message(error)),
     });
   }
   constructor() {
+    let focusedEvidence: string | undefined;
     afterRenderEffect(() => {
-      if (this.selectedOccurrence()) this.element.nativeElement.querySelector<HTMLElement>('#evidence-heading')?.focus();
-    });
-    let current = this.workspace.current();
-    effect(() => {
-      const next = this.workspace.current();
-      if (next !== current) { current = next; this.search.set(''); this.clearMetricSelection(); this.metricsPeriod.set(null); this.archived.set(null); this.historyTask.set(''); this.historyMode.set(false); }
-    });
-    effect(() => {
-      const run = this.detail()?.run;
-      if (run && run.id === this.selectedId() && !['queued', 'running', 'integrating'].includes(run.status)) this.historyMode.set(true);
+      const occurrence = this.displayedOccurrence();
+      const key = occurrence ? `${occurrence.runId}:${occurrence.eventId}` : undefined;
+      if (key && key !== focusedEvidence) {
+        const heading = this.element.nativeElement.querySelector<HTMLElement>('#evidence-heading');
+        if (!heading) return;
+        heading.closest('.queue-main')?.scrollTo(0, 0);
+        heading.focus({ preventScroll: true });
+      }
+      focusedEvidence = key;
     });
     effect(() => {
       const items = this.snapshot().items;
       if (!this.metricsMode() && !this.selectedId() && items.length > 0) {
-        const running = items.find(i => i.status === RunStatus.Running || i.status === RunStatus.Integrating) ?? items[0];
-        if (running) {
-          this.selectedId.set(running.id);
-          this.selectedCache.set(running);
+        const first = this.historyMode()
+          ? HISTORY_LANES.map(lane => this.items(lane)[0]).find(Boolean)
+          : items.find(item => QueuePresentation.lane(item) === 'running') ?? items[0];
+        if (first) {
+          this.selectedId.set(first.id);
+          this.selectedCache.set(first);
         }
       }
     });
+  }
+  private clearRun(): void {
+    this.selectedId.set(null);
+    this.selectedCache.set(undefined);
+    if (this.routedRun) this.navigate(this.view(), null, this.historyTask());
   }
   public refreshRun(): void { this.refresh.next(); }
   public canResumeFromCard(id: string): boolean {
@@ -416,13 +538,16 @@ export class AutomationQueueComponent {
   }
   public resumeFromCard(id: string): void {
     const item = this.selected();
-    if (item && this.canResumeFromCard(id)) this.action(item, RunAction.Resume, false, () => this.resumedFromCard.emit());
+    if (item && this.canResumeFromCard(id)) this.action(item, RunAction.Resume, false, () => this.closeTask());
   }
   public action(item: QueueItem, action: RunAction, refreshChecks = false, onSuccess?: () => void): void {
     if (this.busy()) return;
     this.busy.set(true); this.error.set(''); this.notice.set('');
     this.http.post<{ run?: AgentRun }>(`/api/automation/runs/${item.id}/${action}`, refreshChecks ? { refreshChecks: true } : {}).pipe(
-      tap((result) => { if (result.run) this.selectedId.set(result.run.id); this.refresh.next(); this.changed.emit(); onSuccess?.(); }),
+      tap((result) => {
+        if (result.run && result.run.id !== item.id && this.selectedId() === item.id) this.select(result.run.id);
+        this.refresh.next(); void this.store.refresh(true); onSuccess?.();
+      }),
       catchError((error: unknown) => { this.error.set(this.message(error)); return EMPTY; }),
       finalize(() => this.busy.set(false)), takeUntilDestroyed(this.destroyRef),
     ).subscribe();
@@ -443,7 +568,7 @@ export class AutomationQueueComponent {
     ).subscribe({
       next: () => {
         this.notice.set('Результат принят вручную. Запуск завершён, журнал и замечания агентов сохранены.');
-        this.historyMode.set(true); this.refresh.next(); this.changed.emit();
+        this.refresh.next(); void this.store.refresh(true);
       },
       error: error => this.error.set(this.message(error)),
     });
@@ -454,7 +579,7 @@ export class AutomationQueueComponent {
     this.http.post(`/api/automation/runs/${item.id}/resume`, { retryCurrent: true }).pipe(
       finalize(() => this.busy.set(false)), takeUntilDestroyed(this.destroyRef),
     ).subscribe({
-      next: () => { this.notice.set('Текущая проверка поставлена в очередь.'); this.refresh.next(); this.changed.emit(); },
+      next: () => { this.notice.set('Текущая проверка поставлена в очередь.'); this.refresh.next(); void this.store.refresh(true); },
       error: error => this.error.set(this.message(error)),
     });
   }
@@ -471,7 +596,7 @@ export class AutomationQueueComponent {
         const message = rollback ? 'Патч снят. Можно продолжать запуск.' : 'Изменения применены для проверки в базовой рабочей копии.';
         this.notice.set(message + (deploy && !result.result?.deploymentError ? ' Пост-операции выполнены.' : ' Пересоберите приложение для проверки.'));
         if (result.result?.deploymentError) this.error.set(result.result.deploymentError);
-        this.changed.emit();
+        void this.store.refresh(true);
       },
       error: error => this.error.set(this.message(error)),
     });
@@ -480,7 +605,7 @@ export class AutomationQueueComponent {
     if (this.busy()) return;
     this.busy.set(true); this.error.set(''); this.notice.set('');
     this.http.post('/api/automation/runs/' + item.id + '/dequeue', {}).pipe(
-      tap(() => { this.notice.set('Убрано из очереди. Задача и журнал сохранены.'); this.refresh.next(); this.changed.emit(); }),
+      tap(() => { this.notice.set('Убрано из очереди. Задача и журнал сохранены.'); this.refresh.next(); void this.store.refresh(true); }),
       catchError((error: unknown) => { this.error.set(this.message(error)); this.refresh.next(); return EMPTY; }),
       finalize(() => this.busy.set(false)), takeUntilDestroyed(this.destroyRef),
     ).subscribe();
@@ -499,7 +624,7 @@ export class AutomationQueueComponent {
     if (this.busy()) return;
     this.busy.set(true);
     this.http.post('/api/automation/runs/' + id + '/restore', {}).pipe(finalize(() => this.busy.set(false)), takeUntilDestroyed(this.destroyRef)).subscribe({
-      next: () => { this.archived.set((this.archived() ?? []).filter((run) => run.id !== id)); this.refresh.next(); this.changed.emit(); },
+      next: () => { this.archived.set((this.archived() ?? []).filter((run) => run.id !== id)); this.refresh.next(); void this.store.refresh(true); },
       error: (error: unknown) => this.error.set(this.message(error)),
     });
   }
@@ -507,32 +632,21 @@ export class AutomationQueueComponent {
     if (this.busy()) return;
     this.busy.set(true);
     this.http.post('/api/automation/runs/' + item.id + '/hide', {}).pipe(finalize(() => this.busy.set(false)), takeUntilDestroyed(this.destroyRef)).subscribe({
-      next: () => { this.refresh.next(); if (this.selectedId() === item.id) this.selectedId.set(null); this.changed.emit(); },
+      next: () => { this.refresh.next(); if (this.selectedId() === item.id) this.clearRun(); void this.store.refresh(true); },
       error: (error: unknown) => { this.error.set(this.message(error)); this.refresh.next(); },
     });
   }
 
-  public openProposedFix(item: QueueItem): void {
-    this.error.set('');
-    if (item.proposedFix) {
-      this.currentFix.set(item.proposedFix);
-      this.fixingRunId.set(item.id);
-      this.showFixDialog.set(true);
-    } else {
-      this.diagnose(item);
-    }
-  }
-
   public diagnose(item: QueueItem): void {
+    if (this.busy()) return;
     this.busy.set(true);
     this.error.set('');
     this.http.post<{ fix: ProposedFix }>(`/api/automation/runs/${item.id}/fix/diagnose`, {})
       .pipe(finalize(() => this.busy.set(false)), takeUntilDestroyed(this.destroyRef))
       .subscribe({
         next: ({ fix }) => {
-          this.currentFix.set(fix);
-          this.fixingRunId.set(item.id);
-          this.showFixDialog.set(true);
+          this.diagnosed.set({ runId: item.id, fix });
+          if (this.selectedId() === item.id) this.openRunPage(item.id, 'diagnosis');
           this.refresh.next();
         },
         error: (err) => this.error.set(this.message(err)),
@@ -540,7 +654,7 @@ export class AutomationQueueComponent {
   }
 
   public applyFix(): void {
-    const id = this.fixingRunId();
+    const id = this.selectedId();
     if (!id) return;
     this.busy.set(true);
     this.error.set('');
@@ -550,7 +664,7 @@ export class AutomationQueueComponent {
         finalize(() => this.busy.set(false)), takeUntilDestroyed(this.destroyRef))
       .subscribe({
         next: () => {
-          this.showFixDialog.set(false);
+          this.closeDiagnosis(id);
           this.notice.set('Запуск поставлен в очередь.');
           this.refresh.next();
         },
@@ -559,7 +673,7 @@ export class AutomationQueueComponent {
   }
 
   public discardFix(): void {
-    const id = this.fixingRunId();
+    const id = this.selectedId();
     if (!id) return;
     this.busy.set(true);
     this.error.set('');
@@ -567,7 +681,7 @@ export class AutomationQueueComponent {
       .pipe(finalize(() => this.busy.set(false)), takeUntilDestroyed(this.destroyRef))
       .subscribe({
         next: () => {
-          this.showFixDialog.set(false);
+          this.closeDiagnosis(id);
           this.notice.set('Предложение диагностики отклонено.');
           this.refresh.next();
         },
@@ -575,4 +689,8 @@ export class AutomationQueueComponent {
       });
   }
 
+  private closeDiagnosis(id: string): void {
+    this.diagnosed.set(null);
+    if (id === this.selectedId() && this.runPage() === 'diagnosis') this.openRunPage(id, null);
+  }
 }

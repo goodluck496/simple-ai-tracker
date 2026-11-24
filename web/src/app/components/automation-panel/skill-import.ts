@@ -1,3 +1,5 @@
+import { SKILL_LIMITS } from '../../../../../shared/automation/skills';
+
 export interface SkillFile { path: string; url: string; }
 
 async function download(url: string, maxBytes: number, accept: string): Promise<string> {
@@ -38,13 +40,16 @@ export async function skillFiles(source: string): Promise<SkillFile[]> {
 }
 
 export async function importSkillFile(file: SkillFile) {
-  const content = await download(file.url, 64000, new URL(file.url).hostname === 'api.github.com' ? 'application/vnd.github.raw+json' : 'text/plain, text/markdown');
-  if (content.length > 16000 || !content.trim() || /^\s*(?:<!doctype html|<html)/i.test(content)) throw new Error('Нужен текст Markdown длиной до 16000 символов.');
+  const content = await download(file.url, SKILL_LIMITS.content * 4 + 3, new URL(file.url).hostname === 'api.github.com' ? 'application/vnd.github.raw+json' : 'text/plain, text/markdown');
+  if (content.length > SKILL_LIMITS.content || !content.trim() || /^\s*(?:<!doctype html|<html)/i.test(content)) {
+    throw new Error(`Нужен текст Markdown длиной до ${SKILL_LIMITS.content} символов.`);
+  }
   const frontmatter = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/.exec(content)?.[1] ?? '';
   const field = (name: string) => {
-    const match = new RegExp('^' + name + ':[ \\t]*(.*(?:\\r?\\n[ \\t]+[^\\n]*)*)', 'm').exec(frontmatter);
+    const match = new RegExp('^' + name + ':[ \\t]*([^\\r\\n]*(?:\\r?\\n[ \\t]+[^\\r\\n]*)*)', 'm').exec(frontmatter);
     return (match?.[1] ?? '').replace(/^[>|][-+]?\s*/, '').trim().replace(/^(['"])([\s\S]*)\1$/, '$2').replace(/\s+/g, ' ');
   };
-  return { id:'', version:0, name:field('name') || file.path.split('/').at(-2) || 'Навык',
-    description:field('description'), content, sourceUrl:file.url };
+  const name = field('name') || file.path.split('/').at(-2) || 'Навык';
+  return { id:'', version:0, name: name.slice(0, SKILL_LIMITS.name),
+    description:field('description').slice(0, SKILL_LIMITS.description), content, sourceUrl:file.url };
 }

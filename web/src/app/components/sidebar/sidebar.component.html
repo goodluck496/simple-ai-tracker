@@ -24,12 +24,12 @@
       </button>
       <p-dialog
         [(visible)]="showWorkspaceDialog"
-        header="Рабочее пространство"
+        header="Рабочие пространства"
         [modal]="true"
-        [style]="{ width: '400px' }"
+        [style]="{ width: 'min(58rem, 96vw)', maxHeight: '90dvh' }"
         appendTo="body"
       >
-        <sat-workspace-selector />
+        <sat-workspace-selector (selected)="showWorkspaceDialog.set(false)" />
       </p-dialog>
     </div>
 
@@ -37,15 +37,22 @@
     <div class="sidebar-section">
       <span class="sidebar-section-title">Страницы и модули</span>
       <div class="sidebar-nav-list">
+        <button pButton severity="secondary" [text]="true" class="sidebar-nav-btn" aria-label="Доска задач"
+          [attr.aria-current]="activePage() === 'board' ? 'page' : null" (click)="openBoard.emit()">
+          <i class="pi pi-th-large"></i>
+          <span class="sidebar-text">Доска задач</span>
+        </button>
         <button
           pButton
           severity="secondary"
           [text]="true"
           class="sidebar-nav-btn"
+          aria-label="Запуски агентов"
+          [attr.aria-current]="activePage() === 'runs' ? 'page' : null"
           (click)="onOpenQueue()"
         >
           <i class="pi pi-list"></i>
-          <span class="sidebar-text">Очередь задач</span>
+          <span class="sidebar-text">Запуски агентов</span>
         </button>
 
         <button
@@ -53,21 +60,12 @@
           severity="secondary"
           [text]="true"
           class="sidebar-nav-btn"
+          aria-label="Команда агентов"
+          [attr.aria-current]="activePage() === 'settings' ? 'page' : null"
           (click)="onOpenAutomation()"
         >
           <i class="pi pi-bolt"></i>
           <span class="sidebar-text">Команда агентов</span>
-        </button>
-
-        <button
-          pButton
-          severity="secondary"
-          [text]="true"
-          class="sidebar-nav-btn"
-          (click)="onOpenBatchAutomation()"
-        >
-          <i class="pi pi-send"></i>
-          <span class="sidebar-text">Группа задач</span>
         </button>
       </div>
     </div>

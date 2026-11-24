@@ -28,12 +28,48 @@ try {
   const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } }); page.setDefaultTimeout(18000);
   const errors: string[] = []; page.on('pageerror', error => errors.push(error.message));
   await page.goto(`http://127.0.0.1:${(server.address() as AddressInfo).port}`);
-  await page.locator('sat-sidebar button').filter({ hasText: 'Очередь задач' }).click();
-  const queue = page.getByRole('dialog', { name: 'Очередь агентов' });
+  await page.locator('sat-sidebar button').filter({ hasText: 'Запуски агентов' }).click();
+  const queue = page.locator('sat-automation-queue');
+  await page.waitForURL('**/automation/runs/history');
+  await queue.getByRole('button', { name: 'Рабочая очередь', exact: true }).click();
   const failedCard = queue.getByRole('button', { name: `Запуск ${task.id} ${failed.id}`, exact: true });
   await queue.getByRole('button', { name: `Запуск ${next.id} ${pending.id}`, exact: true }).waitFor();
   assert.equal(await failedCard.count(), 0, 'Terminal attempts must not remain in the working queue');
-  await queue.getByRole('button', { name: 'История', exact: true }).click(); await failedCard.click();
+  await queue.getByRole('button', { name: 'История', exact: true }).click();
+  await page.waitForURL('**/automation/runs/history');
+  const collapse = queue.getByRole('button', { name: 'Свернуть список запусков' });
+  const expand = queue.getByRole('button', { name: 'Развернуть список запусков' });
+  const togglePosition = await collapse.boundingBox();
+  await collapse.click();
+  await expand.waitFor();
+  assert.equal((await expand.boundingBox())?.x, togglePosition?.x);
+  assert.equal((await expand.boundingBox())?.y, togglePosition?.y);
+  const sidebarBounds = await queue.locator('.queue-sidebar').boundingBox();
+  const runBounds = await queue.locator('.queue-main').boundingBox();
+  assert.ok(runBounds && sidebarBounds && runBounds.x >= sidebarBounds.x + sidebarBounds.width - 1);
+  await expand.click();
+  await failedCard.waitFor();
+  assert.equal(await queue.locator('.run-card').first().getAttribute('data-status'), 'failed');
+  assert.ok((await failedCard.getAttribute('class'))?.includes('selected'), 'The failed run is selected without a status filter');
+  const actions = queue.locator('.run-header-actions');
+  await queue.getByRole('button', { name: 'Причина сбоя' }).waitFor();
+  const originalActions = await actions.boundingBox();
+  let pollError = true;
+  await page.route('**/api/automation/history', route => pollError
+    ? route.fulfill({ status: 503, json: { error: { message: 'History poll fixture' } } })
+    : route.continue());
+  const feedback = queue.getByText(/Нет связи с очередью: History poll fixture/);
+  await feedback.waitFor();
+  assert.deepEqual(await actions.boundingBox(), originalActions, 'A poll failure keeps launch controls in place');
+  pollError = false;
+  await page.unroute('**/api/automation/history');
+  await failedCard.click();
+  await page.waitForURL(url => url.searchParams.get('run') === failed.id);
+  await page.reload();
+  await queue.getByRole('heading', { name: task.title }).waitFor();
+  await queue.getByRole('button', { name: 'Причина сбоя' }).click();
+  await page.locator('.failure-content').getByText(/fixture budget failure/).waitFor();
+  await page.keyboard.press('Escape');
   assert.equal(await queue.getByRole('button', { name: 'Продолжить с места остановки', exact: true }).count(), 0, 'Accepted tasks cannot resume');
   await queue.getByRole('button', { name: 'Подробности запуска', exact: true }).click();
   await queue.getByRole('button', { name: 'Очистить файлы', exact: true }).click();
@@ -63,6 +99,7 @@ try {
   const wsId = 'simple-ai-tracker';
   app.workspaceManager.create(wsId, 'Simple AI Tracker');
   let failEventId = 0;
+  let failRunId = '';
   let improvementTaskId = '';
   let passRunId = '';
   const sha = 'a'.repeat(40);
@@ -87,6 +124,7 @@ try {
 
     // Run 1: fails on mandatory check + >200 filler events so failure event is outside last 200
     const r1 = active.automationService.enqueue(metricTask.id);
+    failRunId = r1.id;
     const c1 = active.automationService.claim('e2e-w1')!;
     active.automationService.beginStage(r1.id, c1.leaseToken!);
     active.automationService.completeStage(r1.id, c1.leaseToken!, { verdict: 'pass', summary: 'dev done' }, `sat/${r1.id}`, sha);
@@ -132,7 +170,7 @@ try {
   await page.evaluate(ws => sessionStorage.setItem('sat.workspace', ws), wsId);
   await page.setViewportSize({ width: 1440, height: 1000 });
   await page.goto(baseUrl);
-  await page.locator('sat-sidebar button').filter({ hasText: 'Очередь задач' }).click();
+  await page.locator('sat-sidebar button').filter({ hasText: 'Запуски агентов' }).click();
   await queue.getByRole('button', { name: 'Метрики', exact: true }).click();
   const metrics = queue.locator('sat-automation-metrics');
   await metrics.getByText('1 / 2', { exact: true }).waitFor();
@@ -161,7 +199,13 @@ try {
   // Open linked SAT-55 subtask and verify card opens
   await page.setViewportSize({ width: 1440, height: 1000 });
   await metrics.getByRole('button', { name: `Открыть подзадачу ${improvementTaskId}`, exact: true }).click();
-  await page.getByText(improvementTaskId).first().waitFor();
+  await page.getByRole('dialog', { name: 'Карточка задачи' }).getByText(improvementTaskId, { exact: true }).waitFor();
+
+  const external = await browser.newPage();
+  await external.goto(`${baseUrl}/?workspace=${wsId}&automationRun=${failRunId}&eventId=${failEventId}`);
+  await external.waitForURL(url => url.pathname === '/automation/runs/history' && url.searchParams.get('run') === failRunId);
+  await external.locator('.selected-evidence').getByRole('heading', { name: new RegExp(String(failEventId)) }).waitFor();
+  await external.close();
 
   // Verify passing run detail endpoint returns verifiable check evidence
   const passDetailRes = await page.request.get(`${baseUrl}/api/automation/runs/${passRunId}?workspace=${wsId}`);
@@ -169,6 +213,25 @@ try {
   const passDetail = await passDetailRes.json() as { checks?: { sha: string; attempt: number }[] };
   assert.equal(passDetail.checks?.length, 1);
   assert.equal(passDetail.checks?.[0].sha, sha);
+
+  await page.goto(`${baseUrl}/automation/runs/history?workspace=${wsId}&run=${passRunId}`);
+  await queue.getByRole('button', { name: 'Действия с запуском' }).click();
+  const diffRequest = page.waitForResponse(response => response.url().endsWith(`/runs/${passRunId}/diff`));
+  await page.getByRole('button', { name: 'Diff последнего коммита' }).click();
+  await page.waitForURL(url => url.searchParams.get('panel') === 'commit-diff');
+  assert.equal((await diffRequest).status(), 201);
+  app.workspaceManager.within(wsId, () => {
+    const automation = app.workspaceManager.active.automationService;
+    const request = automation.projects.poll('diff-fixture')!;
+    assert.equal(request.action, 'diff');
+    automation.completeHost(request.id, request.token!, {
+      path: '/fixture', diff: { text: 'diff --git a/item.txt b/item.txt\n@@ -1 +1 @@\n-old\n+new', truncated: false },
+    });
+  });
+  await queue.getByRole('region', { name: 'Изменения по строкам' }).getByText('new', { exact: true }).waitFor();
+  await page.goBack();
+  await queue.getByRole('heading', { name: 'Изменения последнего коммита' }).waitFor({ state: 'hidden' });
+  assert.equal(new URL(page.url()).searchParams.get('run'), passRunId);
 
   assert.deepEqual(errors, []);
   console.log('PASS: active queue, task history, real metrics/detail E2E, out-of-page inspector, SAT-55 subtask navigation, responsive screenshots. No models or real task store used.');

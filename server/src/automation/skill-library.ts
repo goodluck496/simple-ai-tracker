@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import type { LibrarySkill, SkillBinding, SkillReference, SkillSummary } from '../../../shared/automation/skills.js';
+import { SKILL_LIMITS, type LibrarySkill, type SkillBinding, type SkillReference, type SkillSummary } from '../../../shared/automation/skills.js';
 import type { SqlDatabase } from '../db/sql-database.js';
 import type { Repositories } from '../domain/ports.js';
 import { TrackerError } from '../core/errors.js';
@@ -29,14 +29,18 @@ export class SkillLibrary {
   public save(input: unknown, id?: string): LibrarySkill {
     const draft = input as Partial<LibrarySkill> | null;
     const field = (value: unknown, max: number): value is string => typeof value === 'string' && !!value.trim() && value.length <= max;
-    if (!draft || !field(draft.name, 100) || !field(draft.description, 320) || !field(draft.content, 16000)) {
-      throw new TrackerError('VALIDATION_FAILED', 'Заполните название (до 100 символов), условие применения (до 320) и инструкцию (до 16000).');
+    if (!field(draft?.name, SKILL_LIMITS.name)) throw new TrackerError('VALIDATION_FAILED', `Укажите название навыка (до ${SKILL_LIMITS.name} символов).`);
+    if (!field(draft?.description, SKILL_LIMITS.description)) {
+      throw new TrackerError('VALIDATION_FAILED', `Укажите, когда применять навык (до ${SKILL_LIMITS.description} символов).`);
+    }
+    if (!field(draft?.content, SKILL_LIMITS.content)) {
+      throw new TrackerError('VALIDATION_FAILED', `Добавьте инструкцию навыка (до ${SKILL_LIMITS.content} символов).`);
     }
     if (draft.sourceUrl !== undefined && (!field(draft.sourceUrl, 2048) || !URL.canParse(draft.sourceUrl)
       || new URL(draft.sourceUrl).protocol !== 'https:' || new URL(draft.sourceUrl).username || new URL(draft.sourceUrl).password)) {
       throw new TrackerError('VALIDATION_FAILED', 'Укажите HTTPS-ссылку на источник.');
     }
-    const fields = { name: draft.name.trim(), description: draft.description.trim(), content: draft.content.trim(),
+    const fields = { name: draft.name.trim(), description: draft.description.trim(), content: draft.content,
       ...(draft.sourceUrl ? {sourceUrl: draft.sourceUrl} : {}) };
     const { db, repos } = this.store();
     return db.transaction(() => {
