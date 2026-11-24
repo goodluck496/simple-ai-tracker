@@ -9,6 +9,7 @@ import { AgentRole, RunStatus, AgentVerdict, AUTOMATION_START_TASK_STATUSES, ACT
   type AgentOutcome, type AgentRun, type AutomationSettings, type IntegrationInfo } from '../../../shared/automation/contracts.js';
 import { TaskStatus } from '../../../shared/tasks/status.js';
 import type { Repositories } from '../domain/ports.js';
+import type { TaskCard } from '../domain/entities.js';
 import type { Clock, TaskService } from '../services/task-service.js';
 import { TrackerError } from '../core/errors.js';
 import { AutomationSettingsValidator } from './settings.js';
@@ -503,7 +504,15 @@ export class AutomationService {
       const profile = run.settings.agents.find((agent) => agent.id === run.settings.pipeline[run.stage])!;
       const child = Decomposition.child(run);
       const taskId = child?.taskId ?? run.taskId;
+      const roles = PipelinePolicy.roles(run.settings);
+      const submitsProposal = profile.role === AgentRole.Analyst && roles[run.stage + 1] === AgentRole.PlanReviewer;
+      const reviewingPlan = profile.role === AgentRole.PlanReviewer;
+      const proposal = reviewingPlan ? run.planProposal : undefined;
+      if (reviewingPlan && !proposal) throw new TrackerError('CONFLICT', 'No analyst proposal is available for plan review.');
       if (outcome.questions?.some(q => typeof q === 'string' && q.trim())) outcome = { ...outcome, verdict: AgentVerdict.Questions };
+      if (proposal && outcome.verdict === AgentVerdict.Pass && proposal.taskKey !== this.planReviewKey(this.tasks.getTaskCard(taskId))) {
+        outcome = { ...outcome, verdict: AgentVerdict.ChangesRequested, summary: 'Требования или план в карточке изменились после анализа. Подготовь новую версию по актуальной карточке.' };
+      }
       if (run.routing && profile.role !== AgentRole.Router && run.routing.sourceDescription !== (this.tasks.getTaskCard(taskId).description ?? '')) throw new TrackerError('VALIDATION_FAILED', 'Requirements changed after routing; resume the run to refresh routing in the saved worktree.');
       const now = this.clock.now();
       let updated: AgentRun = { ...run, branch, commitSha, updatedAt: now, summary: outcome.summary,
@@ -587,14 +596,31 @@ export class AutomationService {
           summary: budgetReason ?? `Execution blocked; no automatic retry: ${outcome.summary}` };
       } else if (outcome.verdict === AgentVerdict.Questions) {
         if (!Array.isArray(outcome.questions) || !outcome.questions.length || !outcome.questions.every((question) => typeof question === 'string' && question.trim())) throw new TrackerError('VALIDATION_FAILED', 'Questions verdict requires questions.');
-        if (profile.role === AgentRole.Analyst && outcome.plan?.trim()) this.tasks.attachPlan({ id: taskId, planContent: outcome.plan, summary: outcome.summary, statusMode: 'none', actor: 'agent' });
+        if (profile.role === AgentRole.Analyst && !submitsProposal && outcome.plan?.trim()) this.tasks.attachPlan({ id: taskId, planContent: outcome.plan, summary: outcome.summary, statusMode: 'none', actor: 'agent' });
         this.tasks.askQuestions({ id: taskId, questions: outcome.questions, actor: 'agent' });
         updated = { ...updated, status: RunStatus.Waiting, leaseToken: null };
+        if (proposal) {
+          updated.stage = run.stage - 1;
+          updated.planProposal = { ...proposal, feedback: outcome.summary };
+        }
       } else if (outcome.verdict === AgentVerdict.ChangesRequested) {
         if (profile.role === AgentRole.Analyst) throw new TrackerError('VALIDATION_FAILED', 'Analyst must return a plan or questions.');
         const route = PipelinePolicy.route(run.settings, run.stage)?.retry;
         const developer = PipelinePolicy.revisionStage(run.settings, run.stage, retryWriterCheck, run.feature);
-        if (route) {
+        if (proposal) {
+          const used = run.routeRetries?.[run.stage] ?? 0;
+          updated.stage = run.stage - 1;
+          updated.routeRetries = { ...run.routeRetries, [run.stage]: used + 1 };
+          updated.planProposal = { ...proposal, feedback: outcome.summary };
+          if (!run.trustedExecution && used >= run.settings.maxRevisions) {
+            updated.status = RunStatus.Failed;
+            updated.leaseToken = null;
+            updated.summary = `Лимит возвратов плана исчерпан. ${outcome.summary}`;
+            updated.lastRoute = { from: run.stage, to: updated.stage, kind: 'exhausted' };
+          } else {
+            updated.lastRoute = { from: run.stage, to: updated.stage, kind: 'retry' };
+          }
+        } else if (route) {
           const used = run.routeRetries?.[run.stage] ?? 0;
           const target = run.settings.pipeline.indexOf(route.to);
           if (used < route.limit) {
@@ -617,13 +643,21 @@ export class AutomationService {
             : { ...updated, stage: developer, revision: run.revision + 1 };
         }
       } else {
-        if (profile.role === AgentRole.Analyst) {
-          if (!outcome.plan?.trim()) throw new TrackerError('VALIDATION_FAILED', 'Analyst must return a plan.');
-          this.tasks.attachPlan({ id: run.taskId, planContent: outcome.plan, summary: outcome.summary, actor: 'agent' });
-          if (outcome.decomposition?.length && (run.decompositionAllowed ?? PipelinePolicy.canDecompose(run.settings))) {
+        if (profile.role === AgentRole.Analyst || proposal) {
+          const analysis = proposal ?? outcome;
+          if (!analysis.plan?.trim()) throw new TrackerError('VALIDATION_FAILED', 'Analyst must return a plan.');
+          const parts = (run.decompositionAllowed ?? PipelinePolicy.canDecompose(run.settings)) ? analysis.decomposition : undefined;
+          if (submitsProposal) {
+            updated.planProposal = { plan: analysis.plan.trim(), decomposition: parts?.length ? Decomposition.validate(parts) : undefined,
+              taskKey: this.planReviewKey(this.tasks.getTaskCard(taskId)) };
+          } else {
+            this.tasks.attachPlan({ id: run.taskId, planContent: analysis.plan, summary: outcome.summary, actor: 'agent' });
+            updated.planProposal = undefined;
+          }
+          if (!submitsProposal && parts?.length) {
             if (run.feature) throw new TrackerError('CONFLICT', 'Feature was already decomposed.');
             let planned;
-            try { planned = FeaturePlanning.apply({ ...run, settings: { ...run.settings, agents: run.settings.agents.filter(agent => run.settings.pipeline.includes(agent.id)) } }, outcome, this.tasks); }
+            try { planned = FeaturePlanning.apply({ ...run, settings: { ...run.settings, agents: run.settings.agents.filter(agent => run.settings.pipeline.includes(agent.id)) } }, { ...outcome, decomposition: parts }, this.tasks); }
             catch (error) { throw new TrackerError('VALIDATION_FAILED', String(error)); }
             updated = { ...updated, feature: planned.feature, settings: { ...run.settings, pipeline: planned.pipeline, maxAgentCalls: planned.feature.callBudget!.limit } };
             this.runs.event(id, 'budget', `Автоматический расчёт: план ${planned.feature.callBudget!.planned}, исправления ${planned.feature.callBudget!.revisions}, resolver ${planned.feature.callBudget!.resolver}, предел ${planned.feature.callBudget!.limit}. Лимиты токенов и времени сохранены.`, now);
@@ -643,7 +677,7 @@ export class AutomationService {
         if (run.routing && PipelinePolicy.writes(run.settings) && next >= run.settings.pipeline.length
           && (!updated.acceptance || updated.acceptance.sha !== commitSha || updated.acceptance.results.some(r => r.status === 'failed'))) throw new TrackerError('VALIDATION_FAILED', 'Current commit has no passing acceptance report.');
         updated = { ...updated, stage: next };
-        if (run.settings.pipelineRoutes?.length) updated.lastRoute = { from: run.stage, to: next, kind: 'pass' };
+        if (run.settings.pipelineRoutes?.length || proposal) updated.lastRoute = { from: run.stage, to: next, kind: 'pass' };
         if (child && updated.stage === updated.feature?.finalDeveloperStage) updated.stage++;
         if (updated.stage >= updated.settings.pipeline.length) {
           const writes = PipelinePolicy.writes(run.settings);
@@ -663,7 +697,7 @@ export class AutomationService {
         const { from, to, kind } = updated.lastRoute;
         const destination = to >= run.settings.pipeline.length ? 'ручная приёмка' : `этап ${to + 1}`;
         this.runs.event(id, 'route', kind === 'exhausted' ? updated.summary
-          : `Этап ${from + 1} → ${destination}. ${kind === 'retry' ? `Возврат ${updated.routeRetries?.[from]}/${PipelinePolicy.route(run.settings, from)?.retry?.limit}. ${outcome.summary}` : 'Проверка пройдена.'}`, now);
+          : `Этап ${from + 1} → ${destination}. ${kind === 'retry' ? `Возврат ${updated.routeRetries?.[from]}/${PipelinePolicy.route(run.settings, from)?.retry?.limit ?? run.settings.maxRevisions}. ${outcome.summary}` : 'Проверка пройдена.'}`, now);
       }
       const eventId = this.runs.event(id, updated.status === RunStatus.Failed ? 'failed' : outcome.verdict, updated.summary, now);
       if (outcome.verdict === AgentVerdict.ChangesRequested || updated.status === RunStatus.Failed) {
@@ -676,6 +710,9 @@ export class AutomationService {
       if (screenshots !== undefined) this.attachStageScreenshots(taskId, screenshots, now);
       return updated;
     });
+  }
+  private planReviewKey(task: TaskCard): string {
+    return createHash('sha256').update(JSON.stringify({ title: task.title, description: task.description, plan: task.plan?.attachmentId, questions: task.questions })).digest('hex');
   }
   private attachStageScreenshots(taskId: string, screenshots: unknown, now: string): Map<string, string> {
     if (!this.images || !Array.isArray(screenshots) || screenshots.length > SCREENSHOT_LIMIT
@@ -874,6 +911,7 @@ export class AutomationService {
       updated.workPlan = undefined;
       updated.doctorRepair = undefined;
       updated.routeRetries = undefined;
+      updated.planProposal = undefined;
       updated.lastRoute = undefined;
       updated.acceptedSha = undefined;
       updated.summary = 'Требования изменились: повторная маршрутизация и анализ в сохранённой рабочей ветке.';

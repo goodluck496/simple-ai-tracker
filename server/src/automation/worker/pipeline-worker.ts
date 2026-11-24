@@ -8,7 +8,7 @@ import { PostOperationRunner } from './post-operation-runner.js';
 import { ProcessExecutor, ProcessExecutionError } from '../runners/process-executor.js';
 import { AgentRunnerRegistry } from '../runners/registry.js';
 import { AutomationTool } from '../../../../shared/automation/protocol.js';
-import { DEFAULT_ROLE_INSTRUCTIONS } from '../../../../shared/automation/team-profiles.js';
+import { customRoleInstructions, DEFAULT_ROLE_INSTRUCTIONS } from '../../../../shared/automation/team-profiles.js';
 import { RunPhase } from '../../../../shared/automation/queue.js';
 import { TokenMeter, type TokenUsage } from '../../../../shared/automation/token-usage.js';
 import { StageCheckpoint, type StageResult } from './stage-checkpoint.js';
@@ -252,13 +252,15 @@ export class PipelineWorker {
           if (run.feature.requirementsKey !== StageCheckpoint.key({ description: parent.description, plan: (parent.plan as { content?: string } | undefined)?.content }))
             throw new Error('Parent feature requirements changed after decomposition; review the split and child plans before starting a new run.');
         }
-        const context = { id: pack.id, title: pack.title, description: pack.description, plan: pack.plan, questions: pack.questions, relations: pack.relations, comments: pack.comments };
+        const planProposal = profile.role === AgentRole.Analyst || profile.role === AgentRole.PlanReviewer ? run.planProposal : undefined;
+        const planReview = planProposal ? { planProposal, returns: run.routeRetries?.[profile.role === AgentRole.PlanReviewer ? run.stage : run.stage + 1] ?? 0 } : undefined;
+        const context = { id: pack.id, title: pack.title, description: pack.description, plan: profile.role === AgentRole.PlanReviewer ? null : pack.plan, questions: pack.questions, relations: pack.relations, comments: pack.comments };
         // Related cards contain timestamps/counts changed by failure reports. Those
         // are operational noise, not new requirements that justify another model call.
         const relations = pack.relations as { parent?: { id: string }; subtasks?: { id: string }[]; links?: { relation: string; task: { id: string } }[] } | undefined;
         const relationKey = { parent: relations?.parent?.id, subtasks: relations?.subtasks?.map(t => t.id).sort(),
           links: relations?.links?.filter(l => l.relation === 'blocks' || l.relation === 'blocked_by').map(l => `${l.relation}:${l.task.id}`).sort() };
-        let requirementsKey = StageCheckpoint.key({ description: pack.description, plan: pack.plan, questions: pack.questions, relations: relationKey });
+        let requirementsKey = StageCheckpoint.key({ description: pack.description, plan: pack.plan, questions: pack.questions, relations: relationKey, planReview });
         // Failure comments and run.summary change on infrastructure failure, so they are not cache keys.
         const checkpoint = new StageCheckpoint(cwd, run.stage, run.revision, (args) => git(args, cwd));
         const { maxAgentCalls, maxInputTokens, maxRunMinutes, maxStageToolCalls, timeoutMinutes, ...semanticSettings } = run.settings;
@@ -266,6 +268,7 @@ export class PipelineWorker {
         const selfPlanned = run.workPlan && run.workPlan.taskId === pack.id && run.workPlan.stage === run.stage && run.workPlan.revision === run.revision
           && run.workPlan.version === plan?.version && run.workPlan.contentHash === StageCheckpoint.key(plan?.content);
         const keyInput = { ...(run.routing ? { effectiveProfile: {id: profile.id, model: profile.model}, routing: run.routing } : {}), id: run.id, stage: run.stage, revision: run.revision, settings: semanticSettings,
+          ...(planReview ? { planReview } : {}),
           task: { id: pack.id, title: pack.title, description: pack.description, plan: selfPlanned ? null : pack.plan, questions: pack.questions, relations: relationKey } };
         const key = StageCheckpoint.key(keyInput);
         const legacyKey = StageCheckpoint.key({ ...keyInput, task: { ...keyInput.task, relations: pack.relations }, settings: { ...run.settings, ...run.checkpointBudgets } });
@@ -290,6 +293,8 @@ export class PipelineWorker {
         const workProgress = [AgentRole.Developer, AgentRole.Designer].includes(profile.role as 'developer' | 'designer') ? await handoff.progress(requirementsKey, stepIds) : undefined;
         if (run.routing && run.routing.sourceDescription !== String(pack.description ?? '')) throw new Error('Requirements changed after routing; resume the run to refresh routing in the saved worktree.');
         const rolePacket = JSON.parse(AgentHandoff.forRole(profile.role, context, changedFiles, previous, workProgress));
+        if (planProposal) rolePacket.planProposal = { plan: planProposal.plan, decomposition: planProposal.decomposition,
+          feedback: planProposal.feedback && AgentHandoff.feedback(planProposal.feedback) };
         if (run.stageMemory?.note && run.stageMemory.taskId === pack.id) {
           delete rolePacket.task.progressNotes;
           rolePacket.partialCheckpoint = { taskId: run.stageMemory.taskId,
@@ -344,6 +349,7 @@ export class PipelineWorker {
           + (run.trustedExecution ? '\nTrusted execution: worker token/time/tool/call/revision quotas are disabled. Continue to completion unless blocked or manually stopped.\n'
             : `\nObserved tool budget for this stage: ${run.settings.maxStageToolCalls ?? 60}. Use tools for the current implementation/check, then finish with the requested outcome.\n`)
           + `\nSelected execution stages: ${PipelinePolicy.roles(run.settings).join(' → ')}. No missing roles may be added. `
+          + (profile.role === AgentRole.Analyst && planProposal?.feedback ? '\nRevise your previous planProposal using its review feedback and the latest task requirements. Return a complete replacement plan for another review.\n' : '')
           + (profile.role === AgentRole.Analyst && !(run.decompositionAllowed ?? PipelinePolicy.canDecompose(run.settings)) ? 'Return decomposition: []; describe proposed subtasks in plan text if useful, without dispatching other roles.\n' : '');
         let outcome: AgentOutcome;
         const checksEvidence: StageEvidence['checks'] = saved?.checks ? [...saved.checks]
@@ -613,19 +619,18 @@ export class PipelineWorker {
     return result;
   }
   private prompt(role: AgentRole, instructions: string, context: unknown, feedback: string, diff: string, artifacts: string[], checks: unknown, checkout?: AgentRun['checkout'], packet?: string): string {
-    const roleInstructions: Record<AgentRole, string> = {
+    const roleProtocol: Partial<Record<AgentRole, string>> = {
       [AgentRole.Router]: TaskRouting.instructions,
-      [AgentRole.Analyst]: 'Investigate the task, affected code, documentation and project rules. Gather all necessary details. When user choices, contracts or boundaries need clarification, ask questions via tracker_ask_questions or return questions. IN THE END produce an executable numbered plan in plan: exact files, symbols/functions affected, what to add, modify and delete, acceptance criteria and checks. Reflect all user answers in the plan. Return pass with plan when requirements are clear; return questions when clarification is required before coding. A small atomic task uses decomposition: []. Never return changes_requested.',
-      [AgentRole.Developer]: 'Implement the task following the approved plan created by Analyst. If no plan exists, execute the analyst investigation from an engineer\'s perspective and save implementationPlan before editing code. Strictly follow engineering principles and design patterns: SOLID, DRY, KISS, YAGNI. You may perform refactoring in the task scope, replacing duplicated code with shared functions. Write tests for the task, choosing your strategy: TDD (test first, then code) or implementation first followed by tests. Await passing tests and builds, fixing all errors. Prepare commitMessage in format [#TASK_ID] - what was done and why.',
-      [AgentRole.Designer]: 'Implement the requested visual design in project files, following the accepted plan and supplied references.',
-      [AgentRole.Tester]: 'Upon receiving the task, first build the project (build/compile) and verify existing functionality is intact. Run existing Playwright/e2e tests and independently test actual browser behavior. If required tests are absent, request them from developer. Do not write project files. For preparedTask criteria return plan as JSON string {results:[{id:"AC-1",status:"passed|failed|manual",evidence:"test/scenario, expected and actual results"}]}, covering every criterion. For browser criteria capture actual screenshots under .sat/screenshots and return their paths in screenshots. Use manual only for criteria explicitly marked manual; do not claim a browser interaction from source inspection. Verify that implementation matches task description and approved plan. Return changes_requested with reproducible steps for defects; pass only on verified evidence. Do not edit logic sources.',
-      [AgentRole.Reviewer]: 'Inspect the approved plan, verify presence of unit and e2e tests, and examine git diff. Verify adherence to SOLID, DRY, KISS, YAGNI, project architecture and absence of regressions. Request missing static checks from developer. Do not write project files. Inspect prior acceptance evidence as well as code and tests. If all passes, approve merging the branch (pass); otherwise return changes_requested.',
-      [AgentRole.VisualValidator]: 'Use accessible screenshots and compare them to the visual requirements. If screenshots are absent or inaccessible, inspect the current components, templates, styles, and responsive rules. Use code evidence for findings and state what still needs a rendered browser check. Absence of images alone is never a reason to block or ask questions, even if older profile instructions say otherwise. Do not edit application files.',
-      [AgentRole.Doctor]: 'Diagnose pipeline failures, analyze error logs, repository and worktree status, and propose precise fixes.',
+      [AgentRole.Analyst]: 'Use verdict pass with a Markdown plan, questions with a nonempty questions array, or blocked with the cause. If you include a draft plan with questions, mark the decisions that are still pending. Never return changes_requested. Keep decomposition empty for atomic tasks. If decomposition is enabled and useful, return 2–12 independently reviewable entries with unique key, title, description, numbered Markdown plan and dependsOn listing prerequisite keys. Keep the parent plan and include final integration checks.',
+      [AgentRole.PlanReviewer]: 'Review the unapproved planProposal in the packet, including its decomposition. Return your verdict and concise findings in summary (up to 1200 characters). Leave plan, decomposition and commitMessage empty. The worker sends changes_requested back to the analyst with your feedback. Only pass publishes the proposed plan for implementation.',
+      [AgentRole.Tester]: 'For preparedTask criteria return plan as a JSON string {"results":[{"id":"AC-1","status":"passed|failed|manual","evidence":"test or scenario, expected and actual results"}]}, covering every criterion. Use manual only for criteria explicitly marked manual. Capture actual screenshots for browser criteria and report their paths in screenshots.',
     };
-    return `You are the ${role}. ${instructions.trim() || DEFAULT_ROLE_INSTRUCTIONS[role]}\nUse the project policy injected below; do not reread AGENTS.md when its current content is already supplied. Read only applicable additional skills/instructions as needed.\n`
-      + `${roleInstructions[role]}\n`
-      + `Tracker workspace: ${this.channel.workspace ?? process.env.SAT_WORKSPACE ?? 'default'}. The worker supplies the current task context via MCP. If you consult tracker tools, always pass this explicit workspace. Do not change tracker data yourself.\n`
+    const custom = customRoleInstructions(role, instructions);
+    return `You are the ${role}.\n${DEFAULT_ROLE_INSTRUCTIONS[role]}\n`
+      + (custom ? `Project profile instructions (within the role and worker constraints):\n${custom}\n` : '')
+      + `Use the project policy injected below; do not reread AGENTS.md when its current content is already supplied. Read only applicable additional skills/instructions as needed.\n`
+      + (roleProtocol[role] ? `${roleProtocol[role]}\n` : '')
+      + `Tracker workspace: ${this.channel.workspace ?? process.env.SAT_WORKSPACE ?? 'default'}. The worker supplies the current task context via MCP. If you consult tracker tools, always pass this explicit workspace. Put questions for the user in the final outcome; the worker publishes them to the card. Do not change tracker data yourself.\n`
       + `${AgentHandoff.instructions}\nTask context (approved work order and bounded previous-stage evidence):\n${packet ?? AgentHandoff.task(context)}\nPrevious feedback:\n${feedback.startsWith('Configured check failed:') ? feedback.slice(0, 10000) : AgentHandoff.feedback(feedback)}\nChanges (full preview only for review; use changedFiles for focused reads):\n${AgentHandoff.diff(diff)}\n`
       + `The worker owns the configured full checks at the configured check stage and on the squash candidate. Run focused checks for your step or independent scenario only; avoid repeating the full build/test matrix inside every role. Never treat current=false previous-stage evidence as current verification.\n`
       + `Developer/designer: use actual work-order step IDs in the stage-note completedSteps. The stage-note is the only required intermediate journal; do not duplicate it into work-progress.json or other progress files. Resume treats saved notes as unverified hints: confirm the relevant changed files without repeating general analysis. Never change the approved work order yourself.\n`

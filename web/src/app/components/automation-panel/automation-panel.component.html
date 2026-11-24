@@ -325,10 +325,11 @@
 
           <div class="panel-card">
             <div class="panel-card-header">
-              <div class="card-title-row">
+              <div class="card-title-row team-preset-row">
                 <h4>Агенты команды</h4>
                 @if (!settings.agents.length) {
                   <p-button label="Добавить стандартную команду" severity="secondary" size="small" (onClick)="addStandardTeam()" />
+                  <p-button label="Команда с ревью плана" severity="secondary" size="small" (onClick)="addTeamWithPlanReview()" />
                 }
               </div>
               <p class="card-hint">Каждый агент имеет роль, подключение, исполнитель и модель. Настройте инструкции и правила проекта.</p>

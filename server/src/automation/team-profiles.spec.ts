@@ -2,12 +2,12 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { AgentRole, DEFAULT_AUTOMATION_SETTINGS } from '../../../shared/automation/contracts.js';
 import { STANDARD_TEAM_ROLES, FULL_TEAM_ROLES } from '../../../shared/automation/presets.js';
-import { AgentTeamProfiles, DEFAULT_ROLE_INSTRUCTIONS } from '../../../shared/automation/team-profiles.js';
+import { AgentTeamProfiles, customRoleInstructions, DEFAULT_ROLE_INSTRUCTIONS } from '../../../shared/automation/team-profiles.js';
 
 test('standard preset uses one developer and the expanded team keeps optional roles available', () => {
   const profiles = new AgentTeamProfiles();
   assert.deepEqual(STANDARD_TEAM_ROLES, [AgentRole.Developer]);
-  assert.deepEqual(FULL_TEAM_ROLES, [AgentRole.Analyst, AgentRole.Developer, AgentRole.Reviewer]);
+  assert.deepEqual(FULL_TEAM_ROLES, [AgentRole.Analyst, AgentRole.PlanReviewer, AgentRole.Developer, AgentRole.Reviewer]);
   const team = FULL_TEAM_ROLES.map((role) => profiles.create(role, 'connection'));
   assert.equal(new Set(team.map((agent) => agent.id)).size, FULL_TEAM_ROLES.length);
   assert.deepEqual(team.map((agent) => agent.role), FULL_TEAM_ROLES);
@@ -26,6 +26,16 @@ test('role changes update basic instructions but retain custom text', () => {
   agent.instructions = ' ';
   profiles.changeRole(agent, AgentRole.Analyst);
   assert.equal(agent.instructions, DEFAULT_ROLE_INSTRUCTIONS[AgentRole.Analyst]);
+});
+
+test('built-in instructions are not repeated in a saved project profile', () => {
+  const legacy = 'Оцени сложность, риск и неопределённость задачи. Подготовь критерии приёмки и предложи разрешённые профили для следующих этапов. Не меняй код и лимиты.';
+  const custom = 'Используй обязательные критерии из карточки.';
+  for (const defaults of [legacy, DEFAULT_ROLE_INSTRUCTIONS[AgentRole.Router]]) {
+    assert.equal(customRoleInstructions(AgentRole.Router, defaults), '');
+    assert.equal(customRoleInstructions(AgentRole.Router, `${defaults}\n\n${custom}`), custom);
+  }
+  assert.equal(customRoleInstructions(AgentRole.Router, custom), custom);
 });
 
 test('legacy duplicate IDs repair in a draft while models, instructions, order and intentional repeats survive', () => {

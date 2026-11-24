@@ -40,7 +40,7 @@
       <strong>{{ nodes[last.from].label }}</strong>
       @switch (last.kind) {
         @case ('pass') { → {{ last.to < length ? nodes[last.to].label : 'Ручная приёмка' }} · пройдено }
-        @case ('retry') { ↶ {{ nodes[last.to].label }} · возврат {{ run?.routeRetries?.[last.from] }}/{{ nodes[last.from].route?.retry?.limit }} }
+        @case ('retry') { ↶ {{ nodes[last.to].label }} · возврат {{ run?.routeRetries?.[last.from] }}/{{ nodes[last.from].route?.retry?.limit ?? settings.maxRevisions }} }
         @case ('exhausted') { · исчерпан лимит возвратов }
       }
     </p>
@@ -81,10 +81,12 @@
           </span>
           <span class="links">
             @if (destination > node.index && destination <= length) {
-              <span class="pass-edge">{{ node.gate ? 'При успехе' : 'Дальше' }} → {{ destination === length ? 'Ручная приёмка' : (destination + 1) + '. ' + nodes[destination].label }}</span>
+              <span class="pass-edge">{{ node.gate || node.planReviewer ? 'При успехе' : 'Дальше' }} → {{ destination === length ? 'Ручная приёмка' : (destination + 1) + '. ' + nodes[destination].label }}</span>
             }
             @if (node.route?.retry; as retry) {
               <span class="return-edge">Правки → {{ settings.pipeline.indexOf(retry.to) + 1 }} · {{ run ? node.returns + '/' : 'до ' }}{{ retry.limit }} возвратов</span>
+            } @else if (node.planReviewer && node.index > 0) {
+              <span class="return-edge">Правки → {{ nodes[node.index - 1].label }}</span>
             } @else if (node.gate && defaultRetry(node.index, node.writer) >= 0) {
               <span class="return-edge">Правки → {{ defaultRetry(node.index, node.writer) + 1 }}</span>
             }

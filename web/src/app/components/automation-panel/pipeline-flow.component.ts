@@ -43,6 +43,7 @@ export class PipelineFlowComponent {
   public readonly criteria: Record<AgentRole, string> = {
     router: 'Оценивает сложность и риск, готовит критерии и выбирает разрешённые модели.',
     analyst: 'Изучает требования и готовит план.',
+    'plan-reviewer': 'Проверяет требования, реализуемость и UX. Возвращает замечания аналитику.',
     developer: 'Реализует план и добавляет тесты.',
     designer: 'Реализует интерфейс по плану и референсам.',
     tester: 'Проверяет сборку, регрессии и пользовательские сценарии по требованиям задачи.',
@@ -59,6 +60,7 @@ export class PipelineFlowComponent {
         label: agent ? agentProfileName(agent, this.settings.agents) : id,
         checks: PipelinePolicy.checkAt(this.settings, index) ? this.settings.checks : [],
         gate: PipelinePolicy.isGate(this.settings, index),
+        planReviewer: agent?.role === AgentRole.PlanReviewer,
         writer: !!agent && WRITABLE_AGENT_ROLES.includes(agent.role),
         route: PipelinePolicy.route(this.settings, index),
         calls: this.run?.usageAttempts?.filter(attempt => attempt.stage === index && attempt.kind !== 'resolver').length ?? 0,

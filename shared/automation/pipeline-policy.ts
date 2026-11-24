@@ -26,7 +26,12 @@ export class PipelinePolicy {
   /** Router is a preparation step; adding it must not reconnect the terminal gate to it. */
   public static includeStage(settings: AutomationSettings, id: string): AutomationSettings {
     if (settings.pipeline.includes(id)) return settings;
-    if (settings.agents.find(a => a.id === id)?.role === AgentRole.Router) return { ...settings, pipeline: [id, ...settings.pipeline] };
+    const role = settings.agents.find(a => a.id === id)?.role;
+    if (role === AgentRole.Router) return { ...settings, pipeline: [id, ...settings.pipeline] };
+    const analyst = this.roles(settings).lastIndexOf(AgentRole.Analyst);
+    if (role === AgentRole.PlanReviewer && analyst >= 0) {
+      return { ...settings, pipeline: [...settings.pipeline.slice(0, analyst + 1), id, ...settings.pipeline.slice(analyst + 1)] };
+    }
     const last = this.executionPath(settings).at(-1);
     const terminal = last === undefined ? undefined : this.route(settings, last);
     return { ...settings, pipeline: [...settings.pipeline, id],
@@ -86,6 +91,13 @@ export class PipelinePolicy {
     return stage === gate;
   }
   public static routeProblem(settings: AutomationSettings): string | undefined {
+    const roles = this.roles(settings);
+    const planReviewer = roles.indexOf(AgentRole.PlanReviewer);
+    if (planReviewer >= 0 && (roles[planReviewer - 1] !== AgentRole.Analyst
+      || roles.slice(planReviewer + 1).some(role => role === AgentRole.Analyst || role === AgentRole.PlanReviewer)
+      || roles.slice(0, planReviewer).some(role => WRITABLE_AGENT_ROLES.includes(role)))) {
+      return 'Выберите один этап ревью плана сразу после последнего аналитика и до этапов реализации.';
+    }
     const routes = settings.pipelineRoutes;
     if (!routes) return;
     if (!Array.isArray(routes) || routes.length > settings.pipeline.length) return 'Задайте по одной связи на каждый этап проверки.';
@@ -142,7 +154,7 @@ export class PipelinePolicy {
     return this.checkAt(settings, stage);
   }
   public static canDecompose(settings: AutomationSettings, allowWithoutTester = false): boolean {
-    const roles = this.roles(settings).join(',');
+    const roles = this.roles(settings).filter(role => role !== AgentRole.PlanReviewer).join(',');
     return !settings.pipelineRoutes?.length && (roles === 'analyst,developer,tester,reviewer' || (allowWithoutTester && roles === 'analyst,developer,reviewer'));
   }
   public static needsPlan(settings: AutomationSettings, hasPlan: boolean): boolean {

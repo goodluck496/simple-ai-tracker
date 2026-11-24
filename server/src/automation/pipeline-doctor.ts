@@ -1,9 +1,10 @@
 import fs from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import type { AgentRun, ProposedFix, ModelConnection } from '../../../shared/automation/contracts.js';
-import { ProviderKind } from '../../../shared/automation/contracts.js';
+import { AgentRole, ProviderKind } from '../../../shared/automation/contracts.js';
 import { ProcessExecutor } from './runners/process-executor.js';
 import { runFailure } from '../../../shared/automation/run-failure.js';
+import { customRoleInstructions, DEFAULT_ROLE_INSTRUCTIONS } from '../../../shared/automation/team-profiles.js';
 
 export class PipelineDoctor {
   public constructor(
@@ -252,10 +253,8 @@ export class PipelineDoctor {
   }
 
   private resolveInstructions(run: AgentRun): string {
-    if (run.settings?.doctorAgent?.instructions?.trim()) {
-      return run.settings.doctorAgent.instructions.trim();
-    }
-    return 'Ты — системный агент Pipeline Doctor, эксперт по диагностике и автоматическому устранению сбоев в CI/CD конвейере и работе агентов.';
+    const custom = customRoleInstructions(AgentRole.Doctor, run.settings?.doctorAgent?.instructions ?? '');
+    return [DEFAULT_ROLE_INSTRUCTIONS[AgentRole.Doctor], custom].filter(Boolean).join('\n\n');
   }
 
   private async consultModel(
@@ -276,7 +275,6 @@ export class PipelineDoctor {
     if (connection.credentialEnv && !secret) return null;
 
     const prompt = [
-      this.resolveInstructions(run),
       `Задача: ${run.taskId}`,
       `Ошибка: ${run.summary || 'Неизвестная ошибка'}`,
       `Журнал последних ошибок:\n${errorContext || '(нет дополнительных записей журнала)'}`,

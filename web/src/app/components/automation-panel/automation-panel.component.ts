@@ -36,7 +36,7 @@ import { AGENT_ROLES, RUNNER_IDS, DEFAULT_AUTOMATION_SETTINGS, PROVIDER_KINDS, R
   type AgentRun, type AutomationSettings, type CheckCommand, type AgentProfile, type ModelConnection } from '../../../../../shared/automation/contracts';
 import { ProjectAction, ProjectRequestStatus, PROJECT_LIMITS, SETUP_PRESETS, CHECK_PRESETS, WorkerPlatform, packageScript, pnpmInstall, projectCommand,
   type PackageManagerInfo, type ProjectPassport, type ProjectInput, type ProjectRequest, type ProjectResult, type HostStatus, type CommandPreset } from '../../../../../shared/automation/project';
-import { CONNECTION_PRESETS, PROVIDER_OPTIONS, RUNNER_OPTIONS, ROLE_OPTIONS, STANDARD_TEAM_ROLES, type ConnectionPreset } from '../../../../../shared/automation/presets';
+import { CONNECTION_PRESETS, FULL_TEAM_ROLES, PROVIDER_OPTIONS, RUNNER_OPTIONS, ROLE_OPTIONS, STANDARD_TEAM_ROLES, type ConnectionPreset } from '../../../../../shared/automation/presets';
 import type { TaskSummary } from '../../models/tracker.models';
 import { TrackerStore } from '../../services/tracker-store.service';
 import { TrackerApiService } from '../../services/tracker-api.service';
@@ -973,6 +973,11 @@ export class AutomationPanelComponent implements OnInit {
     if (this.settings.agents.length) return;
     for (const role of STANDARD_TEAM_ROLES) this.addAgent(role);
     this.notice = 'Добавлен разработчик. Выберите модель. Воркер выполнит настроенные проверки проекта.';
+  }
+  public addTeamWithPlanReview(): void {
+    if (this.settings.agents.length) return;
+    for (const role of FULL_TEAM_ROLES) this.addAgent(role);
+    this.notice = 'Добавлена команда с ревью плана и ревью кода. Выберите модели для агентов.';
   }
   public selectConnection(agent: Pick<AgentProfile, 'connectionId' | 'runner'>): void {
     if (agent.connectionId.startsWith('preset:')) {

@@ -18,6 +18,40 @@ export function exampleSettings(): AutomationSettings {
     pipeline: ['analyst', 'developer', 'tester', 'reviewer'], checks: [{ command: 'npm', args: ['test'] }] };
 }
 
+test('plan review approves the current proposal before creating feature children', () => {
+  const app = createContainer({ config: { dbPath: ':memory:' }, logger: new SilentLogger() });
+  try {
+    const service = app.automationService;
+    const settings = exampleSettings();
+    settings.agents.push({ ...settings.agents[0], id: 'plan-reviewer', role: 'plan-reviewer' });
+    assert.throws(() => service.configure({ ...settings, pipeline: [...settings.pipeline, 'plan-reviewer'] }), /после последнего аналитика/);
+    settings.pipeline.splice(1, 0, 'plan-reviewer');
+    service.configure(settings);
+    const task = app.taskService.createTask({ title: 'Feature with a reviewed split', description: 'Initial requirements' });
+    const queued = service.enqueue(task.id);
+    const run = service.claim('fixture')!;
+    const finish = (outcome: Parameters<typeof service.completeStage>[2]) =>
+      service.completeStage(queued.id, run.leaseToken!, outcome, `sat/${queued.id}`, 'a'.repeat(40));
+    const decomposition = [
+      { key: 'first', title: 'First', description: 'Implement the first part', plan: '1. Implement first.', dependsOn: [] },
+      { key: 'second', title: 'Second', description: 'Implement the second part', plan: '1. Implement second.', dependsOn: ['first'] },
+    ];
+    finish({ verdict: 'pass', summary: 'Draft', plan: '1. Deliver two parts.', decomposition });
+    assert.equal(app.taskService.getTaskCard(task.id).subtasks.length, 0);
+    app.taskService.attachPlan({ id: task.id, planContent: 'User supplied newer context.', statusMode: 'none', actor: 'user' });
+    const stale = finish({ verdict: 'pass', summary: 'Reviewed the old draft' });
+    assert.equal(stale.stage, 0, 'An updated card requires reanalysis');
+    assert.equal(app.taskService.getTaskCard(task.id).subtasks.length, 0);
+    finish({ verdict: 'pass', summary: 'Updated draft', plan: '1. Deliver two updated parts.', decomposition });
+    const approved = finish({ verdict: 'pass', summary: 'Reviewed the new draft' });
+    assert.equal(approved.stage, 2);
+    assert.equal(approved.feature?.children[0].developerStage, 2);
+    assert.equal(approved.planProposal, undefined);
+    assert.equal(app.taskService.getTaskCard(task.id).subtasks.length, 2);
+    assert.equal(app.taskService.getTaskCard(task.id).plan?.content, '1. Deliver two updated parts.');
+  } finally { app.close(); }
+});
+
 test('resuming with current project checks retains the run and its progress', () => {
   const app = createContainer({ config: { dbPath: ':memory:' }, logger: new SilentLogger() });
   try {
