@@ -80,10 +80,11 @@ export class ProjectWorker {
       const sha = /^[a-f0-9]{40}(?:[a-f0-9]{24})?$/;
       if (!head || !sha.test(head) || (base !== undefined && !sha.test(base))) throw new Error('Некорректный диапазон Git.');
       const args = base ? ['diff', base, head] : ['show', '--format=', head];
-      const limit = 32000;
+      const limit = 250000;
       const text = await this.executor.run({ command: 'git', args: [...args, '--no-ext-diff', '--no-textconv', '--no-color', '--'],
-        cwd: directory, signal: AbortSignal.timeout(PROJECT_LIMITS.commandMs), maxOutputChars: limit });
-      return { path: directory, diff: { text, truncated: text.length >= limit } };
+        cwd: directory, signal: AbortSignal.timeout(PROJECT_LIMITS.commandMs), maxOutputChars: limit, truncateStrategy: 'head' });
+      const truncated = text.length >= limit;
+      return { path: directory, diff: { text, truncated } };
     }
     if (input.action === ProjectAction.Browse) {
       const entries = (await readdir(directory, { withFileTypes: true })).filter((entry) => entry.isDirectory() && !entry.name.startsWith('.')).sort((a, b) => a.name.localeCompare(b.name));

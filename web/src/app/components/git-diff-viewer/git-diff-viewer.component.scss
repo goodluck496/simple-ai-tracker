@@ -1,0 +1,532 @@
+@use '../../../styles/tokens' as t;
+
+:host {
+  display: block;
+  width: 100%;
+}
+
+.git-diff-viewer {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  width: 100%;
+}
+
+.diff-truncated-banner {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.6rem 0.85rem;
+  border-radius: var(--sat-radius-sm);
+  background: color-mix(in srgb, #f59e0b 16%, var(--sat-surface));
+  border: 1px solid color-mix(in srgb, #f59e0b 45%, transparent);
+  color: #fbbf24;
+  font-size: 0.85rem;
+  line-height: 1.4;
+
+  i {
+    font-size: 1.1rem;
+    flex-shrink: 0;
+  }
+}
+
+.diff-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  padding: 0.45rem 0.75rem;
+  background: var(--sat-surface);
+  border: 1px solid var(--sat-border);
+  border-radius: var(--sat-radius-sm);
+
+  .diff-summary {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    font-size: 0.85rem;
+
+    .file-count {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.35rem;
+      color: var(--sat-text);
+      font-weight: 500;
+
+      i {
+        color: var(--sat-text-muted);
+      }
+    }
+
+    .diff-stat-chip {
+      display: inline-block;
+      padding: 0.15rem 0.45rem;
+      border-radius: 4px;
+      font-size: 0.75rem;
+      font-weight: 600;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+
+      &.added {
+        background: color-mix(in srgb, #22c55e 20%, transparent);
+        color: #4ade80;
+      }
+
+      &.deleted {
+        background: color-mix(in srgb, #ef4444 20%, transparent);
+        color: #f87171;
+      }
+    }
+  }
+
+  .diff-controls {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+
+    .view-mode-toggle {
+      display: inline-flex;
+      border-radius: var(--sat-radius-sm);
+      overflow: hidden;
+
+      button {
+        border-radius: 0;
+
+        &:first-child {
+          border-top-left-radius: var(--sat-radius-sm);
+          border-bottom-left-radius: var(--sat-radius-sm);
+        }
+
+        &:last-child {
+          border-top-right-radius: var(--sat-radius-sm);
+          border-bottom-right-radius: var(--sat-radius-sm);
+        }
+      }
+    }
+  }
+}
+
+// TWO-PANE WORKBENCH
+.diff-workbench {
+  display: flex;
+  gap: 0.85rem;
+  align-items: flex-start;
+  width: 100%;
+
+  &.sidebar-hidden {
+    .diff-content-area {
+      max-width: 100%;
+    }
+  }
+}
+
+// LEFT STATIC FILES SIDEBAR
+.diff-files-sidebar {
+  width: 290px;
+  min-width: 250px;
+  max-width: 320px;
+  flex-shrink: 0;
+  position: sticky;
+  top: 0.5rem;
+  max-height: calc(100vh - 170px);
+  display: flex;
+  flex-direction: column;
+  background: var(--sat-surface);
+  border: 1px solid var(--sat-border);
+  border-radius: var(--sat-radius-sm);
+  overflow: hidden;
+
+  .sidebar-search-box {
+    position: relative;
+    padding: 0.5rem;
+    border-bottom: 1px solid var(--sat-border);
+    display: flex;
+    align-items: center;
+
+    .search-icon {
+      position: absolute;
+      left: 1rem;
+      color: var(--sat-text-muted);
+      font-size: 0.8rem;
+      pointer-events: none;
+    }
+
+    .search-input {
+      width: 100%;
+      padding-left: 2rem;
+      padding-right: 1.8rem;
+      font-size: 0.8rem;
+      height: 2rem;
+      background: var(--sat-bg);
+      border: 1px solid var(--sat-border);
+      border-radius: var(--sat-radius-sm);
+      color: var(--sat-text);
+    }
+
+    .clear-search-btn {
+      position: absolute;
+      right: 0.85rem;
+      background: transparent;
+      border: none;
+      color: var(--sat-text-muted);
+      cursor: pointer;
+      padding: 0.2rem;
+      font-size: 0.75rem;
+
+      &:hover {
+        color: var(--sat-text);
+      }
+    }
+  }
+
+  .diff-file-items-list {
+    flex: 1;
+    overflow-y: auto;
+    margin: 0;
+    padding: 0.4rem;
+    list-style: none;
+    display: flex;
+    flex-direction: column;
+    gap: 0.2rem;
+
+    .diff-file-nav-item {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.45rem 0.6rem;
+      border-radius: 4px;
+      cursor: pointer;
+      user-select: none;
+      transition: background-color 0.12s ease;
+      border-left: 2px solid transparent;
+
+      &:hover {
+        background: var(--sat-surface-hover);
+      }
+
+      &.active {
+        background: color-mix(in srgb, var(--sat-accent) 14%, var(--sat-surface));
+        border-left-color: var(--sat-accent);
+
+        .file-basename {
+          color: var(--sat-accent);
+          font-weight: 600;
+        }
+      }
+
+      .file-status-badge {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 18px;
+        height: 18px;
+        border-radius: 3px;
+        font-size: 0.65rem;
+        flex-shrink: 0;
+
+        &.added {
+          background: color-mix(in srgb, #22c55e 20%, transparent);
+          color: #4ade80;
+        }
+
+        &.deleted {
+          background: color-mix(in srgb, #ef4444 20%, transparent);
+          color: #f87171;
+        }
+
+        &.renamed {
+          background: color-mix(in srgb, #3b82f6 20%, transparent);
+          color: #60a5fa;
+        }
+
+        &.modified {
+          background: color-mix(in srgb, #f59e0b 20%, transparent);
+          color: #fbbf24;
+        }
+      }
+
+      .file-name-block {
+        display: flex;
+        flex-direction: column;
+        flex: 1;
+        min-width: 0;
+        line-height: 1.25;
+
+        .file-basename {
+          font-size: 0.8rem;
+          color: var(--sat-text);
+          white-space: nowrap;
+          overflow: hidden;
+          text-overflow: ellipsis;
+        }
+
+        .file-directory {
+          font-size: 0.68rem;
+          color: var(--sat-text-muted);
+          white-space: nowrap;
+          overflow: hidden;
+          text-overflow: ellipsis;
+        }
+      }
+
+      .file-stats-badges {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.25rem;
+        font-size: 0.7rem;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+        font-weight: 600;
+        flex-shrink: 0;
+
+        .badge-added {
+          color: #4ade80;
+        }
+
+        .badge-deleted {
+          color: #f87171;
+        }
+      }
+    }
+
+    .diff-file-empty-filter {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 0.4rem;
+      padding: 1.5rem 0.5rem;
+      color: var(--sat-text-muted);
+      font-size: 0.8rem;
+
+      i {
+        font-size: 1.2rem;
+      }
+    }
+  }
+}
+
+// RIGHT DIFF CONTENT AREA
+.diff-content-area {
+  flex: 1;
+  min-width: 0;
+  width: 100%;
+}
+
+.diff-empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  padding: 3rem 1rem;
+  color: var(--sat-text-muted);
+  background: var(--sat-surface);
+  border: 1px solid var(--sat-border);
+  border-radius: var(--sat-radius-sm);
+
+  i {
+    font-size: 2rem;
+    color: var(--sat-success);
+  }
+
+  p {
+    font-size: 0.95rem;
+    margin: 0;
+  }
+}
+
+.diff-render-container {
+  width: 100%;
+
+  // Custom styling & dark-theme tuning for diff2html elements
+  ::ng-deep {
+    .d2h-wrapper {
+      text-align: left;
+    }
+
+    // Completely remove the awkward header file list
+    .d2h-file-list-wrapper {
+      display: none !important;
+    }
+
+    // Hide default awkwardly positioned "Viewed" collapse control on the right
+    .d2h-file-collapse {
+      display: none !important;
+    }
+
+    .d2h-file-wrapper {
+      border: 1px solid var(--sat-border);
+      border-radius: var(--sat-radius-sm);
+      margin-bottom: 1rem;
+      background: var(--sat-bg);
+      overflow: hidden;
+
+      .d2h-file-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 0.5rem 0.85rem;
+        background: var(--sat-surface) !important;
+        border-bottom: 1px solid var(--sat-border);
+        font-size: 0.82rem;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+        font-weight: 600;
+        cursor: pointer;
+        user-select: none;
+        transition: background-color 0.15s ease;
+
+        &:hover {
+          background: var(--sat-surface-hover) !important;
+
+          .sat-diff-chevron {
+            color: var(--sat-accent);
+          }
+        }
+
+        &:focus-visible {
+          outline: 2px solid var(--sat-accent);
+          outline-offset: -2px;
+        }
+
+        .d2h-file-name-wrapper {
+          display: inline-flex;
+          align-items: center;
+          gap: 0.45rem;
+          color: var(--sat-text);
+          flex: 1;
+          min-width: 0;
+        }
+
+        .sat-diff-chevron {
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          font-size: 0.85rem;
+          color: var(--sat-text-muted);
+          transition: transform 0.2s ease, color 0.15s ease;
+          margin-right: 0.35rem;
+          flex-shrink: 0;
+
+          &.collapsed {
+            transform: rotate(-90deg);
+          }
+        }
+
+        .d2h-icon {
+          flex-shrink: 0;
+        }
+
+        .d2h-file-name {
+          color: var(--sat-text);
+          word-break: break-all;
+        }
+
+        .d2h-tag {
+          font-size: 0.72rem;
+          padding: 0.1rem 0.35rem;
+          border-radius: 3px;
+        }
+      }
+
+      // CRITICAL FIX FOR FLOATING LINE NUMBERS:
+      // Make table layout solid and keep table cells static
+      .d2h-diff-table {
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+        font-size: 0.78rem;
+        line-height: 1.45;
+        border-collapse: collapse !important;
+        width: 100% !important;
+        table-layout: fixed !important;
+      }
+
+      .d2h-diff-tbody > tr {
+        position: static !important;
+      }
+
+      td.d2h-code-linenumber,
+      td.d2h-code-side-linenumber {
+        background: color-mix(in srgb, var(--sat-surface) 60%, var(--sat-bg));
+        color: var(--sat-text-muted);
+        border: none;
+        border-right: 1px solid var(--sat-border);
+        user-select: none !important;
+        text-align: right;
+        padding: 0 0.5rem !important;
+        width: 5.5rem !important;
+        min-width: 5.5rem !important;
+        max-width: 5.5rem !important;
+        position: static !important;
+        display: table-cell !important;
+        vertical-align: top !important;
+        box-sizing: border-box !important;
+      }
+
+      td.d2h-cntx,
+      td.d2h-ins,
+      td.d2h-del,
+      td.d2h-info {
+        display: table-cell !important;
+        vertical-align: top !important;
+        width: auto !important;
+      }
+
+      .d2h-code-line,
+      .d2h-code-side-line {
+        padding: 0 0.5rem !important;
+        width: 100% !important;
+        box-sizing: border-box !important;
+      }
+
+      .d2h-info {
+        background: color-mix(in srgb, #0284c7 12%, var(--sat-surface));
+        color: #38bdf8;
+      }
+
+      .d2h-ins {
+        background: color-mix(in srgb, #22c55e 14%, transparent);
+        color: var(--sat-text);
+
+        .d2h-code-line-prefix {
+          color: #4ade80;
+        }
+
+        ins {
+          background: color-mix(in srgb, #22c55e 35%, transparent);
+          text-decoration: none;
+          border-radius: 2px;
+        }
+      }
+
+      .d2h-del {
+        background: color-mix(in srgb, #ef4444 14%, transparent);
+        color: var(--sat-text);
+
+        .d2h-code-line-prefix {
+          color: #f87171;
+        }
+
+        del {
+          background: color-mix(in srgb, #ef4444 35%, transparent);
+          text-decoration: none;
+          border-radius: 2px;
+        }
+      }
+
+      .d2h-code-line-ctn {
+        padding: 0 0.5rem;
+      }
+    }
+  }
+
+  .diff-fallback {
+    padding: 0.75rem;
+    background: var(--sat-surface);
+    border: 1px solid var(--sat-border);
+    border-radius: var(--sat-radius-sm);
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    font-size: 0.8rem;
+    overflow-x: auto;
+    white-space: pre-wrap;
+    color: var(--sat-text);
+  }
+}

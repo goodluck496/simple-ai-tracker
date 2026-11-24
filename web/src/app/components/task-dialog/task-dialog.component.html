@@ -35,6 +35,17 @@
     </div>
 
     <div class="sidebar-header-right">
+      @if (!isCreate() && task()) {
+        <p-button
+          icon="pi pi-history"
+          severity="secondary"
+          [text]="true"
+          [rounded]="true"
+          size="small"
+          pTooltip="Перейти к запускам и истории задачи"
+          (onClick)="openLatestRun()"
+        ></p-button>
+      }
       <p-button
         [icon]="isExpanded() ? 'pi pi-window-minimize' : 'pi pi-window-maximize'"
         severity="secondary"
@@ -286,22 +297,71 @@
                     </div>
                   }
 
+                  @if (card.status === 'review') {
+                    <section class="review-actions" aria-label="Приёмка задачи">
+                      <div class="review-actions-header">
+                        <h4><i class="pi pi-check-circle" aria-hidden="true"></i> Приёмка задачи</h4>
+                        <p-button
+                          label="К запуску и Diff"
+                          icon="pi pi-external-link"
+                          severity="secondary"
+                          [text]="true"
+                          size="small"
+                          pTooltip="Открыть последний запуск и изменения ветки задачи"
+                          (onClick)="openLatestRun()"
+                        ></p-button>
+                      </div>
+                      <label class="review-deploy-checkbox" for="deploy-preview-patch">
+                        <p-checkbox inputId="deploy-preview-patch" [binary]="true" [(ngModel)]="deployPreviewPatch" [disabled]="store.busy() || !!acceptance()" />
+                        <span>Выполнить пост-операции развёртывания после накатки или отката</span>
+                      </label>
+                      <div class="review-action-row">
+                        <div class="patch-buttons">
+                          <p-button label="Накатить патч" icon="pi pi-file-edit" severity="secondary" size="small"
+                            [disabled]="store.busy() || !!acceptance()" (onClick)="previewPatch(false, deployPreviewPatch)" />
+                          <p-button label="Откатить патч" icon="pi pi-undo" severity="secondary" size="small"
+                            [disabled]="store.busy() || !!acceptance()" (onClick)="previewPatch(true, deployPreviewPatch)" />
+                        </div>
+                        <div class="merge-button">
+                          <p-button [label]="acceptance()?.status === 'queued' ? 'Слияние в очереди' : acceptance()?.status === 'integrating' ? 'Выполняется слияние…' : 'Принять и слить'"
+                            icon="pi pi-check" severity="success" size="small"
+                            [disabled]="store.busy() || acceptanceBusy()" (onClick)="acceptAutomation()" />
+                        </div>
+                      </div>
+                      @if (acceptance(); as merge) {
+                        <p class="subform-hint" role="status">
+                          {{ merge.status === 'integrating' ? 'Воркер проверяет и сливает изменения.' : merge.summary }}
+                          @if (merge.status === 'merge_blocked' || merge.status === 'failed' || merge.status === 'interrupted') {
+                            <a href="javascript:void(0)" (click)="openLatestRun()">Откройте журнал запуска</a>, чтобы увидеть причину и продолжить слияние.
+                          }
+                        </p>
+                      }
+                      @if (patchNotice()) { <p class="patch-notice" role="status">{{ patchNotice() }}</p> }
+                    </section>
+                  }
+
                   <div class="comment-form">
-                    <label class="field-label" for="sat-review-feedback">Текст замечания</label>
+                    <div class="comment-form-header">
+                      <label class="field-label" for="sat-review-feedback">
+                        {{ card.status === 'review' || stoppedRework() ? 'Замечания к работе агента или комментарий' : 'Комментарий к задаче' }}
+                      </label>
+                    </div>
                     <textarea
                       #reviewFeedbackInput
                       id="sat-review-feedback"
                       pTextarea
                       rows="3"
                       class="w-full"
-                      [placeholder]="card.status === 'review' || stoppedRework() ? 'Опишите, что нужно исправить…' : 'Комментарий к задаче…'"
+                      [placeholder]="card.status === 'review' || stoppedRework() ? 'Опишите, что нужно исправить (для отправки агенту) или оставьте комментарий…' : 'Комментарий к задаче…'"
                       [ngModel]="commentDraft()"
                       (ngModelChange)="commentDraft.set($event)"
                     ></textarea>
-                    <p class="subform-hint">Вставьте скриншот из буфера через Ctrl+V на этой вкладке или выберите файл.</p>
-                    @if (card.status === 'review' || stoppedRework()) {
-                      <p class="subform-hint">«Сохранить комментарий» добавит текст и снимки в обсуждение. Действие доработки ниже отправит этот же черновик агентам и запустит работу.</p>
-                    }
+                    <p class="subform-hint">
+                      Вставьте скриншот из буфера через Ctrl+V на этой вкладке или выберите файл.
+                      @if (card.status === 'review' || stoppedRework()) {
+                        «Сохранить комментарий» добавит заметку в обсуждение, а «Отправить замечание» передаст текст агентам и перезапустит работу.
+                      }
+                    </p>
                     @if (commentImages().length) {
                       <div class="comment-previews">
                         @for (image of commentImages(); track $index) {
@@ -314,54 +374,45 @@
                       </div>
                     }
                     <div class="comment-actions">
-                      <input #commentFileInput type="file" accept="image/png,image/jpeg,image/webp,image/gif" multiple hidden
-                        (change)="selectCommentImages($event)" />
-                      <p-button label="Добавить скриншоты" icon="pi pi-image" severity="secondary" size="small"
-                        [disabled]="store.busy() || commentUploading()" (onClick)="commentFileInput.click()" />
-                      <p-button
-                        label="Сохранить комментарий"
-                        icon="pi pi-send"
-                        size="small"
-                        [disabled]="!hasCommentDraft() || store.busy() || commentUploading()"
-                        (onClick)="submitComment()"
-                      ></p-button>
-                    </div>
-                    @if (card.status === 'review') {
-                      <section class="review-actions" aria-label="Приёмка задачи">
-                        <h4>Приёмка задачи</h4>
-                        <label for="deploy-preview-patch">
-                          <p-checkbox inputId="deploy-preview-patch" [binary]="true" [(ngModel)]="deployPreviewPatch" [disabled]="store.busy() || !!acceptance()" />
-                          Выполнить пост-операции развёртывания после накатки или отката
-                        </label>
-                        <div class="review-action-row">
-                          <p-button label="Накатить патч" icon="pi pi-file-edit" severity="secondary" size="small"
-                            [disabled]="store.busy() || !!acceptance()" (onClick)="previewPatch(false, deployPreviewPatch)" />
-                          <p-button label="Откатить патч" icon="pi pi-undo" severity="secondary" size="small"
-                            [disabled]="store.busy() || !!acceptance()" (onClick)="previewPatch(true, deployPreviewPatch)" />
-                          <p-button label="Отправить замечание и вернуть" icon="pi pi-replay" severity="secondary" size="small"
-                            [disabled]="store.busy() || commentUploading() || !!acceptance()" (onClick)="returnWithFeedback(reviewFeedbackInput)" />
-                          <p-button [label]="acceptance()?.status === 'queued' ? 'Слияние в очереди' : acceptance()?.status === 'integrating' ? 'Выполняется слияние' : 'Принять и слить'"
-                            icon="pi pi-check" severity="success" size="small"
-                            [disabled]="store.busy() || acceptanceBusy()" (onClick)="acceptAutomation()" />
-                        </div>
-                        @if (acceptance(); as merge) {
-                          <p class="subform-hint" role="status">
-                            {{ merge.status === 'integrating' ? 'Воркер проверяет и сливает изменения.' : merge.summary }}
-                            @if (merge.status === 'merge_blocked' || merge.status === 'failed' || merge.status === 'interrupted') {
-                              Откройте журнал запуска, чтобы увидеть причину и продолжить слияние.
-                            }
-                          </p>
+                      <div class="comment-actions-left">
+                        <input #commentFileInput type="file" accept="image/png,image/jpeg,image/webp,image/gif" multiple hidden
+                          (change)="selectCommentImages($event)" />
+                        <p-button label="Добавить скриншоты" icon="pi pi-image" severity="secondary" size="small"
+                          [disabled]="store.busy() || commentUploading()" (onClick)="commentFileInput.click()" />
+                      </div>
+                      <div class="comment-actions-right">
+                        <p-button
+                          label="Сохранить комментарий"
+                          icon="pi pi-send"
+                          severity="secondary"
+                          size="small"
+                          [disabled]="!hasCommentDraft() || store.busy() || commentUploading()"
+                          (onClick)="submitComment()"
+                          pTooltip="Добавить комментарий в обсуждение без изменения статуса задачи"
+                        ></p-button>
+                        @if (card.status === 'review') {
+                          <p-button
+                            label="Отправить замечание и вернуть"
+                            icon="pi pi-replay"
+                            severity="warn"
+                            size="small"
+                            [disabled]="store.busy() || commentUploading() || !!acceptance()"
+                            (onClick)="returnWithFeedback(reviewFeedbackInput)"
+                            pTooltip="Отправить текст из поля выше агенту и вернуть задачу на доработку"
+                          ></p-button>
                         }
-                      </section>
-                    }
-                    @if (stoppedRework()) {
-                      <section class="review-actions" aria-label="Остановленная доработка">
-                        <h4>Доработка остановлена</h4>
-                        <p-button label="Отправить замечание и продолжить" icon="pi pi-play" size="small"
-                          [disabled]="store.busy() || commentUploading()" (onClick)="returnWithFeedback(reviewFeedbackInput)" />
-                      </section>
-                    }
-                    @if (patchNotice()) { <p class="patch-notice" role="status">{{ patchNotice() }}</p> }
+                        @if (stoppedRework()) {
+                          <p-button
+                            label="Отправить замечание и продолжить"
+                            icon="pi pi-play"
+                            size="small"
+                            [disabled]="store.busy() || commentUploading()"
+                            (onClick)="returnWithFeedback(reviewFeedbackInput)"
+                            pTooltip="Отправить текст из поля выше агенту и продолжить доработку"
+                          ></p-button>
+                        }
+                      </div>
+                    </div>
                   </div>
 
                   <sat-decision-log [events]="card.events" />

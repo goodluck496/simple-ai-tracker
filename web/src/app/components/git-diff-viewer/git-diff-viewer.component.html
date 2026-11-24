@@ -1,0 +1,165 @@
+<div class="git-diff-viewer">
+  @if (truncated()) {
+    <div class="diff-truncated-banner" role="alert">
+      <i class="pi pi-exclamation-triangle" aria-hidden="true"></i>
+      <span>Показана начальная часть большого diff (лимит вывода). Для полного анализа используйте локальный Git.</span>
+    </div>
+  }
+
+  @if (diff() && diff().trim()) {
+    <!-- TOP TOOLBAR -->
+    <div class="diff-toolbar">
+      <div class="diff-summary">
+        <button
+          pButton
+          type="button"
+          size="small"
+          severity="secondary"
+          [text]="true"
+          [icon]="sidebarCollapsed() ? 'pi pi-chevron-right' : 'pi pi-chevron-left'"
+          [pTooltip]="sidebarCollapsed() ? 'Показать список файлов' : 'Скрыть список файлов'"
+          (click)="toggleSidebar()"
+        ></button>
+
+        @let s = stats();
+        <span class="file-count" title="Количество изменённых файлов">
+          <i class="pi pi-file" aria-hidden="true"></i>
+          <strong>{{ s.fileCount }}</strong> {{ s.fileCount === 1 ? 'файл' : (s.fileCount > 1 && s.fileCount < 5) ? 'файла' : 'файлов' }}
+        </span>
+        @if (s.added > 0) {
+          <span class="diff-stat-chip added" title="Добавлено строк">+{{ s.added }}</span>
+        }
+        @if (s.deleted > 0) {
+          <span class="diff-stat-chip deleted" title="Удалено строк">−{{ s.deleted }}</span>
+        }
+      </div>
+
+      <div class="diff-controls">
+        <div class="view-mode-toggle" role="group" aria-label="Формат отображения diff">
+          <button
+            pButton
+            type="button"
+            size="small"
+            [severity]="outputFormat() === 'line-by-line' ? 'primary' : 'secondary'"
+            [outlined]="outputFormat() !== 'line-by-line'"
+            icon="pi pi-bars"
+            label="Построчно"
+            (click)="setOutputFormat('line-by-line')"
+            title="Отображение в одну колонку"
+          ></button>
+          <button
+            pButton
+            type="button"
+            size="small"
+            [severity]="outputFormat() === 'side-by-side' ? 'primary' : 'secondary'"
+            [outlined]="outputFormat() !== 'side-by-side'"
+            icon="pi pi-table"
+            label="Две колонки"
+            (click)="setOutputFormat('side-by-side')"
+            title="Отображение в две колонки (Side-by-side)"
+          ></button>
+        </div>
+
+        <button
+          pButton
+          type="button"
+          size="small"
+          severity="secondary"
+          [outlined]="true"
+          [icon]="allCollapsed() ? 'pi pi-folder-open' : 'pi pi-folder'"
+          [label]="allCollapsed() ? 'Развернуть все' : 'Свернуть все'"
+          (click)="toggleCollapseAll()"
+          title="Свернуть или развернуть содержимое всех файлов"
+        ></button>
+
+        <button
+          pButton
+          type="button"
+          size="small"
+          severity="secondary"
+          [outlined]="true"
+          [icon]="copied() ? 'pi pi-check' : 'pi pi-copy'"
+          [label]="copied() ? 'Скопировано' : 'Копировать'"
+          (click)="copyDiff()"
+          title="Скопировать сырой diff в буфер обмена"
+        ></button>
+      </div>
+    </div>
+
+    <!-- MAIN TWO-PANE WORKBENCH -->
+    <div class="diff-workbench" [class.sidebar-hidden]="sidebarCollapsed()">
+      <!-- LEFT STATIC FILES SIDEBAR -->
+      @if (!sidebarCollapsed()) {
+        <aside class="diff-files-sidebar" aria-label="Список изменённых файлов">
+          <div class="sidebar-search-box">
+            <i class="pi pi-search search-icon" aria-hidden="true"></i>
+            <input
+              type="text"
+              pInputText
+              class="search-input"
+              placeholder="Поиск по файлам…"
+              [ngModel]="fileSearch()"
+              (ngModelChange)="fileSearch.set($event)"
+            />
+            @if (fileSearch()) {
+              <button type="button" class="clear-search-btn" (click)="fileSearch.set('')" aria-label="Очистить поиск">
+                <i class="pi pi-times"></i>
+              </button>
+            }
+          </div>
+
+          <ul class="diff-file-items-list">
+            @for (file of filteredFiles(); track file.id) {
+              <li
+                class="diff-file-nav-item"
+                [class.active]="activeFileIndex() === file.index"
+                (click)="selectFile(file)"
+                [title]="file.name"
+              >
+                <span class="file-status-badge" [class]="file.status">
+                  @switch (file.status) {
+                    @case ('added') { <i class="pi pi-plus"></i> }
+                    @case ('deleted') { <i class="pi pi-minus"></i> }
+                    @case ('renamed') { <i class="pi pi-arrow-right"></i> }
+                    @default { <i class="pi pi-pencil"></i> }
+                  }
+                </span>
+
+                <div class="file-name-block">
+                  <span class="file-basename">{{ file.basename }}</span>
+                  @if (file.directory) {
+                    <span class="file-directory" [title]="file.directory">{{ file.directory }}</span>
+                  }
+                </div>
+
+                <div class="file-stats-badges">
+                  @if (file.addedLines > 0) {
+                    <span class="badge-added">+{{ file.addedLines }}</span>
+                  }
+                  @if (file.deletedLines > 0) {
+                    <span class="badge-deleted">−{{ file.deletedLines }}</span>
+                  }
+                </div>
+              </li>
+            } @empty {
+              <li class="diff-file-empty-filter">
+                <i class="pi pi-filter-slash"></i>
+                <span>Ничего не найдено</span>
+              </li>
+            }
+          </ul>
+        </aside>
+      }
+
+      <!-- RIGHT DIFF RENDERING CONTAINER -->
+      <main class="diff-content-area">
+        <div #diffContainer class="diff-render-container" role="region" aria-label="Содержимое Git Diff"></div>
+      </main>
+    </div>
+  } @else {
+    <div class="diff-empty-state">
+      <i class="pi pi-check-circle" aria-hidden="true"></i>
+      <p>Изменений нет</p>
+    </div>
+  }
+</div>

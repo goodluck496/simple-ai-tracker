@@ -63,7 +63,7 @@
               }
               @if (fix.diff) { <div class="fix-diff-section">
                 <strong>Diff изменений:</strong>
-                <pre class="fix-diff-view"><code>{{ fix.diff }}</code></pre>
+                <sat-git-diff-viewer [diff]="fix.diff" />
               </div> }
             </div>
             <div class="fix-dialog-footer">
@@ -87,22 +87,7 @@
             @if (diff.loading) { <p role="status">Загрузка Git diff…</p> }
             @if (diff.error) { <p role="alert">{{ diff.error }}</p> }
             @if (diff.result; as result) {
-              @if (result.truncated) { <p>Показан конец большого diff.</p> }
-              @if (diffRows().length) {
-                <div class="run-diff-view" role="region" aria-label="Изменения по строкам" tabindex="0">
-                  @for (row of diffRows(); track $index) {
-                    <div class="diff-row" [class]="'diff-' + row.kind">
-                      @if (row.kind === 'added' || row.kind === 'removed' || row.kind === 'context') {
-                        <span class="diff-number">{{ row.old }}</span><span class="diff-number">{{ row.next }}</span>
-                        <span aria-hidden="true">{{ row.kind === 'added' ? '+' : row.kind === 'removed' ? '−' : '' }}</span>
-                        <code>{{ row.text }}</code>
-                      } @else {
-                        <code class="diff-heading">{{ row.text }}</code>
-                      }
-                    </div>
-                  }
-                </div>
-              } @else { <p>Изменений нет.</p> }
+              <sat-git-diff-viewer [diff]="result.text" [truncated]="result.truncated" />
             }
           }
         }

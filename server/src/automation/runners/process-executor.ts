@@ -9,6 +9,7 @@ export interface ProcessRequest {
   stdin?: string; env?: NodeJS.ProcessEnv; onProgress?: (text: string) => void;
   /** Maximum retained stdout characters; large structured catalogs need more than log tails. */
   maxOutputChars?: number;
+  truncateStrategy?: 'head' | 'tail';
   compactProgress?: boolean;
   progressIntervalMs?: number;
   outputIdleTimeoutMs?: number;
@@ -85,7 +86,14 @@ export class ProcessExecutor {
         lastOutputAt = Date.now();
         armIdleTimer();
         request.onStdout?.(value);
-        stdout = (stdout + value).slice(-(request.maxOutputChars ?? MAX_OUTPUT));
+        if (request.truncateStrategy === 'head') {
+          const limit = request.maxOutputChars ?? MAX_OUTPUT;
+          if (stdout.length < limit) {
+            stdout = (stdout + value).slice(0, limit);
+          }
+        } else {
+          stdout = (stdout + value).slice(-(request.maxOutputChars ?? MAX_OUTPUT));
+        }
         if (!request.compactProgress) request.onProgress?.(value);
       });
       child.stderr?.on('data', (value: string) => {

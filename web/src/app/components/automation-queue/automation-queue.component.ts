@@ -38,6 +38,7 @@ import { formatQueueDate, sortRunHistory } from './queue-dates';
 
 import { PipelineFlowComponent } from '../automation-panel/pipeline-flow.component';
 import { AutomationMetricsComponent } from './automation-metrics.component';
+import { GitDiffViewerComponent } from '../git-diff-viewer/git-diff-viewer.component';
 import type { CheckEvidence, ImprovementOccurrence, ImprovementPeriod } from '../../../../../shared/automation/improvement-metrics';
 import { publicUrl } from '../../services/public-url';
 
@@ -45,7 +46,7 @@ type RunsView = 'queue' | 'history' | 'metrics';
 type RunPage = 'diagnosis' | 'commit-diff' | 'branch-diff';
 const HISTORY_LANES = ['attention', 'finished', 'running', 'queued'] as const;
 
-@Component({ selector: 'sat-automation-queue', standalone: true, imports: [RunProfileEditorComponent, DatePipe, DecimalPipe, RunConsoleComponent, RunActivityComponent, TableModule, ButtonModule, FormsModule, CheckboxModule, SelectModule, PanelModule, PopoverModule, MessageModule, InputTextModule, InputNumberModule, PipelineFlowComponent, AutomationMetricsComponent, TaskDialogComponent],
+@Component({ selector: 'sat-automation-queue', standalone: true, imports: [RunProfileEditorComponent, DatePipe, DecimalPipe, RunConsoleComponent, RunActivityComponent, TableModule, ButtonModule, FormsModule, CheckboxModule, SelectModule, PanelModule, PopoverModule, MessageModule, InputTextModule, InputNumberModule, PipelineFlowComponent, AutomationMetricsComponent, TaskDialogComponent, GitDiffViewerComponent],
   changeDetection: ChangeDetectionStrategy.OnPush, templateUrl: './automation-queue.component.html', styleUrl: './automation-queue.component.scss' })
 export class AutomationQueueComponent implements OnInit {
   private readonly element = inject<ElementRef<HTMLElement>>(ElementRef);
@@ -284,32 +285,6 @@ export class AutomationQueueComponent implements OnInit {
     )), timeout(timeoutMs + PROJECT_LIMITS.pollMs));
   }
   public readonly runDiff = signal<{ id: string; wholeRun: boolean; loading?: boolean; result?: ProjectDiff; error?: string } | null>(null);
-  public readonly diffRows = computed(() => {
-    const text = this.runDiff()?.result?.text;
-    if (!text) return [];
-    let oldLine: number | undefined;
-    let newLine: number | undefined;
-    return text.replace(/\r?\n$/, '').split(/\r?\n/).flatMap<{ kind: string; text: string; old?: number; next?: number }>(line => {
-      if (line.startsWith('diff --git ')) {
-        oldLine = newLine = undefined;
-        return [{ kind: 'file', text: line.slice(11).replace(/^a\/(.*?) b\/(.*)$/, '$2'), old: undefined, next: undefined }];
-      }
-      const hunk = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/.exec(line);
-      if (hunk) {
-        oldLine = Number(hunk[1]);
-        newLine = Number(hunk[2]);
-        return [{ kind: 'hunk', text: line, old: undefined, next: undefined }];
-      }
-      if (oldLine === undefined || newLine === undefined) {
-        if (/^(?:index |--- |\+\+\+ )/.test(line)) return [];
-        return [{ kind: 'meta', text: line, old: undefined, next: undefined }];
-      }
-      if (line.startsWith('+')) return [{ kind: 'added', text: line.slice(1), old: undefined, next: newLine++ }];
-      if (line.startsWith('-')) return [{ kind: 'removed', text: line.slice(1), old: oldLine++, next: undefined }];
-      if (line.startsWith(' ')) return [{ kind: 'context', text: line.slice(1), old: oldLine++, next: newLine++ }];
-      return [{ kind: 'meta', text: line, old: undefined, next: undefined }];
-    });
-  });
   private loadRunDiff(id: string, wholeRun: boolean): void {
     const pending = { id, wholeRun, loading: true };
     this.runDiff.set(pending);

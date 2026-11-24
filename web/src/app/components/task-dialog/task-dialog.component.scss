@@ -341,13 +341,27 @@
 
 .comment-actions {
   display: flex;
-  justify-content: flex-end;
+  justify-content: space-between;
+  align-items: center;
   flex-wrap: wrap;
   gap: 8px;
+  margin-top: 8px;
+
+  .comment-actions-left {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .comment-actions-right {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
 }
 
-.comment-previews,
-.review-action-row {
+.comment-previews {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
@@ -361,24 +375,73 @@
 }
 
 .review-actions {
-  padding: 12px;
-  border: 1px solid var(--sat-border-strong);
+  padding: 12px 14px;
+  border: 1px solid var(--sat-border);
   border-radius: var(--sat-radius-sm);
-}
+  background: color-mix(in srgb, var(--sat-surface) 65%, var(--sat-bg));
+  margin-bottom: 1rem;
 
-.review-actions h4 {
-  margin: 0 0 10px;
-  font-size: 0.8rem;
-  color: var(--sat-text-muted);
-}
+  .review-actions-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 8px;
 
-.review-actions .subform-hint {
-  margin-top: 8px;
-}
+    h4 {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      margin: 0;
+      font-size: 0.85rem;
+      font-weight: 600;
+      color: var(--sat-text);
 
-.review-action-row p-button {
-  flex: 0 0 auto;
-  max-width: 100%;
+      i {
+        color: var(--sat-success);
+        font-size: 0.95rem;
+      }
+    }
+  }
+
+  .review-deploy-checkbox {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 0.78rem;
+    color: var(--sat-text-muted);
+    margin-bottom: 10px;
+    cursor: pointer;
+  }
+
+  .review-action-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 10px;
+
+    .patch-buttons {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .merge-button {
+      display: flex;
+      align-items: center;
+    }
+  }
+
+  .subform-hint {
+    margin-top: 8px;
+
+    a {
+      color: var(--sat-accent);
+      text-decoration: underline;
+      cursor: pointer;
+    }
+  }
 }
 
 .patch-notice {

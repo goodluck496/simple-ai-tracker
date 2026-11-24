@@ -43,7 +43,10 @@ import { TooltipModule } from 'primeng/tooltip';
 import { escapeHtml, renderMarkdown } from '../../shared/markdown';
 import { TrackerStore } from '../../services/tracker-store.service';
 import { TrackerApiService } from '../../services/tracker-api.service';
-import { EMPTY, catchError, exhaustMap, timer } from 'rxjs';
+import { Router } from '@angular/router';
+import { HttpClient } from '@angular/common/http';
+import { EMPTY, catchError, exhaustMap, firstValueFrom, of, timer } from 'rxjs';
+import type { QueueSnapshot } from '../../../../../shared/automation/queue';
 import type { RunStatus } from '../../../../../shared/automation/contracts';
 import { formatBytes, formatDateTime, formatRelative } from '../../shared/format';
 import { PlanViewerComponent } from '../plan-viewer/plan-viewer.component';
@@ -113,6 +116,8 @@ export class TaskDialogComponent {
   public readonly imageUrl = publicUrl;
   public readonly store = inject(TrackerStore);
   private readonly confirmation = inject(ConfirmationService);
+  private readonly router = inject(Router);
+  private readonly http = inject(HttpClient);
 
   public readonly task = input<TaskCard | null>(null);
   public readonly createMode = input(false);
@@ -447,6 +452,38 @@ export class TaskDialogComponent {
       }
       this.commentDraft.set('');
       this.commentImages.set([]);
+    }
+  }
+
+  public async openLatestRun(): Promise<void> {
+    const card = this.task();
+    if (!card) return;
+
+    try {
+      const queueSnapshot = await firstValueFrom(
+        this.http.get<QueueSnapshot>('/api/automation/queue').pipe(catchError(() => of(null)))
+      );
+      const active = queueSnapshot?.items?.find(item => item.taskId === card.id);
+      if (active) {
+        this.close();
+        await this.router.navigate(['/automation/runs', 'queue'], { queryParams: { run: active.id } });
+        return;
+      }
+
+      const historySnapshot = await firstValueFrom(
+        this.http.get<QueueSnapshot>(`/api/automation/history?taskId=${encodeURIComponent(card.id)}`).pipe(catchError(() => of(null)))
+      );
+      const latest = historySnapshot?.items?.[0];
+
+      this.close();
+      await this.router.navigate(['/automation/runs', 'history'], {
+        queryParams: { taskId: card.id, run: latest?.id ?? null }
+      });
+    } catch {
+      this.close();
+      await this.router.navigate(['/automation/runs', 'history'], {
+        queryParams: { taskId: card.id }
+      });
     }
   }
 
