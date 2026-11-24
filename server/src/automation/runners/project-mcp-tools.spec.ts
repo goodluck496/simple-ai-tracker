@@ -11,6 +11,9 @@ import { ProjectAction } from '../../../../shared/automation/project.js';
 import { ModelApiRunner } from './model-api-runner.js';
 import { DEFAULT_AUTOMATION_SETTINGS } from '../../../../shared/automation/contracts.js';
 import { ProjectMcpTools } from './project-mcp-tools.js';
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
+import { openNativeProjectMcp } from './native-project-mcp.js';
 
 test('project MCP calls only whitelisted tools, bounds text and closes the isolated session', async () => {
   const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'sat-project-mcp-'));
@@ -87,6 +90,18 @@ test('worker discovers HTTP tools without executing them and exposes only approv
     await assert.rejects(tools.call(server.name, 'other', {}), /not enabled/);
     assert.match(JSON.stringify(await tools.call(server.name, 'lookup', {})), /fixture result/);
     assert.equal(calls.filter(name => name === 'tools/call').length, 1);
+    const bridge = await openNativeProjectMcp({ cwd, signal: AbortSignal.timeout(20000), projectMcp: [server] });
+    const client = new Client({ name: 'cli-fixture', version: '1' });
+    try {
+      await client.connect(new StreamableHTTPClientTransport(new URL(bridge.urls.search)));
+      assert.deepEqual((await client.listTools()).tools.map(tool => tool.name), ['lookup']);
+      await assert.rejects(client.callTool({ name: 'other' }), /not enabled/);
+      assert.match(JSON.stringify(await client.callTool({ name: 'lookup' })), /fixture result/);
+      assert.equal(calls.filter(name => name === 'tools/call').length, 2);
+    } finally {
+      await client.close();
+      await bridge.close();
+    }
   } finally {
     await tools.close();
     fixture.closeAllConnections();

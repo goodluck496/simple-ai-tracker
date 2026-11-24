@@ -13,6 +13,8 @@ import { WorktreePermissions } from './worktree-permissions.js';
 import { AntigravityStream } from './antigravity-stream.js';
 import { StageNotes } from '../../../../shared/automation/stage-note.js';
 import { openCodeOutcome } from './opencode-outcome.js';
+import { openNativeProjectMcp } from './native-project-mcp.js';
+import { bridgedMcpRunners, configureNativeProjectMcp } from './native-project-mcp-config.js';
 
 interface Envelope { type?: string; is_error?: boolean; result?: string; response?: string; status?: string; session_id?: string; conversation_id?: string; item?: { type?: string; text?: string }; part?: { type?: string; text?: string }; }
 const NATIVE_SUCCESS_STATUSES = new Set(['SUCCESS', 'success']);
@@ -160,12 +162,23 @@ export class NativeAgentRunner implements AgentRunner {
       }
     });
     let raw: string; let diagnosticTail = '';
-    try { raw = await this.executor.run({ command, args, cwd: job.cwd, stdin, env: TaskEnvironment.create(), signal: antigravity ? AbortSignal.any([job.signal, nativeStop.signal]) : job.signal, compactProgress: true,
+    let bridge: Awaited<ReturnType<typeof openNativeProjectMcp>> | undefined;
+    let mcpConfig: Awaited<ReturnType<typeof configureNativeProjectMcp>> | undefined;
+    try {
+      if (!audit && job.projectMcp?.length && bridgedMcpRunners.has(this.id)) {
+        bridge = await openNativeProjectMcp(job);
+        mcpConfig = await configureNativeProjectMcp(this.id, job, bridge.urls, args, this.executor);
+      }
+      raw = await this.executor.run({ command, args, cwd: job.cwd, stdin, env: mcpConfig?.env ?? TaskEnvironment.create(), signal: antigravity ? AbortSignal.any([job.signal, nativeStop.signal]) : job.signal, compactProgress: true,
       ...(this.id === RunnerId.OpenCode ? { progressIntervalMs: 60000, outputIdleWarningMs: 90000, outputIdleTimeoutMs: 600000 } : {}),
       onProgress, onStdout: (text) => meter.push(text),
       onStderr: this.id === RunnerId.Antigravity ? text => { diagnosticTail = (diagnosticTail + text).slice(-8000); } : undefined }); }
     catch (error) { if (nativeError) throw new Error(nativeError); throw error; }
-    finally { meter.finish(); }
+    finally {
+      meter.finish();
+      try { await mcpConfig?.close(); }
+      finally { await bridge?.close(); }
+    }
     if (nativeError) throw new Error(nativeError);
     // Some executors and formatted JSON outputs provide only the final complete document.
     if (!meter.usage) {

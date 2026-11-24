@@ -2,11 +2,12 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { bindProjectMcp, projectMcpTransport } from './mcp-transport.js';
+import { bindProjectMcp, listProjectMcpTools, projectMcpTransport } from './mcp-transport.js';
 import { validMcp } from '../../../../shared/automation/project-mcp.js';
 import { RunnerId, type AgentJob } from '../../../../shared/automation/contracts.js';
 import { SKILL_LIMITS } from '../../../../shared/automation/skills.js';
 import { RunWorkspace } from '../worker/run-workspace.js';
+import { bridgedMcpRunners } from './native-project-mcp-config.js';
 
 type Server = NonNullable<AgentJob['projectMcp']>[number];
 interface FileRule { path: string; roles?: string[]; }
@@ -80,7 +81,9 @@ export class ProjectEnvironment {
       if (names.has(server.name)) throw new Error('Duplicate project MCP name in settings or manifest: ' + server.name);
       names.add(server.name);
       if (!selected(server)) continue;
-      if (job.profile.runner !== RunnerId.Codex && job.profile.runner !== RunnerId.ModelApi) throw new Error('Managed project MCP requires Codex or Model API/Ollama; this CLI adapter does not support isolated project tools. No model was called.');
+      if (job.profile.runner !== RunnerId.Codex && job.profile.runner !== RunnerId.ModelApi && !bridgedMcpRunners.has(job.profile.runner)) {
+        throw new Error('This runner does not support managed project MCP. No model was called.');
+      }
       const bound = bindProjectMcp(server, root);
       // A project server can depend on packages installed by worker setup.
       await job.waitForPreparation?.();
@@ -123,14 +126,7 @@ export class ProjectEnvironment {
     try {
       const available = await Promise.race([(async () => {
         await client.connect(transport);
-        const tools = new Set<string>(); let cursor: string | undefined;
-        for (let page = 0; page < 20; page++) {
-          const result = await client.listTools(cursor ? { cursor } : {});
-          for (const tool of result.tools) tools.add(tool.name);
-          cursor = result.nextCursor;
-          if (!cursor) break;
-        }
-        if (cursor) throw new Error('MCP tool inventory exceeds preflight page limit.');
+        const tools = new Set((await listProjectMcpTools(client, signal)).map(tool => tool.name));
         for (const name of server.tools) if (!tools.has(name)) throw new Error('Required MCP tool unavailable: ' + name);
         return [...tools].sort();
       })(), new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error('MCP preflight timed out.')), 15000); })]);

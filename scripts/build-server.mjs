@@ -3,6 +3,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
+// The UMD entry hides relative require calls from esbuild, including in CJS bundles.
+const alias = { 'jsonc-parser': 'jsonc-parser/lib/esm/main.js' };
 
 // AGENT_INSTRUCTIONS.md вшивается в MCP-сервер как текст: инструкция всегда
 // доступна агенту через инструмент tracker_get_instructions и как server.instructions.
@@ -25,6 +27,7 @@ await build({
   format: 'esm',
   target: 'node22',
   sourcemap: true,
+  alias,
   external: ['@modelcontextprotocol/sdk', 'cross-spawn'],
   loader: { '.md': 'text' },
   tsconfig: path.join(ROOT, 'tsconfig.server.json'),
@@ -36,6 +39,7 @@ await build({
   entryPoints: [path.join(ROOT, 'server/src/bootstrap/portable-worker-entry.ts')],
   outfile: path.join(ROOT, 'dist/server/worker-host.cjs'),
   bundle: true, platform: 'node', format: 'cjs', target: 'node22',
+  alias,
   tsconfig: path.join(ROOT, 'tsconfig.server.json'), logLevel: 'info',
 });
 

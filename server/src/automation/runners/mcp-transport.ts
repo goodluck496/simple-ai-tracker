@@ -1,5 +1,7 @@
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
+import type { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import type { Tool } from '@modelcontextprotocol/sdk/types.js';
 import type { ProjectMcp } from '../../../../shared/automation/project-mcp.js';
 import { TaskEnvironment } from './task-environment.js';
 
@@ -24,4 +26,16 @@ export function projectMcpTransport(server: ProjectMcp, cwd: string) {
     if (source[key] !== undefined) env[key] = source[key]!;
   }
   return new StdioClientTransport({command:server.command,args:server.args,cwd,env,stderr:'ignore'});
+}
+
+export async function listProjectMcpTools(client: Client, signal?: AbortSignal): Promise<Tool[]> {
+  const tools: Tool[] = [];
+  let cursor: string | undefined;
+  for (let page = 0; page < 20; page++) {
+    const result = await client.listTools(cursor ? { cursor } : {}, { signal });
+    tools.push(...result.tools);
+    cursor = result.nextCursor;
+    if (!cursor) return tools;
+  }
+  throw new Error('MCP tool inventory exceeds the page limit.');
 }

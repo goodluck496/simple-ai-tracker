@@ -60,8 +60,19 @@ test('project MCP probes real stdio handshake and paginated tools; rejects unsup
     assert.ok(resolved.command);
     assert.equal(path.resolve(resolved.args[0]), path.join(cwd, 'fixture.cjs'));
     assert.match(lines.join(''), /initialize\/listTools OK/);
-    await assert.rejects(new ProjectEnvironment().prepare({ ...job, profile: { ...job.profile, runner: 'deepseek-harness' } }, () => {}), /requires Codex or Model API/);
-    assert.equal((await new ProjectEnvironment().prepare({ ...job, profile: { ...job.profile, runner: 'model-api' } }, () => {})).projectMcp?.length, 1);
+    for (const runner of ['antigravity', 'opencode', 'deepseek-harness', 'model-api'] as const) {
+      const prepared = await new ProjectEnvironment().prepare({
+        ...job, profile: { ...job.profile, runner },
+        librarySkills: [{ id: 'browser-check', name: 'Browser check', description: 'For UI checks', version: 1, content: 'Check the opened page.' }],
+      }, () => {});
+      assert.equal(prepared.projectMcp?.length, 1);
+      assert.match(prepared.prompt, /Browser check/);
+      if (runner !== 'model-api') {
+        assert.match(prepared.prompt, /\.sat\/skills\/developer\/browser-check-v1.md/);
+        assert.equal(await fs.readFile(path.join(cwd, '.sat/skills/developer/browser-check-v1.md'), 'utf8'), 'Check the opened page.');
+      }
+    }
+    await assert.rejects(new ProjectEnvironment().prepare({ ...job, profile: { ...job.profile, runner: 'claude-code' } }, () => {}), /does not support managed project MCP/);
     server.tools = ['missing']; await profile();
     await assert.rejects(new ProjectEnvironment().prepare(job, () => {}), /preflight failed: project-data/);
     server.command = 'nonexistent-sat-fixture-executable'; await profile();
