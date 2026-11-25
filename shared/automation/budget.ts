@@ -1,8 +1,26 @@
-import type { AgentRun } from './contracts.js';
+import { AUTOMATION_LIMITS, type AgentRun } from './contracts.js';
 import { TokenMeter, type TokenUsage, type UsageAttempt } from './token-usage.js';
+
+// Fallbacks describe persisted runs that predate a limit, independently of new-run presets.
+export const RUN_BUDGET_FIELDS = [
+  { key: 'maxStageToolCalls', label: 'Вызовы инструментов на этап', min: 1, max: 200, fallback: 60 },
+  { key: 'timeoutMinutes', label: 'Минут на один этап', ...AUTOMATION_LIMITS.timeoutMinutes, fallback: AUTOMATION_LIMITS.timeoutMinutes.default },
+  { key: 'maxAgentCalls', label: 'Вызовы агентов за прогон', min: 1, max: 100, fallback: 6 },
+  { key: 'maxInputTokens', label: 'Входные токены за прогон', min: 1, max: 100000000, fallback: 500000 },
+  { key: 'maxRunMinutes', label: 'Активные минуты за прогон', min: 1, max: 240, fallback: 20 },
+  { key: 'maxRevisions', label: 'Циклы доработки', ...AUTOMATION_LIMITS.revisions, fallback: AUTOMATION_LIMITS.revisions.default },
+] as const;
+export type RunBudgetField = typeof RUN_BUDGET_FIELDS[number];
+export type RunBudgetKey = RunBudgetField['key'];
 
 /** Limits exclude reported cache reads. Cache writes still consume budget. */
 export class RunBudget {
+  public static value(run: AgentRun, field: RunBudgetField): number {
+    return run.settings[field.key] ?? field.fallback;
+  }
+  public static calculated(run: AgentRun, key: RunBudgetKey): boolean {
+    return !!run.feature?.callBudget && (key === 'maxAgentCalls' || key === 'maxRevisions');
+  }
   public static chargeableInput(usage?: TokenUsage): number {
     return usage ? Math.max(0, usage.inputTokens - (usage.cachedInputTokens ?? 0)) : 0;
   }

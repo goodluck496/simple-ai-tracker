@@ -17,7 +17,7 @@ import { AgentRunRepository } from './run-repository.js';
 import { ProjectRequests } from './project-requests.js';
 import { RunPhase, RUN_PHASES, RunProgressText, type QueueItem, type QueueSnapshot } from '../../../shared/automation/queue.js';
 import { TokenMeter, type TokenUsage, type UsageAttempt } from '../../../shared/automation/token-usage.js';
-import { RunBudget } from '../../../shared/automation/budget.js';
+import { RunBudget, RUN_BUDGET_FIELDS } from '../../../shared/automation/budget.js';
 import { Decomposition } from '../../../shared/automation/decomposition.js';
 import { FeaturePlanning } from './feature-planning.js';
 import { PipelinePolicy } from '../../../shared/automation/pipeline-policy.js';
@@ -1123,14 +1123,28 @@ export class AutomationService {
     return this.runs.db.transaction(() => {
       const run = this.requireRun(id);
       if (!RESUMABLE_RUN_STATUSES.includes(run.status)) throw new TrackerError('CONFLICT', 'Stop the run before changing its budget.');
-      const value = input as Record<string, unknown>;
-      if (!value || typeof value !== 'object' || Object.keys(value).some(k => !['maxAgentCalls', 'maxInputTokens', 'maxRunMinutes'].includes(k))) throw new TrackerError('VALIDATION_FAILED', 'Only run budget limits can be changed.');
-      if (run.feature?.callBudget && value.maxAgentCalls !== undefined && value.maxAgentCalls !== run.settings.maxAgentCalls) throw new TrackerError('VALIDATION_FAILED', 'Feature call count is calculated from the plan; only token and time budgets can be raised.');
-      const settings = new AutomationSettingsValidator().validate({ ...run.settings, ...value });
-      for (const key of ['maxAgentCalls', 'maxInputTokens', 'maxRunMinutes'] as const) if ((settings[key] ?? 0) < (run.settings[key] ?? 0)) throw new TrackerError('VALIDATION_FAILED', 'Existing run limits can only increase.');
-      const { maxAgentCalls, maxInputTokens, maxRunMinutes, maxStageToolCalls, timeoutMinutes } = run.settings;
-      const updated = { ...run, settings, checkpointBudgets: run.checkpointBudgets ?? { maxAgentCalls, maxInputTokens, maxRunMinutes, maxStageToolCalls, timeoutMinutes }, updatedAt: this.clock.now() };
-      this.runs.save(updated); this.runs.event(id, 'budget', `User changed limits: calls=${settings.maxAgentCalls}, input=${settings.maxInputTokens}, minutes=${settings.maxRunMinutes}. Spent usage retained.`, this.clock.now());
+      if (!input || typeof input !== 'object' || Array.isArray(input)) throw new TrackerError('VALIDATION_FAILED', 'Only run budget limits can be changed.');
+      const settings = { ...run.settings };
+      const changes: string[] = [];
+      for (const [key, value] of Object.entries(input)) {
+        const field = RUN_BUDGET_FIELDS.find(entry => entry.key === key);
+        if (!field) throw new TrackerError('VALIDATION_FAILED', 'Only run budget limits can be changed.');
+        const previous = RunBudget.value(run, field);
+        if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < field.min || value > field.max) {
+          throw new TrackerError('VALIDATION_FAILED', `${field.label} — введите целое число от ${field.min} до ${field.max}.`);
+        }
+        if (value === previous) continue;
+        if (RunBudget.calculated(run, field.key)) throw new TrackerError('VALIDATION_FAILED', 'Число вызовов и резерв доработок этой фичи определены планом.');
+        if (value < previous) throw new TrackerError('VALIDATION_FAILED', 'Existing run limits can only increase.');
+        settings[field.key] = value;
+        changes.push(`${field.label}: ${previous} → ${value}`);
+      }
+      if (!changes.length) return this.publicRun(run);
+      const { maxAgentCalls, maxInputTokens, maxRunMinutes, maxStageToolCalls, timeoutMinutes, maxRevisions } = run.settings;
+      const checkpointBudgets = { maxRevisions, ...(run.checkpointBudgets ?? { maxAgentCalls, maxInputTokens, maxRunMinutes, maxStageToolCalls, timeoutMinutes }) };
+      const updated = { ...run, settings, checkpointBudgets, updatedAt: this.clock.now() };
+      this.runs.save(updated);
+      this.runs.event(id, 'budget', changes.join(', '), updated.updatedAt);
       return this.publicRun(updated);
     });
   }

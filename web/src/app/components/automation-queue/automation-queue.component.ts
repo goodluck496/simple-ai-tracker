@@ -16,7 +16,7 @@ import { PROJECT_LIMITS, ProjectAction, ProjectRequestStatus, type ProjectDiff, 
 import type { ModelCatalogInput, ModelOption } from '../../../../../shared/automation/model-catalog';
 import { CheckboxModule } from 'primeng/checkbox';
 import { TokenMeter } from '../../../../../shared/automation/token-usage';
-import { RunBudget } from '../../../../../shared/automation/budget';
+import { RUN_BUDGET_FIELDS, RunBudget, type RunBudgetKey } from '../../../../../shared/automation/budget';
 import { agentProfileName } from '../../../../../shared/automation/team-profiles';
 import { runFailure } from '../../../../../shared/automation/run-failure';
 import { RunConsoleComponent } from '../run-console/run-console.component';
@@ -102,19 +102,21 @@ export class AutomationQueueComponent implements OnInit {
   });
   public readonly budgetEditing = signal(false);
   public deployPreviewPatch = false;
-  public budgetCalls = 6;
-  public budgetInput = 500000;
-  public budgetMinutes = 20;
+  public readonly budgetFields = RUN_BUDGET_FIELDS;
+  public budgetDraft: Partial<Record<RunBudgetKey, number | null>> = {};
+  private originalBudget: Partial<Record<RunBudgetKey, number>> = {};
   public editBudget(run: AgentRun): void {
-    this.budgetCalls = run.settings.maxAgentCalls ?? 6; this.budgetInput = run.settings.maxInputTokens ?? 500000;
-    this.budgetMinutes = run.settings.maxRunMinutes ?? 20; this.budgetEditing.set(true);
+    this.originalBudget = Object.fromEntries(this.budgetFields.map(field => [field.key, RunBudget.value(run, field)]));
+    this.budgetDraft = { ...this.originalBudget };
+    this.budgetEditing.set(true);
   }
   public saveBudget(run: AgentRun): void {
     if (this.busy()) return;
     this.busy.set(true);
-    this.http.post(`/api/automation/runs/${run.id}/budget`, { maxAgentCalls: this.budgetCalls, maxInputTokens: this.budgetInput, maxRunMinutes: this.budgetMinutes })
+    const changes = this.budgetFields.filter(({ key }) => this.budgetDraft[key] !== this.originalBudget[key]);
+    this.http.post(`/api/automation/runs/${run.id}/budget`, Object.fromEntries(changes.map(({ key }) => [key, this.budgetDraft[key]])))
       .pipe(finalize(() => this.busy.set(false)), takeUntilDestroyed(this.destroyRef)).subscribe({
-        next: () => { this.budgetEditing.set(false); this.refresh.next(); this.notice.set('Лимиты сохранены. Потраченный бюджет учтён; нажмите «Продолжить с места остановки».'); },
+        next: () => { this.budgetEditing.set(false); this.refresh.next(); this.notice.set('Лимиты сохранены. Чтобы продолжить этот прогон, нажмите «Продолжить».'); },
         error: (error: unknown) => this.error.set(this.message(error)),
       });
   }

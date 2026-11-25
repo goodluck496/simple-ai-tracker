@@ -264,6 +264,8 @@ export class PipelineWorker {
         // Failure comments and run.summary change on infrastructure failure, so they are not cache keys.
         const checkpoint = new StageCheckpoint(cwd, run.stage, run.revision, (args) => git(args, cwd));
         const { maxAgentCalls, maxInputTokens, maxRunMinutes, maxStageToolCalls, timeoutMinutes, ...semanticSettings } = run.settings;
+        // Existing checkpoints and native sessions include the original revision allowance in their key.
+        semanticSettings.maxRevisions = run.checkpointBudgets?.maxRevisions ?? run.settings.maxRevisions;
         const plan = pack.plan as { version?: number; content?: string } | null;
         const selfPlanned = run.workPlan && run.workPlan.taskId === pack.id && run.workPlan.stage === run.stage && run.workPlan.revision === run.revision
           && run.workPlan.version === plan?.version && run.workPlan.contentHash === StageCheckpoint.key(plan?.content);

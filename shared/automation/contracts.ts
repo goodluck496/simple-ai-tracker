@@ -90,7 +90,7 @@ export interface AutomationSettings {
   timeoutMinutes: number;
   maxRevisions: number;
   maxAgentCalls?: number;
-  /** Native CLI: advisory threshold; managed Model API: hard tool-loop limit. */
+  /** Hard limit for Antigravity and Model API, advisory for Codex. */
   maxStageToolCalls?: number;
   maxInputTokens?: number;
   maxRunMinutes?: number;
@@ -156,7 +156,7 @@ export interface AgentRun {
   stageMemory?: import('./stage-note.js').StageMemory;
   cleanup?: import('./cleanup.js').CleanupState;
   budgetApproval?: { requiredCalls: number; currentCalls: number };
-  checkpointBudgets?: Pick<AutomationSettings, 'maxAgentCalls' | 'maxInputTokens' | 'maxRunMinutes' | 'maxStageToolCalls' | 'timeoutMinutes'>;
+  checkpointBudgets?: Pick<AutomationSettings, 'maxAgentCalls' | 'maxInputTokens' | 'maxRunMinutes' | 'maxStageToolCalls' | 'timeoutMinutes'> & { maxRevisions?: number };
   feature?: import('./decomposition.js').FeatureExecution;
   integrationSourceSha?: string;
   mergeReviewRequired?: boolean;

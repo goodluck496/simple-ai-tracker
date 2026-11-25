@@ -662,9 +662,14 @@
                   <button pButton type="button" severity="secondary" size="small" [disabled]="busy()" (click)="editBudget(run)">Изменить бюджет запуска</button>
                   @if (budgetEditing()) {
                     <div class="budget-edit-form" aria-label="Изменение бюджета запуска">
-                      <label>Вызовы агентов <p-inputnumber ariaLabel="Лимит вызовов" [disabled]="!!run.feature?.callBudget" [(ngModel)]="budgetCalls" [useGrouping]="false" [fluid]="true" /></label>
-                      <label>Накопленный вход <p-inputnumber ariaLabel="Лимит входных токенов" [(ngModel)]="budgetInput" [useGrouping]="false" [fluid]="true" /></label>
-                      <label>Активные минуты <p-inputnumber ariaLabel="Лимит минут" [(ngModel)]="budgetMinutes" [useGrouping]="false" [fluid]="true" /></label>
+                      @for (field of budgetFields; track field.key) {
+                        <label>{{ field.label }}
+                          <p-inputnumber [ariaLabel]="field.label" [(ngModel)]="budgetDraft[field.key]"
+                            [min]="runBudget.value(run, field)" [max]="field.max" [disabled]="runBudget.calculated(run, field.key)"
+                            [useGrouping]="false" [fluid]="true" />
+                        </label>
+                      }
+                      @if (run.feature?.callBudget) { <p class="muted">Число вызовов агентов и резерв доработок определены планом фичи.</p> }
                       <p class="muted">Потраченные токены, вызовы и время сохраняются. Лимиты можно только увеличить.</p>
                       <div class="budget-buttons">
                         <button pButton type="button" size="small" [disabled]="busy()" (click)="saveBudget(run)">Сохранить лимиты</button>

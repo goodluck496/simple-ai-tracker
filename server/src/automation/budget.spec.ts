@@ -68,6 +68,31 @@ test('run budgets survive resume, exclude cache reads, and fence new agent calls
   } finally { app.close(); }
 });
 
+test('stopped run resumes with higher stage limits and the original checkpoint budget', () => {
+  const app = createContainer({ config: { dbPath: ':memory:' }, logger: new SilentLogger() });
+  try {
+    const service = app.automationService;
+    service.configure(exampleSettings());
+    service.enqueue(app.taskService.createTask({ title: 'Stage tool threshold' }).id);
+    const run = service.claim('fixture')!;
+    assert.throws(() => service.extendBudget(run.id, { maxStageToolCalls: 90 }), /Stop the run/);
+    service.beginStage(run.id, run.leaseToken!);
+    service.fail(run.id, run.leaseToken!, 'Antigravity tool limit');
+    service.extendBudget(run.id, { maxStageToolCalls: 90, timeoutMinutes: 45 });
+    assert.throws(() => service.extendBudget(run.id, { maxStageToolCalls: 60 }), /only increase/);
+    assert.throws(() => service.extendBudget(run.id, { maxStageToolCalls: 201 }));
+    service.extendBudget(run.id, { maxRevisions: 3 });
+    const resumed = service.resume(run.id);
+    assert.equal(resumed.settings.maxStageToolCalls, 90);
+    assert.equal(resumed.settings.timeoutMinutes, 45);
+    assert.equal(resumed.settings.maxRevisions, 3);
+    assert.equal(resumed.checkpointBudgets?.maxRevisions, run.settings.maxRevisions);
+    assert.equal(resumed.checkpointBudgets?.maxStageToolCalls, 60);
+    assert.equal(resumed.usageAttempts?.length, 1);
+    assert.equal(service.settings().maxStageToolCalls, 60);
+  } finally { app.close(); }
+});
+
 test('only agent execution consumes time across preparation, checks and resume', () => {
   let milliseconds = Date.parse('2026-10-30T00:00:00Z');
   const app = createContainer({ config: { dbPath: ':memory:' }, clock: { now: () => new Date(milliseconds).toISOString() }, logger: new SilentLogger() });
