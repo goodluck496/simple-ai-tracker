@@ -228,7 +228,9 @@ export class TrackerStore {
             this.tasksSignal.set(this.mergeTasks(response.tasks));
           }
           this.onlineSignal.set(true);
-          this.errorSignal.set(null);
+          if (!this.explicitError) {
+            this.errorSignal.set(null);
+          }
           resolve();
         },
         error: (error: unknown) => {
@@ -419,25 +421,38 @@ export class TrackerStore {
 
   // ------------------------------------------------------------- карточки
 
+  private openCardSequence = 0;
+
   public async openCard(id: string): Promise<void> {
+    const seq = ++this.openCardSequence;
+    if (this.openTaskSignal()?.id !== id) {
+      this.openTaskSignal.set(null);
+    }
     this.busySignal.set(true);
     await new Promise<void>((resolve) => {
       this.api.getTask(id).subscribe({
         next: (response) => {
-          this.openTaskSignal.set(response.task);
-          this.errorSignal.set(null);
+          if (this.openCardSequence === seq) {
+            this.openTaskSignal.set(response.task);
+            this.errorSignal.set(null);
+          }
           resolve();
         },
         error: (error: unknown) => {
-          this.errorSignal.set(TrackerApiService.describeError(error));
+          if (this.openCardSequence === seq) {
+            this.errorSignal.set(TrackerApiService.describeError(error));
+          }
           resolve();
         },
       });
     });
-    this.busySignal.set(false);
+    if (this.openCardSequence === seq) {
+      this.busySignal.set(false);
+    }
   }
 
   public closeCard(): void {
+    this.openCardSequence++;
     this.openTaskSignal.set(null);
   }
 
@@ -445,6 +460,18 @@ export class TrackerStore {
     const current = this.openTaskSignal();
     if (!current) return;
     await this.openCard(current.id);
+  }
+
+  private explicitError = false;
+
+  public setError(error: string | null): void {
+    this.explicitError = error !== null;
+    this.errorSignal.set(error);
+  }
+
+  public clearError(): void {
+    this.explicitError = false;
+    this.errorSignal.set(null);
   }
 
   public async createTask(payload: CreateTaskPayload): Promise<TaskCard | null> {

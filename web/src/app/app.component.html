@@ -102,19 +102,29 @@
   </div>
 
   @if (store.error(); as error) {
-    <div class="app-error" role="alert">{{ error }}</div>
+    <div class="app-error" role="alert">
+      <span>{{ error }}</span>
+      <button pButton size="small" severity="secondary" (click)="openBoard()">Вернуться на доску</button>
+    </div>
   }
 
   <!-- Боковая карточка задачи -->
-  @if (!runsVisible() && store.openTask(); as card) {
-    <sat-task-dialog [task]="card" (closed)="closeCard()" />
-  } @else if (createMode()) {
+  @if (!runsVisible() && createMode()) {
     <sat-task-dialog
       [createMode]="true"
       [createType]="createType()"
       [createStatus]="createStatus()"
       [parentId]="createParentId()"
       (closed)="closeCreate()"
+    />
+  }
+  @if (!runsVisible() && !createMode() && store.openTask(); as card) {
+    <sat-task-dialog
+      [task]="card"
+      [initialTab]="activeItemTab()"
+      (closed)="closeCard()"
+      (tabChanged)="onItemTabChange($event)"
+      (taskOpened)="onOpenLinkedTask($event)"
     />
   }
 

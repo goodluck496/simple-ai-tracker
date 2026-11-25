@@ -25,6 +25,7 @@ import { COLUMN_SORT_OPTIONS, ColumnSorting } from '../../../../../shared/board/
 import type { StatusMeta, TaskStatus, TaskSummary, TaskType } from '../../models/tracker.models';
 import { TrackerStore, type FeatureGroup } from '../../services/tracker-store.service';
 import { AUTOMATION_START_TASK_STATUSES } from '../../../../../shared/automation/contracts';
+import { TaskLinkService } from '../../services/task-link';
 
 /** Подписи, иконки и severity типов задач для PrimeNG-бейджа карточки. */
 const TYPE_LABELS: Readonly<Record<TaskType, string>> = {
@@ -126,6 +127,7 @@ function formatRelativeDate(isoDate: string, now: number = Date.now()): string {
 })
 export class BoardComponent implements AfterViewInit, OnDestroy {
   private readonly store = inject(TrackerStore);
+  private readonly taskLink = inject(TaskLinkService);
   public readonly sorting = inject(BoardSortService);
   public readonly sortOptions = COLUMN_SORT_OPTIONS.map(option => ({ ...option }));
   private readonly ngZone = inject(NgZone);
@@ -241,7 +243,7 @@ export class BoardComponent implements AfterViewInit, OnDestroy {
   }
 
   public onCardClick(id: string): void {
-    void this.store.openCard(id);
+    void this.taskLink.navigateToTask(id, undefined, { state: { inAppOrigin: true } });
   }
 
   /** Enter на самой карточке (не на вложенной кнопке) открывает её. */
@@ -529,7 +531,7 @@ export class BoardComponent implements AfterViewInit, OnDestroy {
 
   public onEdit(event: Event, task: TaskSummary): void {
     event.stopPropagation();
-    void this.store.openCard(task.id);
+    void this.taskLink.navigateToTask(task.id, undefined, { state: { inAppOrigin: true } });
   }
 
   public onDelete(event: Event, task: TaskSummary): void {

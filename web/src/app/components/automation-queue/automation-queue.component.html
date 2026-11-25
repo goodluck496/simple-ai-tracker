@@ -805,8 +805,13 @@
 
 @if (taskContext(); as origin) {
   @if (store.openTask(); as card) {
-    <sat-task-dialog [task]="card" [canResumeRun]="card.id === origin.taskId && canResumeFromCard(origin.runId)"
+    <sat-task-dialog [task]="card" [initialTab]="taskTab()"
+      [canResumeRun]="card.id === origin.initialTaskId && canResumeFromCard(origin.runId)"
       [resumeRunBusy]="busy()" [resumeRunError]="error()"
-      (closed)="closeTask()" (questionUpdated)="refreshRun()" (resumeRun)="resumeFromCard(origin.runId)" />
+      (closed)="onCloseTaskFromDialog()"
+      (tabChanged)="onTaskTabChanged($event)"
+      (taskOpened)="openTask({ taskId: $event, runId: origin.runId, initialTaskId: origin.initialTaskId })"
+      (questionUpdated)="refreshRun()"
+      (resumeRun)="resumeFromCard(origin.runId)" />
   }
 }

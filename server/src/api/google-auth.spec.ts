@@ -150,3 +150,84 @@ test('AUTH=false serves UI and permits API reads and mutations without OAuth or 
     fs.rmSync(directory, { recursive: true, force: true });
   }
 });
+
+test('Google auth preserves item links and tabs, rejects external destinations, and normalizes proxy prefix', async () => {
+  const auth = new GoogleAuth({
+    enabled: true,
+    clientId: 'test-client',
+    clientSecret: 'test-secret',
+    sessionSecret: secret,
+    redirectUri: 'https://nekitekat.online/tracker/api/auth/google/callback',
+    fetch: (async (input: string | URL | Request, init?: RequestInit) => {
+      if (String(input).includes('/token')) {
+        return Response.json({ access_token: 'mock-token' });
+      }
+      return Response.json({ email: owner, email_verified: true, sub: 'google-user-id' });
+    }) as typeof fetch,
+  });
+  const app = createContainer({ config: { dbPath: ':memory:' }, db: new NodeSqliteDatabase({ file: ':memory:' }), logger: new SilentLogger() });
+  const server = createApiServer(app, { auth });
+  await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+  const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  const get = (path: string, headers: Record<string, string> = {}) => fetch(base + path, { headers, redirect: 'manual' });
+
+  try {
+    // 1. Direct hit on /item/SAT-62/plan?workspace=default (proxy stripped /tracker/)
+    const promptProxy = await get('/item/SAT-62/plan?workspace=default');
+    assert.equal(promptProxy.status, 200);
+    const html1 = await promptProxy.text();
+    assert.match(html1, /href="\/tracker\/api\/auth\/google\?returnTo=item%2FSAT-62%2Fplan%3Fworkspace%3Ddefault"/);
+
+    // 2. Direct hit on /tracker/item/create?workspace=default
+    const promptDirect = await get('/tracker/item/create?workspace=default');
+    assert.equal(promptDirect.status, 200);
+    const html2 = await promptDirect.text();
+    assert.match(html2, /href="\/tracker\/api\/auth\/google\?returnTo=item%2Fcreate%3Fworkspace%3Ddefault"/);
+
+    // 3. Complete login with returnTo for specific tab
+    async function loginWithReturnTo(returnTo?: string) {
+      const start = await get('/api/auth/google' + (returnTo ? `?returnTo=${encodeURIComponent(returnTo)}` : ''));
+      assert.equal(start.status, 303);
+      const location = new URL(start.headers.get('location')!);
+      const state = location.searchParams.get('state')!;
+      const cookie = start.headers.getSetCookie()[0].split(';')[0];
+      return get(`/api/auth/google/callback?code=abc&state=${state}`, { Cookie: cookie });
+    }
+
+    // Tab return: /tracker/item/SAT-62/plan?workspace=default
+    const resTab = await loginWithReturnTo('item/SAT-62/plan?workspace=default');
+    assert.equal(resTab.status, 303);
+    assert.equal(resTab.headers.get('location'), '/tracker/item/SAT-62/plan?workspace=default');
+
+    // Create return: /tracker/item/create?workspace=default
+    const resCreate = await loginWithReturnTo('item/create?workspace=default');
+    assert.equal(resCreate.status, 303);
+    assert.equal(resCreate.headers.get('location'), '/tracker/item/create?workspace=default');
+
+    // Single prefix check when returnTo includes /tracker/
+    const resPrefixed = await loginWithReturnTo('/tracker/item/SAT-62/questions');
+    assert.equal(resPrefixed.status, 303);
+    assert.equal(resPrefixed.headers.get('location'), '/tracker/item/SAT-62/questions');
+
+    // Normal login without returnTo returns to basePath
+    const resNormal = await loginWithReturnTo();
+    assert.equal(resNormal.status, 303);
+    assert.equal(resNormal.headers.get('location'), '/tracker/');
+
+    // External or invalid destination rejected, returns to basePath
+    const resEvil1 = await loginWithReturnTo('https://evil.example/phish');
+    assert.equal(resEvil1.status, 303);
+    assert.equal(resEvil1.headers.get('location'), '/tracker/');
+
+    const resEvil2 = await loginWithReturnTo('//evil.example');
+    assert.equal(resEvil2.status, 303);
+    assert.equal(resEvil2.headers.get('location'), '/tracker/');
+
+    const resInvalidTab = await loginWithReturnTo('item/SAT-62/invalid-tab');
+    assert.equal(resInvalidTab.status, 303);
+    assert.equal(resInvalidTab.headers.get('location'), '/tracker/');
+  } finally {
+    await new Promise<void>(resolve => server.close(() => resolve()));
+    app.close();
+  }
+});

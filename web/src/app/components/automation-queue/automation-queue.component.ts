@@ -33,6 +33,7 @@ import { TASK_STATUS_TITLES } from '../../../../../shared/automation/task-readin
 import { WorkspaceService } from '../../services/workspace.service';
 import { TrackerStore } from '../../services/tracker-store.service';
 import { TaskDialogComponent } from '../task-dialog/task-dialog.component';
+import { type DialogTab, resolveDefaultTab, TaskLinkService } from '../../services/task-link';
 import { filterQueueItems } from './queue-search';
 import { formatQueueDate, sortRunHistory } from './queue-dates';
 
@@ -82,7 +83,10 @@ export class AutomationQueueComponent implements OnInit {
   public readonly confirmation = signal<'cleanup' | 'delete' | null>(null);
   public discard = false;
   private readonly selectedCache = signal<QueueItem | undefined>(undefined);
-  public readonly taskContext = signal<{ taskId: string; runId: string } | null>(null);
+  public readonly taskContext = signal<{ taskId: string; runId: string; initialTaskId: string } | null>(null);
+  public readonly taskTab = signal<DialogTab | null>(null);
+  private readonly taskLink = inject(TaskLinkService);
+  private queueReturnUrl: string | null = null;
   public readonly error = signal('');
   public readonly pollError = signal('');
   private readonly dismissedPollError = signal('');
@@ -387,16 +391,82 @@ export class AutomationQueueComponent implements OnInit {
     this.navigate(this.view(), id, this.historyTask(), this.sourceEventId(), this.showDetails(), panel);
   }
   public configure(): void { void this.router.navigate(['/automation/settings/worker']); }
-  public async openTask(context: { taskId: string; runId: string }): Promise<void> {
-    this.store.closeCard();
-    this.taskContext.set(context);
+  public async openTask(context: { taskId: string; runId: string; initialTaskId?: string; tab?: DialogTab }): Promise<void> {
+    const isNewOrigin = !this.taskContext();
+    if (isNewOrigin) {
+      this.queueReturnUrl = this.router.url;
+    }
+    const initialTaskId = context.initialTaskId ?? context.taskId;
+    const taskContextValue = { taskId: context.taskId, runId: context.runId, initialTaskId };
+    this.taskContext.set(taskContextValue);
     await this.store.openCard(context.taskId);
-    if (this.taskContext() === context && !this.store.openTask()) this.taskContext.set(null);
+    if (this.taskContext() !== taskContextValue || !this.store.openTask()) {
+      if (this.taskContext() === taskContextValue) this.taskContext.set(null);
+      return;
+    }
+    const card = this.store.openTask()!;
+    const tab = context.tab ?? resolveDefaultTab(card);
+    this.taskTab.set(tab);
+
+    const canonicalTree = this.taskLink.taskTree(context.taskId, tab, this.workspace.current());
+    const queueState = {
+      queueContext: {
+        returnUrl: this.queueReturnUrl,
+        view: this.view(),
+        run: this.routedRun,
+        taskId: this.historyTask(),
+        eventId: this.sourceEventId(),
+        details: this.showDetails(),
+        panel: this.runPage(),
+      },
+    };
+    if (isNewOrigin) {
+      void this.router.navigate([], {
+        relativeTo: this.route,
+        queryParamsHandling: 'preserve',
+        browserUrl: canonicalTree,
+        state: queueState,
+      });
+    } else {
+      void this.router.navigate([], {
+        relativeTo: this.route,
+        queryParamsHandling: 'preserve',
+        replaceUrl: true,
+        browserUrl: canonicalTree,
+        state: queueState,
+      });
+    }
   }
+
+  public onTaskTabChanged(tab: DialogTab): void {
+    const current = this.taskContext();
+    if (!current) return;
+    this.taskTab.set(tab);
+    const canonicalTree = this.taskLink.taskTree(current.taskId, tab, this.workspace.current());
+    void this.router.navigate([], {
+      relativeTo: this.route,
+      queryParamsHandling: 'preserve',
+      replaceUrl: true,
+      browserUrl: canonicalTree,
+    });
+  }
+
   public closeTask(): void {
     if (!this.taskContext()) return;
     this.taskContext.set(null);
+    this.taskTab.set(null);
     this.store.closeCard();
+    this.queueReturnUrl = null;
+  }
+
+  public onCloseTaskFromDialog(): void {
+    const hasQueueContext = (window.history.state as { queueContext?: unknown } | null)?.queueContext;
+    this.closeTask();
+    if (hasQueueContext && window.history.length > 1) {
+      window.history.back();
+    } else if (this.queueReturnUrl) {
+      void this.router.navigateByUrl(this.queueReturnUrl);
+    }
   }
   public toggleLeftSidebar(): void { this.leftSidebarOpen.update(v => !v); }
   private loadInspectorWidth(): number {

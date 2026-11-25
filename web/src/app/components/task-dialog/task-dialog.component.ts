@@ -53,8 +53,7 @@ import { formatBytes, formatDateTime, formatRelative } from '../../shared/format
 import { PlanViewerComponent } from '../plan-viewer/plan-viewer.component';
 import { DecisionLogComponent } from '../decision-log/decision-log.component';
 import { QuestionsPanelComponent } from '../questions-panel/questions-panel.component';
-
-type DialogTab = 'overview' | 'plan' | 'questions' | 'discussion' | 'relations';
+import { type DialogTab, isDialogTab, TaskLinkService } from '../../services/task-link';
 
 /** Ширина сайдбара: как в прежнем UI (тянется за левую границу, запоминается). */
 const SIDEBAR_DEFAULT_WIDTH = 720;
@@ -125,6 +124,7 @@ export class TaskDialogComponent {
   public readonly createType = input<TaskType>('task');
   public readonly createStatus = input<TaskStatus>('backlog');
   public readonly parentId = input<string | null>(null);
+  public readonly initialTab = input<DialogTab | null>(null);
   public readonly canResumeRun = input(false);
   public readonly resumeRunBusy = input(false);
   public readonly resumeRunError = input('');
@@ -132,13 +132,17 @@ export class TaskDialogComponent {
   public readonly closed = output<void>();
   public readonly questionUpdated = output<void>();
   public readonly resumeRun = output<void>();
+  public readonly tabChanged = output<DialogTab>();
+  public readonly taskOpened = output<string>();
 
   public readonly tab = signal<DialogTab>('overview');
+  private readonly taskLink = inject(TaskLinkService);
 
   /** PrimeNG p-tabs отдаёт значение как string | number — приводим к типу вкладки. */
   public onTabChange(value: string | number | undefined): void {
-    if (typeof value === 'string') {
-      this.tab.set(value as DialogTab);
+    if (typeof value === 'string' && isDialogTab(value)) {
+      this.tab.set(value);
+      this.tabChanged.emit(value);
     }
   }
 
@@ -241,6 +245,12 @@ export class TaskDialogComponent {
         error: () => this.stoppedRework.set(false),
       });
       onCleanup(() => request.unsubscribe());
+    });
+    effect(() => {
+      const explicitTab = this.initialTab();
+      if (explicitTab) {
+        untracked(() => this.tab.set(explicitTab));
+      }
     });
     effect(() => {
       const card = this.task();
@@ -414,9 +424,8 @@ export class TaskDialogComponent {
         await this.store.attachFile(created.id, pending.name, pending.content);
       }
       this.pendingAttachments.set([]);
-      // После создания сразу показываем карточку в сайдбаре (как «Показать» в прежнем UI).
-      await this.store.openCard(created.id);
-      this.closed.emit();
+      // После создания заменяем URL формы ссылкой на созданную карточку.
+      void this.taskLink.navigateToTask(created.id, 'overview', { replaceUrl: true });
       return;
     }
 
@@ -576,6 +585,7 @@ export class TaskDialogComponent {
     this.clarificationPlanChanged.set(false);
     this.showClarificationForm.set(false);
     this.tab.set('discussion');
+    this.tabChanged.emit('discussion');
   }
 
   public async submitPlan(): Promise<void> {
@@ -632,7 +642,7 @@ export class TaskDialogComponent {
   }
 
   public openTask(id: string): void {
-    void this.store.openCard(id);
+    this.taskOpened.emit(id);
   }
 
   // ------------------------------------------------- картинки и вложения
@@ -844,7 +854,8 @@ export class TaskDialogComponent {
     this.commentImages.set([]);
     this.deployPreviewPatch = false;
     this.patchNotice.set('');
-    this.tab.set(card.openQuestionsCount > 0 ? 'questions' : 'overview');
+    const explicitTab = this.initialTab();
+    this.tab.set(explicitTab ?? (card.openQuestionsCount > 0 ? 'questions' : 'overview'));
   }
 
   public resetAfterCreate(): void {

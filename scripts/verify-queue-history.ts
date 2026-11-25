@@ -228,7 +228,7 @@ try {
       path: '/fixture', diff: { text: 'diff --git a/item.txt b/item.txt\n@@ -1 +1 @@\n-old\n+new', truncated: false },
     });
   });
-  await queue.getByRole('region', { name: 'Изменения по строкам' }).getByText('new', { exact: true }).waitFor();
+  await queue.getByRole('region', { name: /Содержимое Git Diff|Изменения по строкам/ }).getByText('new', { exact: true }).waitFor();
   await page.goBack();
   await queue.getByRole('heading', { name: 'Изменения последнего коммита' }).waitFor({ state: 'hidden' });
   assert.equal(new URL(page.url()).searchParams.get('run'), passRunId);

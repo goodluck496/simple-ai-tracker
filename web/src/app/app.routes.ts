@@ -2,6 +2,9 @@ import type { Routes } from '@angular/router';
 
 export const appRoutes: Routes = [
   { path: '', pathMatch: 'full', children: [] },
+  { path: 'item/create', pathMatch: 'full', children: [] },
+  { path: 'item/:id/:tab', pathMatch: 'full', children: [] },
+  { path: 'item/:id', pathMatch: 'full', children: [] },
   { path: 'automation', pathMatch: 'full', redirectTo: 'automation/settings/team' },
   { path: 'automation/settings', pathMatch: 'full', redirectTo: 'automation/settings/team' },
   {

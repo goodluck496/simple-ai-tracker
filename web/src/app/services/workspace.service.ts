@@ -80,6 +80,11 @@ export class WorkspaceService {
     if (!keepLink) {
       const url = new URL(window.location.href);
       for (const key of ['workspace', 'automationRun', 'run', 'eventId', 'taskId', 'scope', 'details', 'panel']) url.searchParams.delete(key);
+      const baseHref = document.baseURI ? new URL(document.baseURI).pathname : '/';
+      const cleanPath = url.pathname.replace(baseHref.replace(/\/$/, ''), '');
+      if (cleanPath.startsWith('/item/') || cleanPath === '/item' || cleanPath.startsWith('item/')) {
+        url.pathname = baseHref;
+      }
       window.history.replaceState(window.history.state, '', url);
     }
     window.location.reload();
