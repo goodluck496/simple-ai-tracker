@@ -2,7 +2,7 @@ import type { AppContainer } from '../../bootstrap/container.js';
 import type { Router } from '../router.js';
 import { bodyField, requireBodyField, sendJson } from '../router.js';
 import { AGENT_ROLES, RUNNER_IDS } from '../../../../shared/automation/contracts.js';
-import type { ProjectInput } from '../../../../shared/automation/project.js';
+import { ProjectAction, type ProjectInput } from '../../../../shared/automation/project.js';
 import { TASK_SELECTION_LIMIT } from '../../../../shared/automation/task-readiness.js';
 import { RunLogDownload } from '../../automation/run-log-download.js';
 import { TrackerError } from '../../core/errors.js';
@@ -43,7 +43,13 @@ export function registerAutomationRoutes(router: Router, app: AppContainer): voi
   router.post('/api/automation/runs/:id/restore', ({ params, res }) => { app.automationService.restore(params.id); sendJson(res, 200, { ok: true }); });
   router.post('/api/automation/runs/:id/restart', ({ params, res }) => sendJson(res, 201, { run: app.automationService.restart(params.id) }));
   router.get('/api/automation/project-passport', ({ res }) => sendJson(res, 200, { passport: app.automationService.projects.passport() ?? null }));
-  router.post('/api/automation/project-requests', ({ body, res }) => sendJson(res, 201, app.automationService.projects.enqueue(body as ProjectInput)));
+  router.post('/api/automation/project-requests', ({ body, res }) => {
+    const input = body as ProjectInput;
+    const request = input?.action === ProjectAction.RunScript
+      ? app.automationService.requestProjectScript(input.path, input.script)
+      : app.automationService.projects.enqueue(input);
+    sendJson(res, 201, request);
+  });
   router.get('/api/automation/project-requests/:id', ({ params, res }) => sendJson(res, 200, app.automationService.projects.get(params.id)));
   router.get('/api/automation/catalog', ({ res }) => sendJson(res, 200, { roles: AGENT_ROLES, runners: RUNNER_IDS }));
   router.get('/api/automation/settings', ({ res }) => sendJson(res, 200, app.automationService.settings()));

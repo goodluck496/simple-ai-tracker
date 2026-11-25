@@ -5,7 +5,7 @@ import { PostOperationRunner } from './post-operation-runner.js';
 import { ProcessExecutor } from '../runners/process-executor.js';
 import type { TrackerChannel } from './mcp-client.js';
 import { AutomationTool } from '../../../../shared/automation/protocol.js';
-import { ProjectAction, PROJECT_LIMITS, type PreviewPatch, type ProjectInput, type ProjectRequest, type ProjectResult } from '../../../../shared/automation/project.js';
+import { ProjectAction, PROJECT_LIMITS, isProjectScript, packageScript, type PreviewPatch, type ProjectInput, type ProjectRequest, type ProjectResult } from '../../../../shared/automation/project.js';
 import { WindowsFolderPicker, type FolderPicker } from './folder-picker.js';
 import { WorkerModelCatalog } from './model-catalog.js';
 import { researchProject } from './project-research.js';
@@ -14,6 +14,7 @@ import type { ExecutionControl } from './execution-supervisor.js';
 import { readProjectPackageManager } from '../package-manager.js';
 import { ProjectEnvironment } from '../runners/project-environment.js';
 import { bindProjectMcp } from '../runners/mcp-transport.js';
+import { TaskEnvironment } from '../runners/task-environment.js';
 
 export class ProjectWorker {
   private readonly executor = new ProcessExecutor();
@@ -96,6 +97,21 @@ export class ProjectWorker {
         directories: entries.slice(0, PROJECT_LIMITS.maxEntries).map((entry) => ({ name: entry.name, path: path.join(directory, entry.name) })) };
     }
     const root = (await this.git(directory, ['rev-parse', '--show-toplevel'])).trim();
+    if (input.action === ProjectAction.RunScript) {
+      const script = input.script;
+      if (!input.path || !isProjectScript(script)) throw new Error('Выберите скрипт build или deploy.');
+      if (await realpath(root) !== directory) throw new Error('Сохраните путь к корню репозитория.');
+      const { scripts, packageManager } = await this.readPackage(root);
+      if (!scripts || !Object.hasOwn(scripts, script) || typeof scripts[script] !== 'string' || !scripts[script].trim()) {
+        throw new Error(`В package.json проекта отсутствует скрипт ${script}.`);
+      }
+      const manager = await readProjectPackageManager(root, packageManager ?? null);
+      let scriptOutput = '';
+      await this.executor.run({ ...packageScript(manager.packageManager, script), cwd: root,
+        env: TaskEnvironment.create(), signal: AbortSignal.timeout(PROJECT_LIMITS.deploymentMs - PROJECT_LIMITS.requestMs - 5000),
+        onProgress: text => { scriptOutput = (scriptOutput + text).slice(-12000); } });
+      return { path: root, scriptOutput };
+    }
     if (input.action === ProjectAction.Research) {
       return { path: root, passport: await researchProject(this.executor, root, input.baseBranch ?? '') };
     }
@@ -108,21 +124,22 @@ export class ProjectWorker {
     }
     const branches = (await this.git(root, ['for-each-ref', '--format=%(refname:short)', 'refs/heads/'])).trim().split('\n').map((v) => v.trim()).filter(Boolean);
     if (branches.length > PROJECT_LIMITS.maxEntries) throw new Error('Слишком много веток для выбора.');
-    let scriptBodies: Record<string, string> = {};
-    let declared: unknown = null;
+    const { scripts, packageManager } = await this.readPackage(root);
+    const scriptBodies = Object.fromEntries(Object.entries(scripts ?? {})
+      .filter((entry): entry is [string, string] => entry[0].length <= 200 && typeof entry[1] === 'string' && !!entry[1].trim())
+      .slice(0, PROJECT_LIMITS.maxEntries)
+      .map(([name, value]) => [name, value.length > 300 ? value.slice(0, 300) + '…' : value]));
+    return { path: root, branches, currentBranch: (await this.git(root, ['branch', '--show-current'])).trim(),
+      scripts: Object.keys(scriptBodies), scriptBodies, ...await readProjectPackageManager(root, packageManager ?? null) };
+  }
+  private async readPackage(root: string): Promise<{ scripts?: Record<string, unknown>; packageManager?: unknown }> {
     try {
       const file = path.join(root, 'package.json');
       if ((await stat(file)).size <= PROJECT_LIMITS.packageBytes) {
-        const json = JSON.parse(await readFile(file, 'utf8')) as { scripts?: Record<string, unknown>; packageManager?: unknown };
-        declared = json.packageManager ?? null;
-        scriptBodies = Object.fromEntries(Object.entries(json.scripts ?? {})
-          .filter((entry): entry is [string, string] => entry[0].length <= 200 && typeof entry[1] === 'string')
-          .slice(0, PROJECT_LIMITS.maxEntries)
-          .map(([name, value]) => [name, value.length > 300 ? value.slice(0, 300) + '…' : value]));
+        return JSON.parse(await readFile(file, 'utf8')) ?? {};
       }
     } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw new Error('Не удалось прочитать package.json проекта.'); }
-    return { path: root, branches, currentBranch: (await this.git(root, ['branch', '--show-current'])).trim(),
-      scripts: Object.keys(scriptBodies), scriptBodies, ...await readProjectPackageManager(root, declared) };
+    return {};
   }
   private async previewPatch(cwd: string, patch: PreviewPatch): Promise<void> {
     const git = async (...args: string[]) => (await this.git(cwd, args)).trimEnd();

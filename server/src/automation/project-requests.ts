@@ -5,7 +5,7 @@ import { TrackerError } from '../core/errors.js';
 import { DEFAULT_AUTOMATION_SETTINGS, RUNNER_IDS, RunnerId, ProviderKind } from '../../../shared/automation/contracts.js';
 import { AutomationSettingsValidator } from './settings.js';
 import { validMcp } from '../../../shared/automation/project-mcp.js';
-import { ProjectAction, ProjectRequestStatus, PROJECT_LIMITS, type HostStatus, type ProjectInput, type ProjectRequest, type ProjectResult, type ExecutionStatus, type ProjectPassport } from '../../../shared/automation/project.js';
+import { ProjectAction, ProjectRequestStatus, PROJECT_LIMITS, isProjectScript, type HostStatus, type ProjectInput, type ProjectRequest, type ProjectResult, type ExecutionStatus, type ProjectPassport } from '../../../shared/automation/project.js';
 
 const STATE_KEY = 'automation_host_requests_v1';
 interface HostState { workerId?: string; lastSeen?: number; platform?: string; execution?: ExecutionStatus; executionDesired?: boolean; requests: ProjectRequest[]; passport?: ProjectPassport; previewRuns?: string[]; }
@@ -28,6 +28,8 @@ export class ProjectRequests {
     if (input?.action === ProjectAction.Diff && (!internal || !input.diff)) throw new TrackerError('VALIDATION_FAILED', 'Diff запрашивается по сохранённому запуску.');
     if (input?.action === ProjectAction.PreviewPatch && (!internal || !input.previewPatch)) throw new TrackerError('VALIDATION_FAILED', 'Патч запрашивается по сохранённому запуску.');
     if (!input || !Object.values(ProjectAction).includes(input.action) || typeof input.path !== 'string' || input.path.length > 4096) throw new TrackerError('VALIDATION_FAILED', 'Некорректный запрос проекта.');
+    const runScript = input.action === ProjectAction.RunScript;
+    if (runScript && (!internal || !input.path.trim() || !isProjectScript(input.script))) throw new TrackerError('VALIDATION_FAILED', 'Некорректный запрос запуска скрипта проекта.');
     if (input.action === ProjectAction.CreateBranch && (!input.baseBranch || !input.newBranch || input.baseBranch.length > 250 || input.newBranch.length > 250)) throw new TrackerError('VALIDATION_FAILED', 'Укажите исходную и новую ветки.');
     if (input.action === ProjectAction.Research && (!input.path.trim() || typeof input.baseBranch !== 'string' || !input.baseBranch.trim() || input.baseBranch.length > 250)) {
       throw new TrackerError('VALIDATION_FAILED', 'Укажите репозиторий и базовую ветку.');
@@ -48,16 +50,19 @@ export class ProjectRequests {
     return this.db.transaction(() => {
       const state = this.read();
       const control = input.action === ProjectAction.StartWorker || input.action === ProjectAction.StopWorker;
+      if ((control || runScript) && (!state.lastSeen || this.now() - state.lastSeen >= PROJECT_LIMITS.requestMs)) {
+        throw new TrackerError('CONFLICT', 'Локальный хост не подключён. Запустите supervisor на компьютере один раз.');
+      }
       if (control) {
-        if (!state.lastSeen || this.now() - state.lastSeen >= PROJECT_LIMITS.requestMs) throw new TrackerError('CONFLICT', 'Локальный хост не подключён. Запустите supervisor на компьютере один раз.');
         if (!state.execution) throw new TrackerError('CONFLICT', 'Старый worker не поддерживает управление. Обновите локальный host supervisor.');
         const previous = state.requests.find(r => r.action === input.action && r.targetWorkerId === state.workerId && (r.status === ProjectRequestStatus.Queued || r.status === ProjectRequestStatus.Running));
         if (previous) return this.public(previous);
       }
-      if (!internal && state.requests.some((r) => r.status === ProjectRequestStatus.Queued || r.status === ProjectRequestStatus.Running)) throw new TrackerError('CONFLICT', 'Предыдущий запрос к worker ещё выполняется.');
+      if ((!internal || runScript) && state.requests.some((r) => r.status === ProjectRequestStatus.Queued || r.status === ProjectRequestStatus.Running)) throw new TrackerError('CONFLICT', 'Предыдущий запрос к worker ещё выполняется.');
       const request: ProjectRequest = { action: input.action, path: input.path, baseBranch: input.baseBranch, newBranch: input.newBranch, catalog, model: input.action === ProjectAction.UnloadOllama ? input.model : undefined, cleanup: input.cleanup, diff: input.diff, previewPatch: input.previewPatch,
         ...(input.action === ProjectAction.ProbeMcp ? {mcp: input.mcp} : {}),
-        id: randomUUID(), status: ProjectRequestStatus.Queued, createdAt: this.now(), ...(control ? { targetWorkerId: state.workerId } : {}) };
+        ...(runScript ? { script: input.script } : {}),
+        id: randomUUID(), status: ProjectRequestStatus.Queued, createdAt: this.now(), ...(control || runScript ? { targetWorkerId: state.workerId } : {}) };
       const retained = state.requests.filter((r, index) => r.status === ProjectRequestStatus.Queued || r.status === ProjectRequestStatus.Running || index >= state.requests.length - PROJECT_LIMITS.maxHistory + 1);
       if (control) state.executionDesired = input.action === ProjectAction.StartWorker;
       state.requests = [...retained, request]; this.save(state); return request;
@@ -100,7 +105,11 @@ export class ProjectRequests {
   }
   private read(): HostState {
     const state: HostState = JSON.parse(this.meta.get(STATE_KEY) ?? '{"requests":[]}');
-    for (const request of state.requests) if ((request.status === ProjectRequestStatus.Queued || request.status === ProjectRequestStatus.Running) && this.now() - request.createdAt > (request.action === ProjectAction.Cleanup ? PROJECT_LIMITS.cleanupMs : request.previewPatch?.deployment ? PROJECT_LIMITS.deploymentMs : PROJECT_LIMITS.requestMs)) {
+    for (const request of state.requests) {
+      const runningScript = request.action === ProjectAction.RunScript && request.status === ProjectRequestStatus.Running;
+      const limit = request.action === ProjectAction.Cleanup ? PROJECT_LIMITS.cleanupMs
+        : request.previewPatch?.deployment || runningScript ? PROJECT_LIMITS.deploymentMs : PROJECT_LIMITS.requestMs;
+      if ((request.status !== ProjectRequestStatus.Queued && request.status !== ProjectRequestStatus.Running) || this.now() - request.createdAt <= limit) continue;
       const wasQueued = request.status === ProjectRequestStatus.Queued;
       request.status = ProjectRequestStatus.Failed;
       request.error = request.action === ProjectAction.Research

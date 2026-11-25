@@ -60,6 +60,46 @@ test('host mailbox fences ownership and expires offline requests', async () => {
   } finally { app.close(); }
 });
 
+test('manual build and deploy use the saved checkout and its package scripts', async () => {
+  const fixture = await gitFixture();
+  const app = createContainer({ config: { dbPath: ':memory:' }, logger: new SilentLogger() });
+  try {
+    const service = app.automationService;
+    service.configure({ ...service.settings(), repositoryPath: fixture.repository });
+    const mailbox = service.projects;
+    const registry = new TrackerToolRegistry(app);
+    const worker = new ProjectWorker({ async call<T>(name: string, args?: Record<string, unknown>): Promise<T> {
+      const reply = await registry.call(name, args ?? {});
+      const content = reply.content[0];
+      assert.equal(content.type, 'text');
+      return JSON.parse(content.text) as T;
+    } }, 'script-host');
+
+    assert.throws(() => service.requestProjectScript(fixture.repository, 'build'), /не подключён/);
+    await worker.tick();
+    assert.throws(() => service.requestProjectScript(fixture.repository + '-other', 'build'), /Сохраните путь/);
+    assert.throws(() => service.requestProjectScript(fixture.repository, 'test'), /build или deploy/);
+    const manifest = path.join(fixture.repository, 'package.json');
+    await writeFile(manifest, JSON.stringify({ scripts: { build: 'node -p "41 + 1"' } }));
+
+    const build = service.requestProjectScript(fixture.repository, 'build');
+    assert.throws(() => service.requestProjectScript(fixture.repository, 'build'), /ещё выполняется/);
+    await worker.tick();
+    assert.match(mailbox.get(build.id).result?.scriptOutput ?? '', /\b42\b/);
+
+    const missing = service.requestProjectScript(fixture.repository, 'deploy');
+    await worker.tick();
+    assert.equal(mailbox.get(missing.id).status, ProjectRequestStatus.Failed);
+    assert.match(mailbox.get(missing.id).error ?? '', /отсутствует скрипт deploy/);
+
+    await writeFile(manifest, JSON.stringify({ scripts: { deploy: 'node -p "6 * 7"' } }));
+    const deploy = service.requestProjectScript(fixture.repository, 'deploy');
+    await worker.tick();
+    assert.equal(mailbox.get(deploy.id).status, ProjectRequestStatus.Completed);
+    assert.match(mailbox.get(deploy.id).result?.scriptOutput ?? '', /\b42\b/);
+  } finally { app.close(); await fixture.dispose(); }
+});
+
 test('host worker browses folders, reads branches/scripts and creates branch without checkout or overwriting', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'sat-host-project-'));
   const app = createContainer({ config: { dbPath: ':memory:' }, logger: new SilentLogger() });

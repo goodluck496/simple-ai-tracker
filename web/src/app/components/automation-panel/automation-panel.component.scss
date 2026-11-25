@@ -1052,6 +1052,13 @@
 }
 
 /* Commands & Presets */
+.project-script-output {
+  max-height: 20rem;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 .commands-section {
   display: flex;
   flex-direction: column;

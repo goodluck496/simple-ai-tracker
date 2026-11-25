@@ -937,8 +937,28 @@
             <div class="card-body">
               <div class="commands-section">
                 <h5>Скрипты из package.json</h5>
-                <p-button label="Перечитать package.json" icon="pi pi-refresh" severity="secondary" size="small"
-                  [disabled]="projectBusy || !host.online || !settings.repositoryPath.trim()" (onClick)="refreshNpmScripts()" />
+                <div class="chips-row">
+                  <p-button label="Перечитать package.json" icon="pi pi-refresh" severity="secondary" size="small"
+                    [disabled]="projectBusy || !host.online || !settings.repositoryPath.trim()" (onClick)="refreshNpmScripts()" />
+                  @if (settingsScope === 'project' && hasProjectScript('build')) {
+                    <p-button label="Собрать проект" icon="pi pi-hammer" size="small"
+                      [loading]="runningProjectScript === 'build'" [disabled]="projectBusy || !host.online" (onClick)="runProjectScript('build')" />
+                  }
+                  @if (settingsScope === 'project' && hasProjectScript('deploy')) {
+                    <p-button label="Задеплоить" icon="pi pi-upload" severity="secondary" size="small"
+                      [loading]="runningProjectScript === 'deploy'" [disabled]="projectBusy || !host.online" (onClick)="runProjectScript('deploy')" />
+                  }
+                </div>
+                @if (settingsScope === 'project' && projectScriptResult?.path === settings.repositoryPath) {
+                  @if (projectScriptResult; as result) {
+                    <p-message severity="success">Скрипт {{ result.script }} завершён.</p-message>
+                    @if (result.output) {
+                      <p-panel header="Вывод команды" [toggleable]="true" [collapsed]="true">
+                        <pre class="project-script-output">{{ result.output }}</pre>
+                      </p-panel>
+                    }
+                  }
+                }
                 @if (npmScriptPath === settings.repositoryPath && npmScriptPath) {
                   <p class="hint">Пакетный менеджер · {{ packageManager }}</p>
                   @if (npmScripts.length) {

@@ -23,7 +23,7 @@ import { FeaturePlanning } from './feature-planning.js';
 import { PipelinePolicy } from '../../../shared/automation/pipeline-policy.js';
 import { BATCH_TASK_LIMIT } from '../../../shared/automation/batch.js';
 import { StageNotes, type StageMemory } from '../../../shared/automation/stage-note.js';
-import { ProjectAction, type ProjectResult } from '../../../shared/automation/project.js';
+import { ProjectAction, isProjectScript, type ProjectResult } from '../../../shared/automation/project.js';
 import type { CheckExecution, ImprovementPeriod } from '../../../shared/automation/improvement-metrics.js';
 import { checkBelongsToRun, checkFingerprint } from './check-evidence.js';
 import { collectMetrics, verifyRefs } from './improvement-metrics.js';
@@ -46,6 +46,14 @@ export class AutomationService {
 
   public settings(): AutomationSettings {
     return this.projectTeam.read().settings;
+  }
+  public requestProjectScript(path: unknown, script: unknown) {
+    const repositoryPath = this.settings().repositoryPath;
+    if (!repositoryPath.trim() || path !== repositoryPath) {
+      throw new TrackerError('VALIDATION_FAILED', 'Сохраните путь к проекту перед запуском команды.');
+    }
+    if (!isProjectScript(script)) throw new TrackerError('VALIDATION_FAILED', 'Выберите скрипт build или deploy.');
+    return this.projects.enqueue({ action: ProjectAction.RunScript, path: repositoryPath, script }, true);
   }
   private validateSettings(input: unknown): AutomationSettings {
     const settings = new AutomationSettingsValidator().validate(input);

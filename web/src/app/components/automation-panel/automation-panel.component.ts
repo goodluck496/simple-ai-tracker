@@ -35,7 +35,7 @@ import { AGENT_ROLES, RUNNER_IDS, DEFAULT_AUTOMATION_SETTINGS, PROVIDER_KINDS, R
   DEFAULT_SETUP_COMMAND, ProviderKind, RunnerId, AgentRole,
   type AgentRun, type AutomationSettings, type CheckCommand, type AgentProfile, type ModelConnection } from '../../../../../shared/automation/contracts';
 import { ProjectAction, ProjectRequestStatus, PROJECT_LIMITS, SETUP_PRESETS, CHECK_PRESETS, WorkerPlatform, packageScript, pnpmInstall, projectCommand,
-  type PackageManagerInfo, type ProjectPassport, type ProjectInput, type ProjectRequest, type ProjectResult, type HostStatus, type CommandPreset } from '../../../../../shared/automation/project';
+  type PackageManagerInfo, type ProjectPassport, type ProjectInput, type ProjectRequest, type ProjectResult, type ProjectScript, type HostStatus, type CommandPreset } from '../../../../../shared/automation/project';
 import { CONNECTION_PRESETS, FULL_TEAM_ROLES, PROVIDER_OPTIONS, RUNNER_OPTIONS, ROLE_OPTIONS, STANDARD_TEAM_ROLES, type ConnectionPreset } from '../../../../../shared/automation/presets';
 import type { TaskSummary } from '../../models/tracker.models';
 import { TrackerStore } from '../../services/tracker-store.service';
@@ -494,6 +494,27 @@ export class AutomationPanelComponent implements OnInit {
   }
   public npmScripts: (CommandPreset & { body?: string })[] = [];
   public npmScriptPath = '';
+  private requestedNpmScriptPath = '';
+  public runningProjectScript?: ProjectScript;
+  public projectScriptResult?: { path: string; script: ProjectScript; output: string };
+  public hasProjectScript(script: ProjectScript): boolean {
+    return this.npmScriptPath === this.settings.repositoryPath && this.npmScripts.some(entry => entry.id === script);
+  }
+  public async runProjectScript(script: ProjectScript): Promise<void> {
+    if (this.projectBusy || !this.host.online || !this.hasProjectScript(script)) return;
+    const path = this.settings.repositoryPath;
+    if (script === 'deploy' && !window.confirm(`Запустить ${this.packageManager} run deploy в «${path}»?`)) return;
+    this.runningProjectScript = script;
+    this.projectScriptResult = undefined;
+    try {
+      await this.project({ action: ProjectAction.RunScript, path, script }, result => {
+        this.projectScriptResult = { path, script, output: result.scriptOutput ?? '' };
+      });
+    } finally {
+      this.runningProjectScript = undefined;
+      if (!this.destroyed) this.changeDetector.markForCheck();
+    }
+  }
   public npmScriptId = '';
   public readonly npmScriptPhases = [
     { label: 'Подготовка', value: 'setup', description: 'Подготовить рабочую копию перед разработкой' },
@@ -795,6 +816,7 @@ export class AutomationPanelComponent implements OnInit {
   }
   public refreshNpmScripts(): void {
     const path = this.settings.repositoryPath;
+    this.requestedNpmScriptPath = path;
     void this.project({ action: ProjectAction.Inspect, path }, result => {
       if (this.settings.repositoryPath !== path) return;
       this.applyNpmScripts(result, path);
@@ -836,7 +858,7 @@ export class AutomationPanelComponent implements OnInit {
           }
         }),
         takeWhile((value) => value.status === ProjectRequestStatus.Queued || value.status === ProjectRequestStatus.Running, true),
-        last(), timeout({ first: PROJECT_LIMITS.requestMs + 10000 }), takeUntilDestroyed(this.destroyRef),
+        last(), timeout({ first: (input.action === ProjectAction.RunScript ? PROJECT_LIMITS.deploymentMs : PROJECT_LIMITS.requestMs) + 10000 }), takeUntilDestroyed(this.destroyRef),
       ));
       if (this.destroyed) return;
       if (request.error || !request.result) throw new Error(request.error || 'Worker не вернул результат.');
@@ -1072,6 +1094,12 @@ export class AutomationPanelComponent implements OnInit {
     if (!this.destroyed && this.host.online && this.pendingFolderPick && !this.projectBusy) {
       this.cancelFolderConnection();
       this.pickFolder();
+    }
+    const repositoryPath = this.settings.repositoryPath;
+    if (!this.destroyed && this.settingsScope === 'project' && this.activeTab === AutomationTab.Checks
+      && this.host.online && !this.projectBusy && repositoryPath.trim()
+      && this.npmScriptPath !== repositoryPath && this.requestedNpmScriptPath !== repositoryPath) {
+      this.refreshNpmScripts();
     }
     const response = await firstValueFrom(this.http.get<{ runs: AgentRun[]; activeTaskIds: string[]; tasks: TaskLaunchCandidate[] }>('/api/automation/runs'));
     this.runs = response.runs; this.activeTaskIds = response.activeTaskIds ?? [];
