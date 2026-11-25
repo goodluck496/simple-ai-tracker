@@ -145,6 +145,11 @@ try {
   const row = library.locator('article').filter({hasText: 'Проверка сохранения'});
   await library.getByRole('textbox', {name:'Поиск по навыкам'}).fill('изменении сохранения');
   assert.equal(await library.locator('article').count(), 1);
+  await row.getByRole('button', { name: 'Прочитать Проверка сохранения' }).click();
+  const savedReader = page.getByRole('dialog', { name: 'Проверка сохранения', exact: true });
+  await expect(savedReader.locator('pre')).toHaveText('Проверь значение после повторного открытия.');
+  await savedReader.getByRole('button', { name: 'Закрыть', exact: true }).click();
+  await expect(row.getByRole('checkbox')).not.toBeChecked();
   await row.getByRole('checkbox').check();
   await dialog.getByRole('button', {name:'Добавить MCP'}).click();
   const mcp = page.getByRole('dialog', {name:'Подключение MCP'});
@@ -226,12 +231,14 @@ try {
   await update.waitFor({state:'hidden'});
   assert.equal(app.automationService.skillLibrary.list().find(item => item.id === skill.id)?.version, 2);
   const repo = 'https://api.github.com/repos/obra/superpowers/git';
-  await page.route(repo + '/trees/HEAD?recursive=1', route => route.fulfill({json:{tree:[
-    {path:'skills/example/SKILL.md',sha:'unused',type:'blob',mode:'100644'},
-    {path:'skills/test-driven-development/SKILL.md',sha:'abc',type:'blob',mode:'100644'}]}}));
+  await page.route(repo + '/trees/HEAD?recursive=1', route => route.fulfill({ status:403, headers:{'x-ratelimit-remaining':'0','access-control-expose-headers':'x-ratelimit-remaining'} }));
+  await page.route('https://data.jsdelivr.com/v1/package/gh/obra/superpowers@HEAD/flat', route => route.fulfill({json:{files:[
+    {name:'/skills/example/SKILL.md'},
+    {name:'/skills/test-driven-development/SKILL.md'}]}}));
   const description = 'Test an external instruction. '.repeat(20).trim();
   const markdown = `---\nname: imported-example\ndescription: >\n  ${description}\n---\n${'Use the test fixture.\n'.repeat(2000)}`;
-  await page.route(repo + '/blobs/abc', route => route.fulfill({ contentType: 'text/plain', body: markdown }));
+  const rawSkill = 'https://raw.githubusercontent.com/obra/superpowers/HEAD/skills/test-driven-development/SKILL.md';
+  await page.route(rawSkill, route => route.fulfill({ contentType: 'text/plain', body: markdown }));
   await library.getByRole('button', {name:'Каталоги и импорт'}).click();
   const importer = page.getByRole('dialog',{name:'Импорт навыка'});
   for (const collection of ['Nx', 'NestJS', 'Angular']) await expect(importer.getByRole('button', { name: collection, exact: true })).toBeVisible();
@@ -239,14 +246,34 @@ try {
   const skillPath = 'skills/test-driven-development/SKILL.md';
   await importer.getByPlaceholder('Найти файл', { exact: true }).fill('test-driven');
   const nextImport = importer.getByRole('button', { name:'Открыть следующий на импорт' });
+  let release!: () => void;
+  const delayed = new Promise<void>(resolve => { release = resolve; });
+  await page.route(rawSkill, async route => {
+    await delayed;
+    await route.fulfill({ status: 503, body: '' });
+  }, { times: 1 });
+  await importer.getByRole('button', { name: 'Прочитать ' + skillPath }).click();
+  const pendingReader = page.getByRole('dialog', { name: skillPath, exact: true });
+  try {
+    await expect(pendingReader.getByRole('status')).toHaveText('Загрузка инструкции…');
+  } finally { release(); }
+  await expect(pendingReader.getByRole('alert')).toContainText('HTTP 503');
+  await pendingReader.getByRole('button', { name: 'Вернуться к списку' }).click();
   await importer.getByRole('button', { name: 'Прочитать ' + skillPath }).click();
   const reader = page.getByRole('dialog', { name: 'imported-example' });
   await expect(reader.locator('pre')).toHaveText(markdown);
-  await reader.getByRole('button', { name: 'Закрыть', exact: true }).click();
+  await reader.getByRole('button', { name: 'Вернуться к списку' }).click();
   await expect(nextImport).toBeDisabled();
   await importer.getByText(skillPath, { exact: true }).click();
   await importer.getByRole('button', { name: 'Добавить выбранные к импорту', exact: true }).click();
   await expect(nextImport).toBeEnabled();
+  const queued = importer.getByRole('listbox').last().getByRole('option').filter({hasText: skillPath});
+  await queued.getByText(skillPath, {exact:true}).click();
+  await queued.getByRole('button', {name:'Прочитать ' + skillPath}).click();
+  await expect(reader.locator('pre')).toHaveText(markdown);
+  await expect(page.getByRole('dialog')).toHaveCount(1);
+  await reader.getByRole('button', {name:'Вернуться к списку'}).click();
+  await expect(queued).toBeVisible();
   await importer.getByPlaceholder('Найти файл', { exact: true }).fill('');
   await importer.getByText('skills/example/SKILL.md', { exact: true }).click();
   await importer.getByRole('button', { name: 'Добавить выбранные к импорту', exact: true }).click();
@@ -275,7 +302,7 @@ try {
   await importer.waitFor({ state: 'hidden' });
   await page.setViewportSize({ width: 1440, height: 1000 });
   const imported = app.automationService.skillLibrary.list().find(s => s.name === 'imported-example')!;
-  assert.equal(app.automationService.skillLibrary.read(imported).sourceUrl, repo + '/blobs/abc');
+  assert.equal(app.automationService.skillLibrary.read(imported).sourceUrl, rawSkill);
   assert.equal(app.automationService.skillLibrary.read(imported).content, markdown);
   await library.getByRole('textbox', { name: 'Поиск по навыкам' }).fill('imported-example');
   await library.getByRole('button', { name: 'Прочитать imported-example' }).click();

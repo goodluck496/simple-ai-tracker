@@ -89,8 +89,7 @@ export class Router {
     return null;
   }
 
-  public async handle(req: IncomingMessage, res: ServerResponse): Promise<boolean> {
-    const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
+  public async handle(req: IncomingMessage, res: ServerResponse, url: URL): Promise<boolean> {
     const found = this.match(req.method ?? 'GET', url.pathname);
     if (!found) return false;
 

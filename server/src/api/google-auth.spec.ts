@@ -151,6 +151,40 @@ test('AUTH=false serves UI and permits API reads and mutations without OAuth or 
   }
 });
 
+test('direct requests work under the configured base path even without nginx', async () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'sat-base-path-'));
+  fs.writeFileSync(path.join(directory, 'index.html'),
+    '<html><base href="/"><script src="main-test.js" type="module"></script></html>');
+  fs.writeFileSync(path.join(directory, 'main-test.js'), 'console.log("ok");');
+  const auth = new GoogleAuth({ enabled: false,
+    redirectUri: 'https://example.com/tracker/api/auth/google/callback' });
+  assert.equal(auth.basePath, '/tracker/');
+  const app = createContainer({ config: { dbPath: ':memory:', webDistDir: directory },
+    db: new NodeSqliteDatabase({ file: ':memory:' }), logger: new SilentLogger() });
+  const server = createApiServer(app, { auth });
+  await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+  const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  try {
+    // Ассеты и API, запрошенные с префиксом base href, доходят до назначения.
+    const asset = await fetch(base + '/tracker/main-test.js');
+    assert.equal(asset.status, 200);
+    assert.equal(await asset.text(), 'console.log("ok");');
+    assert.equal((await fetch(base + '/tracker/api/health')).status, 200);
+    const status = await fetch(base + '/tracker/api/auth/status');
+    assert.deepEqual(await status.json(), { enabled: false, configured: false, authenticated: false });
+    // Запросы без префикса (за nginx) работают как раньше.
+    assert.equal((await fetch(base + '/api/health')).status, 200);
+    // Похожий префикс не срезается и не попадает в API: отдаётся SPA-заглушка.
+    const lookalike = await fetch(base + '/trackerfoo/api/health');
+    assert.equal(lookalike.status, 200);
+    assert.match(lookalike.headers.get('content-type') ?? '', /text\/html/);
+  } finally {
+    await new Promise<void>(resolve => server.close(() => resolve()));
+    app.close();
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
 test('Google auth preserves item links and tabs, rejects external destinations, and normalizes proxy prefix', async () => {
   const auth = new GoogleAuth({
     enabled: true,
@@ -185,13 +219,13 @@ test('Google auth preserves item links and tabs, rejects external destinations, 
     assert.match(html2, /href="\/tracker\/api\/auth\/google\?returnTo=item%2Fcreate%3Fworkspace%3Ddefault"/);
 
     // 3. Complete login with returnTo for specific tab
-    async function loginWithReturnTo(returnTo?: string) {
-      const start = await get('/api/auth/google' + (returnTo ? `?returnTo=${encodeURIComponent(returnTo)}` : ''));
+    async function loginWithReturnTo(returnTo?: string, prefix = '') {
+      const start = await get(prefix + '/api/auth/google' + (returnTo ? `?returnTo=${encodeURIComponent(returnTo)}` : ''));
       assert.equal(start.status, 303);
       const location = new URL(start.headers.get('location')!);
       const state = location.searchParams.get('state')!;
       const cookie = start.headers.getSetCookie()[0].split(';')[0];
-      return get(`/api/auth/google/callback?code=abc&state=${state}`, { Cookie: cookie });
+      return get(`${prefix}/api/auth/google/callback?code=abc&state=${state}`, { Cookie: cookie });
     }
 
     // Tab return: /tracker/item/SAT-62/plan?workspace=default
@@ -200,7 +234,7 @@ test('Google auth preserves item links and tabs, rejects external destinations, 
     assert.equal(resTab.headers.get('location'), '/tracker/item/SAT-62/plan?workspace=default');
 
     // Create return: /tracker/item/create?workspace=default
-    const resCreate = await loginWithReturnTo('item/create?workspace=default');
+    const resCreate = await loginWithReturnTo('item/create?workspace=default', '/tracker');
     assert.equal(resCreate.status, 303);
     assert.equal(resCreate.headers.get('location'), '/tracker/item/create?workspace=default');
 

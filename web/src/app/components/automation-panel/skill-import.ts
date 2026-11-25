@@ -2,8 +2,14 @@ import { SKILL_LIMITS } from '../../../../../shared/automation/skills';
 
 export interface SkillFile { path: string; url: string; }
 
+class GitHubRateLimitError extends Error {}
+
 async function download(url: string, maxBytes: number, accept: string): Promise<string> {
   const response = await fetch(url, {credentials:'omit', referrerPolicy:'no-referrer', headers:{Accept:accept}, signal:AbortSignal.timeout(20000)});
+  if (new URL(url).hostname === 'api.github.com' && (response.status === 429 ||
+      (response.status === 403 && (response.headers.get('x-ratelimit-remaining') === '0' || response.headers.has('retry-after'))))) {
+    throw new GitHubRateLimitError('Исчерпан лимит запросов к GitHub API.');
+  }
   if (!response.ok || !response.body) throw new Error('Источник вернул HTTP ' + response.status);
   const reader = response.body.getReader();
   const decoder = new TextDecoder('utf-8', {fatal:true});
@@ -29,12 +35,22 @@ export async function skillFiles(source: string): Promise<SkillFile[]> {
     if (!owner || !repo || (kind && !['blob','tree'].includes(kind))) throw new Error('Укажите репозиторий GitHub или ссылку на SKILL.md.');
     if (kind === 'blob') return [{path:tail.join('/'),url:`https://raw.githubusercontent.com/${owner}/${repo}/${ref}/${tail.join('/')}`}];
     const base = `https://api.github.com/repos/${owner}/${repo.replace(/\.git$/,'')}`;
-    const tree = JSON.parse(await download(base + '/git/trees/' + (ref ?? 'HEAD') + '?recursive=1', 8_000_000, 'application/vnd.github+json'));
-    if (tree.truncated) throw new Error('GitHub сократил дерево. Вставьте прямую ссылку на нужный SKILL.md.');
+    const revision = ref ?? 'HEAD';
+    let entries: {path:string}[];
+    try {
+      const tree = JSON.parse(await download(base + '/git/trees/' + revision + '?recursive=1', 8_000_000, 'application/vnd.github+json'));
+      if (tree.truncated) throw new Error('GitHub сократил дерево. Вставьте прямую ссылку на нужный SKILL.md.');
+      entries = tree.tree.filter((entry: {type:string; mode:string}) => entry.type === 'blob' && /^100(644|755)$/.test(entry.mode));
+    } catch (error) {
+      if (!(error instanceof GitHubRateLimitError)) throw error;
+      const indexUrl = `https://data.jsdelivr.com/v1/package/gh/${owner}/${repo.replace(/\.git$/, '')}@${revision}/flat`;
+      const index = JSON.parse(await download(indexUrl, 8_000_000, 'application/json'));
+      entries = index.files.map((entry: {name:string}) => ({path:entry.name.replace(/^\//, '')}));
+    }
     const prefix = tail.length ? decodeURIComponent(tail.join('/')) + '/' : '';
-    return tree.tree.filter((entry: {path:string; type:string; mode:string}) =>
-      entry.type === 'blob' && /^100(644|755)$/.test(entry.mode) && entry.path.startsWith(prefix) && /(^|\/)SKILL\.md$/i.test(entry.path))
-      .map((entry: {path:string; sha:string}) => ({path:entry.path,url:base + '/git/blobs/' + entry.sha}));
+    const rawBase = `https://raw.githubusercontent.com/${owner}/${repo.replace(/\.git$/, '')}/${revision}/`;
+    return entries.filter(({path}) => path.startsWith(prefix) && /(^|\/)SKILL\.md$/i.test(path))
+      .map(({path}) => ({path, url:rawBase + path.split('/').map(encodeURIComponent).join('/')}));
   }
   return [{path:decodeURIComponent(url.pathname),url:url.href}];
 }

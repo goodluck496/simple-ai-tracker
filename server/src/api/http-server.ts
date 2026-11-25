@@ -32,10 +32,21 @@ export function createApiServer(app: AppContainer, options: ApiServerOptions = {
 
   const staticServer = new StaticFileServer(app.config.webDistDir);
   const cors = options.auth?.enabled ? false : options.cors ?? true;
+  const prefix = options.auth?.basePath.replace(/\/$/, '') ?? '';
 
-  const dispatch = (req: http.IncomingMessage, res: http.ServerResponse): void => {
-    const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
+  /**
+   * Сервер понимает запросы и с префиксом base path (прямой доступ к порту),
+   * и без него (nginx в prod срезает /tracker/ перед проксированием).
+   */
+  const resolveUrl = (req: http.IncomingMessage): URL => {
+    const target = new URL(req.url ?? '/', 'http://localhost');
+    if (prefix && (target.pathname === prefix || target.pathname.startsWith(prefix + '/'))) {
+      target.pathname = target.pathname.slice(prefix.length) || '/';
+    }
+    return target;
+  };
 
+  const dispatch = (req: http.IncomingMessage, res: http.ServerResponse, url: URL): void => {
     if (cors) {
       res.setHeader('Access-Control-Allow-Origin', '*');
       res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PATCH, DELETE, OPTIONS');
@@ -55,7 +66,7 @@ export function createApiServer(app: AppContainer, options: ApiServerOptions = {
         return;
       }
       try {
-      void app.workspaceManager.within(workspace, () => router.handle(req, res)).then((handled) => {
+      void app.workspaceManager.within(workspace, () => router.handle(req, res, url)).then((handled) => {
         if (!handled) {
           sendJson(res, 404, { error: { code: 'NOT_FOUND', message: `Маршрут ${url.pathname} не найден.` } });
         }
@@ -74,9 +85,11 @@ export function createApiServer(app: AppContainer, options: ApiServerOptions = {
     sendJson(res, 405, { error: { code: 'METHOD_NOT_ALLOWED', message: `${req.method} не поддерживается.` } });
   };
   return http.createServer((req, res) => {
-    if (!options.auth) { dispatch(req, res); return; }
-    const url = new URL(req.url ?? '/', 'http://localhost');
-    void options.auth.handle(req, res, url).then(handled => { if (!handled) dispatch(req, res); }).catch(() => {
+    let url: URL;
+    try { url = resolveUrl(req); }
+    catch { sendJson(res, 400, { error: { code: 'VALIDATION_FAILED', message: 'Invalid request URL.' } }); return; }
+    if (!options.auth) { dispatch(req, res, url); return; }
+    void options.auth.handle(req, res, url).then(handled => { if (!handled) dispatch(req, res, url); }).catch(() => {
       if (!res.headersSent) sendJson(res, 500, { error: { code: 'INTERNAL', message: 'Request failed.' } });
       else res.end();
     });
