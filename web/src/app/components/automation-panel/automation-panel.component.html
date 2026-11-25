@@ -818,15 +818,15 @@
           <div class="panel-card">
             <div class="panel-card-header">
               <h4>Папка проекта и Git</h4>
-              <p class="card-hint">Укажите путь к Git-репозиторию на компьютере worker</p>
+              <p class="card-hint">Если в репозитории несколько приложений, выберите package.json нужного приложения. Агент и команды будут запускаться из его папки.</p>
             </div>
             <div class="card-body">
               <div class="folder-input-row">
                 <label class="grow-field">
-                  <span>Папка Git-проекта на worker <i class="pi pi-info-circle help-icon" [pTooltip]="fieldTooltips['repositoryPath']"></i></span>
+                  <span>Папка проекта или package.json на worker <i class="pi pi-info-circle help-icon" [pTooltip]="fieldTooltips['repositoryPath']"></i></span>
                   <input pInputText [disabled]="projectBusy" [ngModel]="settings.repositoryPath" (ngModelChange)="setProjectPath($event)" (blur)="readProjectIfNeeded($event)" (keydown.enter)="readProjectIfNeeded()" placeholder="E:\projects\my-app" [pTooltip]="fieldTooltips['repositoryPath']" />
                 </label>
-                <p-button data-project-picker label="Выбрать папку" severity="secondary" size="small" icon="pi pi-folder-open" [disabled]="projectBusy" (onClick)="pickFolder()" />
+                <p-button data-project-picker label="Выбрать проект" severity="secondary" size="small" icon="pi pi-folder-open" [disabled]="projectBusy" (onClick)="pickFolder()" />
                 <p-button data-project-picker label="Прочитать проект" severity="secondary" size="small" icon="pi pi-refresh" [disabled]="projectBusy || !host.online || !settings.repositoryPath" (onClick)="inspect()" />
               </div>
 
@@ -844,7 +844,7 @@
                     <div class="browser-actions">
                       <p-button label="На уровень выше" severity="secondary" size="small" [disabled]="projectBusy || !parentFolder" (onClick)="browse(parentFolder)" />
                       <p-button label="Домашняя папка" severity="secondary" size="small" [disabled]="projectBusy" (onClick)="browse()" />
-                      <p-button label="Выбрать эту папку" size="small" [disabled]="projectBusy || !selectedFolder" (onClick)="chooseDirectory()" />
+                      <p-button label="Использовать для проекта" size="small" [disabled]="projectBusy || !selectedFolder" (onClick)="chooseDirectory()" />
                       <p-button label="Закрыть" severity="secondary" size="small" [text]="true" (onClick)="browserOpen = false" />
                     </div>
                   </div>

@@ -25,6 +25,7 @@ import { CommitMessage } from '../../../../shared/automation/commit-message.js';
 import { PipelineHelper } from '../pipeline-helper.js';
 import { RuntimeCoordinator, type RuntimeLease } from './runtime-coordinator.js';
 import { RunWorkspace } from './run-workspace.js';
+import { projectInCheckout } from '../project-location.js';
 import { ExecutionScope } from '../runners/execution-scope.js';
 import { SquashIntegration } from './squash-integration.js';
 import { MergeResolver } from './merge-resolver.js';
@@ -118,8 +119,8 @@ export class PipelineWorker {
       await phase(RunPhase.Preparing, 'Создание или проверка отдельной рабочей ветки.');
       if (!path.isAbsolute(run.settings.repositoryPath)) throw new Error('Repository path must be absolute on the worker host.');
       const location = await RunWorkspace.describe(run.settings.repositoryPath, run.id, this.channel.workspace ?? process.env.SAT_WORKSPACE ?? 'default', this.executor, controller.signal);
-      const { root: repository, common, branch, git } = location;
-      let cwd = location.directory;
+      const { root: repository, relative, directory: featureWorktree, common, branch, git } = location;
+      const projectDirectory = (worktree: string) => projectInCheckout(worktree, relative);
       coordinator = new RuntimeCoordinator(path.join(common, 'sat-runtime', 'coordination.sqlite'));
       leases.push(await coordinator.acquire(`run:${run.id}`, controller.signal));
       await phase(RunPhase.WaitingSlot, 'Ожидание свободного слота проекта.');
@@ -130,10 +131,10 @@ export class PipelineWorker {
         child: (pid: number, active: boolean) => { for (const lease of leases) lease.child(pid, active); runtime?.child(pid, active); preparation?.child(pid, active); } };
       await ExecutionScope.run(execution, async () => {
       const integrate = async (recoveryOnly: boolean) => {
-        if (!recoveryOnly && (await git(['rev-parse', 'HEAD'], cwd)).trim() !== run!.commitSha) throw new Error('Source branch changed after review.');
+        if (!recoveryOnly && (await git(['rev-parse', 'HEAD'], featureWorktree)).trim() !== run!.commitSha) throw new Error('Source branch changed after review.');
         const pack = await this.channel.call<Record<string, unknown>>('tracker_get_task', { id: run!.taskId, commentsLimit: 0 });
         const context = { id: pack.id, title: pack.title, description: pack.description, plan: pack.plan, questions: pack.questions, relations: pack.relations, comments: [] };
-        const resolver = new MergeResolver(this.executor, async (profile, prompt, directory, signal, maxTools) => {
+        const resolver = new MergeResolver(this.executor, async (profile, prompt, directory, signal, maxTools, worktreeRoot) => {
           const started = await this.channel.call<{ attemptId: string }>(AutomationTool.BeginStage, { id: run!.id, leaseToken: token, phase: 'resolver' });
           metering = { attemptId: started.attemptId };
           let complete = false;
@@ -141,7 +142,7 @@ export class PipelineWorker {
             run = await this.channel.call<AgentRun>(AutomationTool.Heartbeat, { id: run!.id, leaseToken: token });
             armBudget();
             const connection = run!.settings.connections.find(c => c.id === profile.connectionId)!;
-            const result = await this.registry.get(profile.runner).run({ runId: run!.id, cwd: directory, profile, connection,
+            const result = await this.registry.get(profile.runner).run({ runId: run!.id, cwd: directory, worktreeRoot, profile, connection,
               prompt, settings: run!.settings, trustedExecution: run!.trustedExecution, signal, maxToolCalls: maxTools,
               onUsage: usage => { if (metering) metering = { ...metering, usage }; } }, progress);
             if (result.usage && metering) metering = { ...metering, usage: result.usage };
@@ -154,17 +155,18 @@ export class PipelineWorker {
             if (metering) { const sample = metering; metering = undefined; await reportUsage(sample, complete); }
           }
         });
-        const journal = new CheckJournal(path.join(cwd, '.sat', 'checks'), deliverCheck, beginCheck);
+        const journal = new CheckJournal(path.join(featureWorktree, '.sat', 'checks'), deliverCheck, beginCheck);
         await new SquashIntegration(this.executor).run({ runId: run!.id, taskId: run!.taskId, repository, common,
-          sourceSha: run!.commitSha!, targetBranch: run!.settings.baseBranch, directory: cwd,
+          sourceSha: run!.commitSha!, targetBranch: run!.settings.baseBranch, directory: featureWorktree,
           message: CommitMessage.forTask(run!.mergeMessage, run!.taskId, String((context as { title?: string }).title ?? run!.taskId)), contextKey: StageCheckpoint.key(context), maxAttempts: run!.trustedExecution ? undefined : run!.settings.maxMergeAttempts ?? 2,
           signal: controller.signal, recoveryOnly,
           authorize: async () => { run = await this.channel.call<AgentRun>(AutomationTool.Heartbeat, { id: run!.id, leaseToken: token, phase: recoveryOnly ? 'recovery' : undefined }); },
           record: async info => { publishing = info.state === 'publishing'; await this.channel.call(AutomationTool.Integration, { id: run!.id, leaseToken: token, result: info }); },
-          prepare: async directory => { await preparation!.prepare(directory, controller.signal, progress); },
+          prepare: async directory => { await preparation!.prepare(await projectDirectory(directory), controller.signal, progress); },
           checkFingerprint: checkFingerprint(run.settings.checks),
           verifyChecks: (sha, attempt, ids) => run.settings.checks.length ? journal.verify(run, sha, attempt, ids) : Promise.resolve(true),
-          checks: async (directory, sha, attempt) => {
+          checks: async (worktree, sha, attempt) => {
+            const directory = await projectDirectory(worktree);
             const project = await readProjectPackageManager(directory);
             await assertProjectCheckScripts(directory, run!.settings.checks);
             const results = await journal.run(run, 'candidate', sha, attempt, controller.signal, async check => {
@@ -173,55 +175,56 @@ export class PipelineWorker {
             });
             return results.map(result => result.id);
           },
-          resolve: (directory, files, base) => resolver.resolve(run!, context, directory, files, base, controller.signal),
+          resolve: (directory, files, base) => resolver.resolve(run!, context, directory, files, base, controller.signal, relative),
         });
         await this.channel.call(AutomationTool.Merged, { id: run!.id, leaseToken: token });
       };
       if (recoveryOnly) { await integrate(true); return; }
       let newCheckout = false;
-      try { await fs.access(cwd); }
+      try { await fs.access(featureWorktree); }
       catch {
         // Isolated work starts from the committed base. Only publication needs a clean target checkout.
-        await fs.mkdir(path.dirname(cwd), { recursive: true });
-        await git(['worktree', 'add', '-b', branch, cwd, run!.integrationSourceSha ?? run!.settings.baseBranch]);
+        await fs.mkdir(path.dirname(featureWorktree), { recursive: true });
+        await git(['worktree', 'add', '-b', branch, featureWorktree, run!.integrationSourceSha ?? run!.settings.baseBranch]);
         newCheckout = true;
       }
-      if ((await git(['branch', '--show-current'], cwd)).trim() !== branch) throw new Error('Worktree branch does not match run.');
-      await RunWorkspace.ignoreRuntime(common);
-      runtime = await TaskRuntime.create(cwd, controller.signal); execution.env = runtime.env;
-      const descriptor = path.join(cwd, '.sat', 'checkout.json');
+      if ((await git(['branch', '--show-current'], featureWorktree)).trim() !== branch) throw new Error('Worktree branch does not match run.');
+      await RunWorkspace.ignoreRuntime(common, relative);
+      const featureProject = await projectDirectory(featureWorktree);
+      runtime = await TaskRuntime.create(featureProject, controller.signal); execution.env = runtime.env;
+      const descriptor = path.join(featureWorktree, '.sat', 'checkout.json');
       let baseSha: string;
       try { baseSha = JSON.parse(await fs.readFile(descriptor, 'utf8')).baseSha as string; }
       catch (error) {
         if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
-        baseSha = run!.checkout?.baseSha ?? (await git(newCheckout ? ['rev-parse', 'HEAD'] : ['merge-base', 'HEAD', run!.settings.baseBranch], cwd)).trim();
+        baseSha = run!.checkout?.baseSha ?? (await git(newCheckout ? ['rev-parse', 'HEAD'] : ['merge-base', 'HEAD', run!.settings.baseBranch], featureWorktree)).trim();
         await RunWorkspace.atomic(descriptor, { baseSha, repository, runId: run!.id });
       }
       await this.channel.call(AutomationTool.Checkout, { id: run!.id, leaseToken: token,
-        result: { repositoryRoot: repository, worktreePath: cwd, baseSha, dependencyMode: 'isolated' } });
+        result: { repositoryRoot: repository, worktreePath: featureWorktree, baseSha, dependencyMode: 'isolated' } });
       preparation = new RunPreparation(this.executor, common, run.settings);
       const prepareSource = async () => {
-        const dependency = await preparation!.prepare(cwd, controller.signal, progress);
-        run.checkout = { repositoryRoot: repository, worktreePath: cwd, baseSha, dependencyMode: dependency.mode,
+        const dependency = await preparation!.prepare(featureProject, controller.signal, progress);
+        run.checkout = { repositoryRoot: repository, worktreePath: featureWorktree, baseSha, dependencyMode: dependency.mode,
           dependencyKey: dependency.key, dependencyNote: dependency.note };
         await this.channel.call(AutomationTool.Checkout, { id: run.id, leaseToken: token, result: run.checkout });
       };
-      const featureCwd = cwd;
       while (run.status === RunStatus.Running && run.stage < run.settings.pipeline.length) {
         controller.signal.throwIfAborted();
         // The previous attempt can publish its native conversation while closing the journal.
         if (recovery) run = await this.channel.call<AgentRun>(AutomationTool.Heartbeat, { id: run.id, leaseToken: token });
         const child = Decomposition.child(run);
-        cwd = child ? `${featureCwd}-child-${child.key}` : featureCwd;
+        const worktree = child ? `${featureWorktree}-child-${child.key}` : featureWorktree;
         if (child) {
-          try { await fs.access(cwd); }
+          try { await fs.access(worktree); }
           catch (error) {
             if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
             if (run.feature!.children.some(c => child.dependsOn.includes(c.key) && c.state !== 'merged')) throw new Error('Child dependencies have not been reviewed and merged.');
-            await git(['worktree', 'add', '-b', `sat-child/${run.id}-${child.key}`, cwd, branch]);
+            await git(['worktree', 'add', '-b', `sat-child/${run.id}-${child.key}`, worktree, branch]);
           }
-          if ((await git(['branch', '--show-current'], cwd)).trim() !== `sat-child/${run.id}-${child.key}`) throw new Error('Child worktree identity changed.');
+          if ((await git(['branch', '--show-current'], worktree)).trim() !== `sat-child/${run.id}-${child.key}`) throw new Error('Child worktree identity changed.');
         }
+        const cwd = await projectDirectory(worktree);
         const prepareStage = async () => {
           if (child) await preparation!.prepare(cwd, controller.signal, progress);
           else await prepareSource();
@@ -262,7 +265,7 @@ export class PipelineWorker {
           links: relations?.links?.filter(l => l.relation === 'blocks' || l.relation === 'blocked_by').map(l => `${l.relation}:${l.task.id}`).sort() };
         let requirementsKey = StageCheckpoint.key({ description: pack.description, plan: pack.plan, questions: pack.questions, relations: relationKey, planReview });
         // Failure comments and run.summary change on infrastructure failure, so they are not cache keys.
-        const checkpoint = new StageCheckpoint(cwd, run.stage, run.revision, (args) => git(args, cwd));
+        const checkpoint = new StageCheckpoint(worktree, run.stage, run.revision, (args) => git(args, worktree));
         const { maxAgentCalls, maxInputTokens, maxRunMinutes, maxStageToolCalls, timeoutMinutes, ...semanticSettings } = run.settings;
         // Existing checkpoints and native sessions include the original revision allowance in their key.
         semanticSettings.maxRevisions = run.checkpointBudgets?.maxRevisions ?? run.settings.maxRevisions;
@@ -285,8 +288,8 @@ export class PipelineWorker {
         let priorStatus = await git(['status', '--porcelain', '--', '.', ':!.sat'], cwd);
         const priorFingerprint = READ_ONLY_AGENT_ROLES.includes(profile.role) ? await checkpoint.fingerprint() : undefined;
         const baseline = child ? (await git(['merge-base', 'HEAD', branch], cwd)).trim() : run.checkout?.baseSha ?? run.settings.baseBranch;
-        const committed = await git(['diff', '--name-only', '-z', `${baseline}...HEAD`, '--', '.', ':!.sat'], cwd);
-        const pendingNames = await git(['diff', 'HEAD', '--name-only', '-z', '--', '.', ':!.sat'], cwd);
+        const committed = await git(['diff', '--relative', '--name-only', '-z', `${baseline}...HEAD`, '--', '.', ':!.sat'], cwd);
+        const pendingNames = await git(['diff', '--relative', 'HEAD', '--name-only', '-z', '--', '.', ':!.sat'], cwd);
         const untrackedNames = await git(['ls-files', '--others', '--exclude-standard', '-z'], cwd);
         const changedFiles = [...new Set((committed + pendingNames + untrackedNames).split('\0').filter(Boolean))].sort();
         const handoff = new StageHandoff(cwd, run.id);
@@ -410,7 +413,7 @@ export class PipelineWorker {
             ? await this.channel.call<import('../../../../shared/automation/skills.js').LibrarySkill[]>(AutomationTool.StageSkills, { id: run.id, leaseToken: token })
             : undefined;
           recoveringAgentCall = true;
-          const result = await this.registry.get(profile.runner).run({ runId: run.id, cwd, prompt, profile, connection, settings: stageSettings, librarySkills, trustedExecution: run.trustedExecution, signal: controller.signal,
+          const result = await this.registry.get(profile.runner).run({ runId: run.id, cwd, worktreeRoot: worktree, prompt, profile, connection, settings: stageSettings, librarySkills, trustedExecution: run.trustedExecution, signal: controller.signal,
             auditAttempt: started.attemptId ? { id: started.attemptId, workspace: this.channel.workspace ?? process.env.SAT_WORKSPACE ?? 'default',
               taskId: stageTaskId, stage: run.stage, revision: run.revision, handoffBytes: Buffer.byteLength(packet) } : undefined,
             baseSha: baseline, onCheckpoint: note => journal.checkpoint(note), waitForPreparation, reviewImageData,
@@ -508,7 +511,10 @@ export class PipelineWorker {
           // Runtime is ignored through info/exclude. An explicit ignored .sat pathspec can make git add fail.
           await git(['add', '-A', '--', '.'], cwd);
           await checkpoint.save(saved);
-          const staged = (await git(['diff', '--cached', '--name-only', '-z'], cwd)).split('\0').filter(Boolean);
+          const staged = (await git(['diff', '--cached', '--name-only', '-z'], worktree)).split('\0').filter(Boolean);
+          if (relative && staged.some(file => !file.startsWith(relative.split(path.sep).join('/') + '/'))) {
+            throw new Error('В индекс Git добавлены файлы за пределами выбранного приложения. Проверьте рабочую копию.');
+          }
           if (staged.some(file => /(^|\/)(?:node_modules|\.sat)(?:\/|$)/.test(file))) throw new Error('Generated dependencies/runtime must not be committed. Fix ignore rules before resuming.');
           if ((await git(['diff', '--cached', '--name-only'], cwd)).trim()) {
             const diffStat = (await git(['diff', '--cached', '--stat'], cwd)).slice(0, 1000);
@@ -562,11 +568,11 @@ export class PipelineWorker {
             ...(saved.checkExecutions ?? []).flatMap(check => check.browserResults?.map(result => result.screenshot) ?? []),
             ...(previous?.sha === sha ? previousScreenshots : [])])].slice(0, SCREENSHOT_LIMIT),
           changedFiles: [...new Set([...changedFiles,
-            ...(await git(['diff', '--name-only', '-z', `${baseline}...HEAD`, '--', '.', ':!.sat'], cwd)).split('\0').filter(Boolean)])], checks: checksEvidence });
+            ...(await git(['diff', '--relative', '--name-only', '-z', `${baseline}...HEAD`, '--', '.', ':!.sat'], cwd)).split('\0').filter(Boolean)])], checks: checksEvidence });
         if (child && profile.role === AgentRole.Reviewer && outcome.verdict === AgentVerdict.Pass && !outcome.questions?.length) {
           const sourceSha = sha;
           const delivered = await new SquashIntegration(this.executor).run({ runId: `${run.id}-child-${child.key}-r${run.revision}`, taskId: child.taskId,
-            repository: featureCwd, common, sourceSha, targetBranch: branch, directory: cwd, message: child.commitMessage ?? '',
+            repository: featureWorktree, common, sourceSha, targetBranch: branch, directory: worktree, message: child.commitMessage ?? '',
             contextKey: requirementsKey, maxAttempts: 1, signal: controller.signal,
             authorize: async () => { await this.channel.call(AutomationTool.Heartbeat, { id: run.id, leaseToken: token }); },
             record: async info => { await phase(RunPhase.Merge, `Child ${child.taskId}: ${info.state}`); },
@@ -582,7 +588,7 @@ export class PipelineWorker {
         if (isPipelineComplete && hasCodeModifications && run.settings.postOperations?.length) {
           for (const op of run.settings.postOperations) {
             await phase(RunPhase.PostOp, `Пост-операция: ${op.command} ${op.args.join(' ')}`);
-            await new PostOperationRunner(this.executor).run(op, cwd, common, controller.signal, progress);
+            await new PostOperationRunner(this.executor).run(op, cwd, common, controller.signal, progress, relative);
           }
         }
         const criterionImages = await readCriterionImages(cwd, saved.checkExecutions ?? []);
@@ -590,7 +596,6 @@ export class PipelineWorker {
           result: { screenshots, checkFailed, checkIds: saved.checkExecutions?.map(check => check.id), criterionImages } });
         recovery = undefined;
       }
-      cwd = featureCwd;
       if (run.status === RunStatus.Integrating) await integrate(false);
       });
       finished = true;

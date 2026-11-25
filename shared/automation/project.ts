@@ -12,7 +12,7 @@ export const ProjectRequestStatus = { Queued: 'queued', Running: 'running', Comp
 export type ProjectRequestStatus = typeof ProjectRequestStatus[keyof typeof ProjectRequestStatus];
 export const PROJECT_LIMITS = { requestMs: 60000, cleanupMs: 300000, deploymentMs: 300000, commandMs: 15000, pollMs: 1500, maxHistory: 20, maxEntries: 200, packageBytes: 1024 * 1024 } as const;
 export interface ProjectInput { action: ProjectAction; path: string; script?: ProjectScript; mcp?: import('./project-mcp.js').ProjectMcp; baseBranch?: string; newBranch?: string; catalog?: ModelCatalogInput; model?: string; cleanup?: import('./cleanup.js').CleanupSpec; diff?: { head: string; base?: string }; previewPatch?: PreviewPatch; }
-export interface PreviewPatch { runId: string; head: string; branch: string; rollback: boolean; deployment?: PostOperation[]; acceptAfterRollback?: boolean; }
+export interface PreviewPatch { runId: string; head: string; branch: string; rollback: boolean; deployment?: PostOperation[]; deploymentProject?: string; acceptAfterRollback?: boolean; }
 export interface PreviewPatchState {
   status: 'idle' | 'applied' | 'applying' | 'rolling_back' | 'rolling_back_for_merge';
   error?: string;
@@ -47,6 +47,7 @@ export interface ProjectPassport {
   hasLockfile?: boolean;
 }
 export interface ProjectResult { path: string; passport?: ProjectPassport; cleanup?: import('./cleanup.js').CleanupResult; cancelled?: boolean; parent?: string; drives?: string[]; directories?: { name: string; path: string }[];
+  packageManifest?: string;
   mcpTools?: string[];
   scriptOutput?: string;
   execution?: ExecutionStatus; unloaded?: string; deploymentError?: string; diff?: ProjectDiff;

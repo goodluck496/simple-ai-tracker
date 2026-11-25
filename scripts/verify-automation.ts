@@ -167,13 +167,13 @@ try {
   console.log('PASS: native selection automatically reads project.');
   assert.equal(await dialog.getByRole('button', { name: 'Worker уже подключён', exact: true }).isDisabled(), true);
   assert.equal(path.resolve(await folderInput.inputValue()), path.resolve(repo));
-  await dialog.getByRole('button', { name: 'Выбрать папку', exact: true }).click();
+  await dialog.getByRole('button', { name: 'Выбрать проект', exact: true }).click();
   await dialog.getByText('Выбор папки отменён. Путь не изменён.', { exact: true }).waitFor();
   assert.equal(path.resolve(await folderInput.inputValue()), path.resolve(repo));
   await dialog.getByRole('button', { name: 'Обзор каталогов worker', exact: true }).click();
   const folders = dialog.getByRole('group', { name: 'Папки на worker' });
   await folders.getByText(repo, { exact: true }).waitFor();
-  await folders.getByRole('button', { name: 'Выбрать эту папку', exact: true }).click();
+  await folders.getByRole('button', { name: 'Использовать для проекта', exact: true }).click();
   await dialog.getByText('Проект прочитан на worker. Выберите ветку и команды из package.json.', { exact: true }).waitFor();
   await dialog.getByPlaceholder('feature/my-project').fill('feature/ui-selected');
   await dialog.getByRole('button', { name: 'Создать ветку', exact: true }).click();

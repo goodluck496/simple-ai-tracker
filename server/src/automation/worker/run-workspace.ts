@@ -2,13 +2,13 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 import type { ProcessExecutor } from '../runners/process-executor.js';
+import { projectLocation } from '../project-location.js';
 
 export class RunWorkspace {
   public static async describe(repository: string, runId: string, workspace: string, executor: ProcessExecutor, signal: AbortSignal) {
     if (!/^[\w-]+$/.test(runId)) throw new Error('Invalid run identity.');
-    const root = await fs.realpath(repository);
+    const { root, relative } = await projectLocation(repository, executor, signal);
     const git = (args: string[], cwd = root) => executor.run({ command: 'git', args, cwd, signal });
-    if (await fs.realpath((await git(['rev-parse', '--show-toplevel'])).trim()) !== root) throw new Error('Repository path must point to the Git root.');
     const common = await fs.realpath(path.resolve(root, (await git(['rev-parse', '--git-common-dir'])).trim()));
     const project = createHash('sha256').update(process.platform === 'win32' ? common.toLowerCase() : common).digest('hex').slice(0, 16);
     const parent = path.join(path.dirname(root), '.sat-worktrees');
@@ -21,15 +21,20 @@ export class RunWorkspace {
       if (legacyCommon !== common) throw new Error('Legacy worktree belongs to a different repository.');
       cwd = legacy;
     } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
-    return { root, common, directory: cwd, branch: `sat/${runId}`, git };
+    return { root, relative, common, directory: cwd, branch: `sat/${runId}`, git };
   }
-  public static async ignoreRuntime(common: string): Promise<void> {
+  public static async ignoreRuntime(common: string, projectRelative = ''): Promise<void> {
+    if (/[\r\n]/.test(projectRelative)) throw new Error('Путь приложения содержит перенос строки и не может быть записан в Git exclude.');
     const file = path.join(common, 'info', 'exclude');
     await fs.mkdir(path.dirname(file), { recursive: true });
     let current = '';
     try { current = await fs.readFile(file, 'utf8'); } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
-    if (!current.split(/\r?\n/).includes('/.sat/')) await fs.appendFile(file, '\n/.sat/\n', 'utf8');
-    if (!current.split(/\r?\n/).includes('/.codegraph/')) await fs.appendFile(file, '\n/.codegraph/\n', 'utf8');
+    const prefix = projectRelative.split(path.sep).join('/').replace(/[\\*?[\]]/g, '\\$&');
+    const patterns = ['/.sat/', '/.codegraph/'];
+    if (prefix) patterns.push('/' + prefix + '/.sat/', '/' + prefix + '/.codegraph/');
+    const existing = new Set(current.split(/\r?\n/));
+    const missing = patterns.filter(pattern => !existing.has(pattern));
+    if (missing.length) await fs.appendFile(file, '\n' + missing.join('\n') + '\n', 'utf8');
   }
   public static async atomic(file: string, value: unknown): Promise<void> {
     await this.atomicText(file, JSON.stringify(value));

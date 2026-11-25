@@ -666,7 +666,7 @@ export class AutomationPanelComponent implements OnInit {
     return connectionId;
   }
   public readonly fieldTooltips: Record<string, string> = {
-    repositoryPath: 'Путь к папке git-репозитория на компьютере worker для сборки и проверок.',
+    repositoryPath: 'Абсолютный путь к папке проекта или его package.json на компьютере worker.',
     baseBranch: 'Базовая ветка репозитория, от которой создаются задачи и куда сливаются изменения.',
     newBranch: 'Имя новой ветки для создания от базовой без смены рабочей папки.',
     setupCommands: 'Команды подготовки окружения перед запуском агентов. Worker определяет пакетный менеджер проекта.',
@@ -743,7 +743,7 @@ export class AutomationPanelComponent implements OnInit {
     void this.project({ action: ProjectAction.Browse, path }, result => {
       this.parentFolder = result.parent !== result.path ? result.parent ?? '' : '';
       const root = this.folderNode(result.path, result.path);
-      root.children = (result.directories ?? []).map(entry => this.folderNode(entry.name, entry.path));
+      root.children = this.projectEntries(result);
       root.expanded = true;
       root.leaf = !root.children.length;
       this.selectedFolder = root;
@@ -786,10 +786,16 @@ export class AutomationPanelComponent implements OnInit {
   private folderNode(label: string, folder: string): TreeNode<string> {
     return { label, data: folder, leaf: false, icon: 'pi pi-folder' };
   }
+  private projectEntries(result: ProjectResult): TreeNode<string>[] {
+    const directories = (result.directories ?? []).map(entry => this.folderNode(entry.name, entry.path));
+    return result.packageManifest
+      ? [{ label: 'package.json', data: result.packageManifest, leaf: true, icon: 'pi pi-file' }, ...directories]
+      : directories;
+  }
   public async expandFolder(node: TreeNode<string>): Promise<void> {
     if (node.children || !node.data) return;
     const result = await this.project({ action: ProjectAction.Browse, path: node.data }, result => {
-      node.children = (result.directories ?? []).map(entry => this.folderNode(entry.name, entry.path));
+      node.children = this.projectEntries(result);
       node.leaf = !node.children.length;
     });
     if (!result) node.expanded = false;

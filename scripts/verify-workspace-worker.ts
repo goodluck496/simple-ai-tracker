@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
-import { cpSync, mkdirSync, mkdtempSync, rmSync, symlinkSync } from 'node:fs';
+import { cpSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import type { AddressInfo } from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
@@ -67,7 +67,8 @@ try {
   let holdConnectionStatus = true;
   await page.route('**/api/automation/host', route => holdConnectionStatus ? route.fulfill({ json: { online: false } }) : route.continue());
   await page.goto(`${base}/automation/settings/project`);
-  await page.locator('p-button[data-project-picker] button').filter({ hasText: 'Выбрать папку' }).click().catch(async error => {
+  const picker = page.locator('p-button[data-project-picker] button').filter({ hasText: 'Выбрать проект' });
+  await picker.click().catch(async error => {
     console.error({ url: page.url(), pageErrors, body: (await page.locator('body').innerText()).slice(0, 1200) });
     throw error;
   });
@@ -80,6 +81,30 @@ try {
   await page.getByRole('group', { name: 'Папки на компьютере воркера' }).waitFor();
   await connection.waitFor({ state: 'hidden' });
   console.log('PASS: a new workspace can browse worker folders without restarting the original host.');
+  const folders = page.getByRole('group', { name: 'Папки на компьютере воркера' });
+  await folders.locator('button').filter({ hasText: 'Закрыть' }).click();
+  const repo = path.join(root, 'fixture');
+  for (const appName of ['web', 'api']) {
+    const directory = path.join(repo, appName);
+    mkdirSync(directory, { recursive: true });
+    writeFileSync(path.join(directory, 'package.json'), JSON.stringify({ scripts: { build: `echo ${appName}-fixture` } }));
+  }
+  await run('git', ['init', '-b', 'main'], { cwd: repo });
+  const projectInput = page.getByRole('textbox', { name: /Папка проекта или package.json/ });
+  await projectInput.fill(repo);
+  await picker.click();
+  const web = folders.getByRole('treeitem', { name: 'web', exact: true });
+  await web.locator('button').first().click();
+  await folders.getByText('package.json', { exact: true }).click();
+  await folders.locator('button').filter({ hasText: 'Использовать для проекта' }).click();
+  await page.getByText('Проект прочитан на worker. Выберите ветку и команды из package.json.').waitFor();
+  assert.equal(await projectInput.inputValue(), path.join(repo, 'web'));
+  await page.getByRole('button', { name: 'Сохранить настройки проекта' }).click();
+  await page.getByText('Настройки проекта сохранены.', { exact: true }).waitFor();
+  await page.reload();
+  await page.waitForFunction(expected => (document.querySelector('.folder-input-row input') as HTMLInputElement)?.value === expected, path.join(repo, 'web'));
+  assert.deepEqual(pageErrors, []);
+  console.log('PASS: selected a nested package.json and reloaded the saved project directory.');
 } finally {
   await browser?.close();
   await service('stop');

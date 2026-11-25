@@ -12,7 +12,10 @@ import { DEFAULT_AUTOMATION_SETTINGS, type AutomationSettings } from '../../../.
 import { StageCheckpoint } from './stage-checkpoint.js';
 import { WorktreePreparation } from './worktree-preparation.js';
 
-test('worker runs isolated Git pipeline, executes real checks, fixes review findings and fast-forwards without marking done', async () => {
+test('worker runs isolated Git pipeline, executes real checks and integrates review fixes', () => verifyPipeline(''));
+test('worker runs the pipeline and integration checks in the selected app of a multi-app repository', () => verifyPipeline(path.join('apps', 'first app')));
+
+async function verifyPipeline(relative: string) {
   const root = await mkdtemp(path.join(os.tmpdir(), 'sat-pipeline-'));
   const repo = path.join(root, 'project with spaces');
   await mkdir(repo);
@@ -23,7 +26,14 @@ test('worker runs isolated Git pipeline, executes real checks, fixes review find
     await git(['init', '-b', 'main']);
     await git(['config', 'user.email', 'test@example.invalid']);
     await git(['config', 'user.name', 'Tracker fixture']);
-    await writeFile(path.join(repo, 'answer.txt'), '0', 'utf8');
+    const project = path.join(repo, relative);
+    if (relative) {
+      await mkdir(project, { recursive: true });
+      await mkdir(path.join(repo, 'apps', 'other'));
+      await writeFile(path.join(repo, 'apps', 'other', 'package.json'), '{"name":"other"}');
+      await writeFile(path.join(project, 'package.json'), '{"name":"selected"}');
+    }
+    await writeFile(path.join(project, 'answer.txt'), '0', 'utf8');
     await git(['add', '.']); await git(['commit', '-m', 'initial fixture']);
     const bridge = path.join(root, 'fixture-agent.cjs');
     await writeFile(bridge, `const fs=require('node:fs'); const role=process.argv[2]; let verdict='pass'; let plan;
@@ -39,7 +49,8 @@ if(role==='tester') {
 }
 process.stdout.write(JSON.stringify({verdict,summary:role+': '+verdict,plan,screenshots,commitMessage:'[#SAT-1] - Изменено значение ответа, чтобы проверить ожидаемое поведение'}));`, 'utf8');
     const roles = ['analyst', 'developer', 'tester', 'reviewer'] as const;
-    const settings: AutomationSettings = { ...structuredClone(DEFAULT_AUTOMATION_SETTINGS), repositoryPath: repo, mergePolicy: 'local',
+    const settings: AutomationSettings = { ...structuredClone(DEFAULT_AUTOMATION_SETTINGS), repositoryPath: project, mergePolicy: 'local',
+      setup: [{ command: process.execPath, args: ['-e', "require('node:fs').accessSync('answer.txt')"] }],
       connections: [{ id: 'fixture', label: 'Deterministic fixture', kind: 'native', supportsImages: false }],
       agents: roles.map((role) => ({ id: role, role, runner: 'custom', connectionId: 'fixture', model: 'fixture-only', instructions: '', command: process.execPath, args: [bridge, '{role}'] })),
       pipeline: [...roles], checks: [{ command: process.execPath, args: ['-e', "require('node:assert').ok(Number(require('node:fs').readFileSync('answer.txt','utf8'))>0)"] }] };
@@ -54,7 +65,8 @@ process.stdout.write(JSON.stringify({verdict,summary:role+': '+verdict,plan,scre
       return JSON.parse(text) as T;
     } }, 'fixture-worker', executor);
     assert.equal(await worker.tick(), true);
-    assert.equal(app.automationService.detail(run.id).run.status, 'review');
+    const review = app.automationService.detail(run.id).run;
+    assert.equal(review.status, 'review', review.summary);
     app.automationService.reviewTask(task.id, 'accept');
     assert.equal(await worker.tick(), true);
     const detail = app.automationService.detail(run.id);
@@ -67,16 +79,18 @@ process.stdout.write(JSON.stringify({verdict,summary:role+': '+verdict,plan,scre
     assert.equal(images.length, 1, 'Repeated tester evidence is attached only once');
     const imageName = new URL(images[0].url, 'http://tracker.test').pathname.split('/').pop()!;
     assert.ok(app.imageService.resolveFile(imageName));
-    assert.equal(await readFile(path.join(repo, 'answer.txt'), 'utf8'), '2');
+    assert.equal(await readFile(path.join(project, 'answer.txt'), 'utf8'), '2');
+    assert.equal(detail.run.checkout!.repositoryRoot, repo);
+    assert.equal((await git(['diff', '--name-only', 'HEAD~1', 'HEAD'])).trim(), [...relative.split(path.sep).filter(Boolean), 'answer.txt'].join('/'));
     assert.equal((await git(['log', '--format=%s', '-1'])).trim(), '[#SAT-1] - Изменено значение ответа, чтобы проверить ожидаемое поведение');
     assert.equal((await git(['rev-list', '--count', 'HEAD'])).trim(), '2', 'One squash commit in target');
     assert.equal((await git(['rev-list', '--count', `sat/${run.id}`])).trim(), '3', 'Private source commits remain available');
     assert.equal((await git(['status', '--porcelain'])).trim(), '');
-    const evidence = JSON.parse(await readFile(path.join(detail.run.checkout!.worktreePath, '.sat', 'stage-handoff.json'), 'utf8'));
+    const evidence = JSON.parse(await readFile(path.join(detail.run.checkout!.worktreePath, relative, '.sat', 'stage-handoff.json'), 'utf8'));
     assert.equal(evidence.evidence.role, 'reviewer'); assert.equal(evidence.evidence.checks.length, 1);
     assert.equal(await worker.tick(), false);
   } finally { app.close(); await rm(root, { recursive: true, force: true }); }
-});
+}
 
 test('process executor terminates on cancellation and preserves Unicode argv', async () => {
   const executor = new ProcessExecutor();

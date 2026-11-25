@@ -34,7 +34,7 @@ export class PipelineDoctor {
       diagnosis:{confidence:'confirmed',evidence:[accessEvidence.slice(-2400)],steps:['Проверить лимит и время восстановления в аккаунте провайдера.', 'При необходимости сменить профиль текущего остановленного этапа через редактор агентов.', 'Продолжить тот же запуск после восстановления доступа; рабочая ветка сохранена.']},
     };
     const wtCwd = run.checkout?.worktreePath;
-    const repoCwd = run.settings?.repositoryPath;
+    const repoCwd = run.checkout?.repositoryRoot ?? run.settings?.repositoryPath;
 
     const git = async (cwd: string | undefined, args: string[]) => {
       if (!cwd) return '';
@@ -187,7 +187,7 @@ export class PipelineDoctor {
    */
   public async apply(run: AgentRun, fix: ProposedFix): Promise<void> {
     if (fix.action !== 'commit_dirty_repo' && fix.action !== 'switch_branch') throw new Error('Готового патча для применения нет.');
-    const cwd = run.settings.repositoryPath;
+    const cwd = run.checkout?.repositoryRoot ?? run.settings.repositoryPath;
     if (!fs.existsSync(cwd)) throw new Error('Серверу недоступен репозиторий воркера. Выполните действие на машине воркера.');
     const signal = AbortSignal.timeout(30000);
     const git = (args: string[]) => this.executor.run({ command: 'git', args, cwd, signal });

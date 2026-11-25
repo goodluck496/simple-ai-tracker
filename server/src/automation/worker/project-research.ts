@@ -1,14 +1,14 @@
 import { PROJECT_LIMITS, detectPackageManager, type ProjectPassport } from '../../../../shared/automation/project.js';
 import { ProcessExecutor } from '../runners/process-executor.js';
 
-export async function researchProject(executor: ProcessExecutor, cwd: string, branch: string): Promise<ProjectPassport> {
+export async function researchProject(executor: ProcessExecutor, cwd: string, branch: string, requireManifest = false): Promise<ProjectPassport> {
   if (!branch || branch.length > 250) throw new Error('Укажите базовую ветку.');
   const signal = AbortSignal.timeout(PROJECT_LIMITS.commandMs);
   const git = (args: string[], maxOutputChars = 1000000) =>
     executor.run({ command: 'git', args, cwd, signal, maxOutputChars });
   const commit = (await git(['show-ref', '--hash', '--verify', 'refs/heads/' + branch])).trim();
   const limit = 1000000;
-  const tree = await git(['ls-tree', '-rlz', '--full-tree', commit], limit);
+  const tree = await git(['ls-tree', '-rlz', commit, '--', '.'], limit);
   if (tree.length >= limit) throw new Error('Дерево проекта превышает лимит исследования.');
   const files = new Map<string, { oid: string; size: number }>();
   for (const record of tree.split('\0')) {
@@ -16,6 +16,7 @@ export async function researchProject(executor: ProcessExecutor, cwd: string, br
     if (entry) files.set(entry[3], { oid: entry[1], size: Number(entry[2]) });
   }
   const sources = [...files.keys()];
+  if (requireManifest && !files.has('package.json')) throw new Error('В выбранной ветке нет package.json этого приложения.');
   const section = (pattern: RegExp) => sources.filter(file => file.length <= 300 && pattern.test(file))
     .sort((a, b) => a.split('/').length - b.split('/').length).slice(0, 24);
   const manifests = section(/(?:^|\/)package\.json$/i).slice(0, 12);

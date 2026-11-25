@@ -8,7 +8,7 @@ export async function gitFixture() {
   const root = await mkdtemp(path.join(os.tmpdir(), 'sat-integration-'));
   const repository = path.join(root, 'repo'); await mkdir(repository);
   const executor = new ProcessExecutor(); const signal = AbortSignal.timeout(90000);
-  const git = (args: string[], cwd = repository) => executor.run({ command: 'git', args, cwd, signal });
+  const git = (args: string[], cwd = repository) => executor.run({ command: 'git', args, cwd, signal: AbortSignal.timeout(30000) });
   await git(['init', '-b', 'master']); await git(['config', 'user.name', 'Fixture']);
   await git(['config', 'user.email', 'fixture@example.invalid']); await git(['config', 'commit.gpgsign', 'false']);
   await git(['config', 'core.autocrlf', 'false']);

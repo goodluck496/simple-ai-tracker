@@ -74,6 +74,7 @@ export interface PipelineRoute {
 export interface AutomationSettings {
   mcpServers?: import('./project-mcp.js').ProjectMcp[];
   skillBindings?: import('./skills.js').SkillBinding[];
+  /** Selected application directory or package.json on the worker. Git operations resolve the enclosing repository. */
   repositoryPath: string;
   baseBranch: string;
   connections: ModelConnection[];
@@ -213,6 +214,7 @@ export interface AgentOutcome {
 }
 
 export interface AgentJob {
+  worktreeRoot?: string;
   librarySkills?: import('./skills.js').LibrarySkill[];
   auditAttempt?: { id: string; workspace: string; taskId: string; stage: number; revision: number; handoffBytes: number };
   reviewImageData?: string[];

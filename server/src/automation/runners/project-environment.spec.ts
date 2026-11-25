@@ -23,6 +23,11 @@ test('project policy loads selected skills once, records hashes and rejects miss
     assert.equal(logs.join('').includes('Обязательные правила'), false);
     const receipt = JSON.parse(await fs.readFile(path.join(cwd, '.sat/environment-developer.json'), 'utf8'));
     assert.equal(receipt.files.length, 2); assert.match(receipt.files[0].sha256, /^[a-f0-9]{64}$/);
+    const nested = path.join(cwd, 'apps', 'web');
+    await fs.mkdir(nested, { recursive: true });
+    await fs.writeFile(path.join(nested, 'AGENTS.md'), 'Локальные правила');
+    const scoped = await new ProjectEnvironment().prepare({ ...job, cwd: nested, worktreeRoot: cwd }, () => {});
+    assert.match(scoped.prompt, /Обязательные правила[\s\S]+Локальные правила/);
     await profile({ version: 1, instructions: [{ path: 'missing.md' }] });
     await assert.rejects(new AgentRunnerRegistry().get('codex').run(job, () => {}), /ENOENT/);
     await profile({ version: 1, instructions: [{ path: '../outside.md' }] });

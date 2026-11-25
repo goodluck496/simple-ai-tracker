@@ -22,6 +22,14 @@ test('YOLO requires a real registered linked worktree of the configured reposito
     const repository = path.join(root, 'a'); const cwd = path.join(root, 'wt-a');
     const job = { cwd, settings: { repositoryPath: repository }, signal } as AgentJob;
     await new WorktreePermissions().verify(job);
+    for (const checkout of [repository, cwd]) {
+      await fs.mkdir(path.join(checkout, 'web'));
+      await fs.writeFile(path.join(checkout, 'web', 'package.json'), '{}');
+    }
+    const nested = { ...job, cwd: path.join(cwd, 'web'), settings: { ...job.settings, repositoryPath: path.join(repository, 'web', 'package.json') } };
+    await new WorktreePermissions().verify(nested);
+    await assert.rejects(new WorktreePermissions().verify({ ...nested, cwd }), /выбранному приложению/);
+    await assert.rejects(new WorktreePermissions().verify({ ...nested, cwd: path.join(repository, 'web') }), /основном checkout/);
     await assert.rejects(new WorktreePermissions().verify({ ...job, cwd: repository }), /основном checkout/);
     await assert.rejects(new WorktreePermissions().verify({ ...job, cwd: path.join(root, 'wt-b') }), /другому репозиторию/);
     const fake = path.join(root, 'fake'); await fs.mkdir(fake); await fs.copyFile(path.join(cwd, '.git'), path.join(fake, '.git'));

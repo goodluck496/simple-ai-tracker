@@ -22,16 +22,16 @@ export class ProjectEnvironment {
   public constructor(private readonly probe: (server: Server, cwd: string, signal: AbortSignal) => Promise<unknown> = ProjectEnvironment.probe) {}
   public async prepare(job: AgentJob, progress: (text: string) => void): Promise<AgentJob> {
     const root = await fs.realpath(job.cwd);
-    const safe = async (relative: string): Promise<string> => {
+    const safe = async (relative: string, base: string): Promise<string> => {
       if (!relative || path.isAbsolute(relative) || relative.includes('\\') || relative.split('/').includes('..')) throw new Error('Environment file must use a relative project path.');
-      const target = await fs.realpath(path.join(root, relative));
-      const resolved = path.relative(root, target);
+      const target = await fs.realpath(path.join(base, relative));
+      const resolved = path.relative(base, target);
       if (resolved.startsWith('..') || path.isAbsolute(resolved)) throw new Error('Environment file escapes worktree.');
       if (!(await fs.stat(target)).isFile()) throw new Error('Environment entry must be a file.');
       return target;
     };
-    const read = async (relative: string) => {
-      const target = await safe(relative);
+    const read = async (relative: string, base = root) => {
+      const target = await safe(relative, base);
       if ((await fs.stat(target)).size > LIMIT * 4) throw new Error('Environment file exceeds context limit: ' + relative);
       return fs.readFile(target, 'utf8');
     };
@@ -49,9 +49,15 @@ export class ProjectEnvironment {
     }
     if (!manifest || manifest.version !== 1 || Object.keys(manifest).some(k => !['version', 'instructions', 'skills', 'mcp'].includes(k))) throw new Error('Invalid environment profile version or field.');
     const selected = (rule: { roles?: string[] }) => !rule.roles || rule.roles.includes(job.profile.role);
-    const rules: FileRule[] = [];
-    for (const file of ROOT_FILES) {
-      try { await fs.lstat(path.join(root, file)); rules.push({ path: file }); }
+    const rules = new Map<string, { file: string; base: string }>();
+    const worktree = job.worktreeRoot ? await fs.realpath(job.worktreeRoot) : root;
+    const relative = path.relative(worktree, root);
+    if (relative === '..' || relative.startsWith('..' + path.sep) || path.isAbsolute(relative)) throw new Error('Application directory escapes worktree.');
+    const directories = [worktree];
+    for (const part of relative.split(path.sep).filter(Boolean)) directories.push(path.join(directories.at(-1)!, part));
+    for (const base of directories) for (const file of ROOT_FILES) {
+      const declared = path.relative(root, path.join(base, file)).split(path.sep).join('/');
+      try { await fs.lstat(path.join(base, file)); rules.set(declared, { file, base }); }
       catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
     }
     for (const key of ['instructions', 'skills'] as const) {
@@ -59,14 +65,14 @@ export class ProjectEnvironment {
       if (!Array.isArray(entries) || entries.length > 32) throw new Error('Invalid environment file list.');
       for (const entry of entries) {
         if (!entry || typeof entry.path !== 'string' || (entry.roles !== undefined && !strings(entry.roles)) || Object.keys(entry).some(k => !['path', 'roles'].includes(k))) throw new Error('Invalid environment file rule.');
-        if (selected(entry)) rules.push(entry);
+        if (selected(entry)) rules.set(entry.path, { file: entry.path, base: root });
       }
     }
     const receipts: { path: string; sha256: string; chars: number }[] = [];
     const texts: string[] = [];
     let total = 0;
-    for (const file of [...new Set(rules.map(r => r.path))]) {
-      const text = await read(file); total += text.length;
+    for (const [file, source] of rules) {
+      const text = await read(source.file, source.base); total += text.length;
       if (total > LIMIT) throw new Error('Required project instructions exceed 48000 characters; select fewer skills. Nothing was truncated.');
       receipts.push({ path: file, sha256: digest(text), chars: text.length });
       texts.push('--- Project file: ' + file + ' ---\n' + text);

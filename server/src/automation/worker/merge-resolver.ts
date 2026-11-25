@@ -1,14 +1,16 @@
+import path from 'node:path';
 import type { AgentOutcome, AgentProfile, AgentRun } from '../../../../shared/automation/contracts.js';
 import { AgentHandoff } from '../../../../shared/automation/handoff.js';
 import { ProcessExecutor } from '../runners/process-executor.js';
 import { StageCheckpoint } from './stage-checkpoint.js';
+import { projectInCheckout } from '../project-location.js';
 
-type Invoke = (profile: AgentProfile, prompt: string, cwd: string, signal: AbortSignal, maxTools: number | undefined) => Promise<AgentOutcome>;
+type Invoke = (profile: AgentProfile, prompt: string, cwd: string, signal: AbortSignal, maxTools: number | undefined, worktree: string) => Promise<AgentOutcome>;
 
 /** Bounded conflict-only model operation; successful output is checkpointed before Git staging. */
 export class MergeResolver {
   public constructor(private readonly executor: ProcessExecutor, private readonly invoke: Invoke) {}
-  public async resolve(run: AgentRun, context: unknown, cwd: string, files: string[], baseSha: string, signal: AbortSignal): Promise<void> {
+  public async resolve(run: AgentRun, context: unknown, cwd: string, files: string[], baseSha: string, signal: AbortSignal, relative = ''): Promise<void> {
     if (run.settings.resolveConflicts === false) throw new Error('Automatic conflict resolution is disabled.');
     if (files.length > 10) throw new Error('Too many conflict files for automatic resolution; inspect the preserved integration worktree.');
     const profile = run.settings.agents.find(agent => agent.role === 'developer')!;
@@ -18,6 +20,9 @@ export class MergeResolver {
     const checkpoint = new StageCheckpoint(cwd, run.settings.pipeline.length, run.revision, git);
     const key = StageCheckpoint.key({ run: run.id, source: run.commitSha, baseSha, context, files });
     if (await checkpoint.load(key)) return;
+    const project = await projectInCheckout(cwd, relative);
+    const prefix = relative ? relative.split(path.sep).join('/') + '/' : '';
+    if (files.some(file => !file.startsWith(prefix))) throw new Error('Конфликт затрагивает файлы за пределами выбранного приложения. Проверьте рабочую копию слияния.');
     const stages = (await git(['ls-files', '--unmerged', '-z'])).split('\0');
     const descriptions: unknown[] = [];
     let size = 0;
@@ -33,13 +38,13 @@ export class MergeResolver {
         if (size > 24000) throw new Error('Conflict context exceeds resolver limit; no partial conflict instructions were sent.');
         parts[String(stage)] = content;
       }
-      descriptions.push({ file, base_1: parts['1'], target_2: parts['2'], task_3: parts['3'] });
+      descriptions.push({ file: file.slice(prefix.length), base_1: parts['1'], target_2: parts['2'], task_3: parts['3'] });
     }
     const prompt = `Resolve only these conflicted files in this integration worktree. Preserve both task requirements and current target behavior. Never choose ours/theirs mechanically. Do not edit other files, stage, commit, change branches, install packages, push, or access live data. Do not create acceptance.log, reports, or any other new file outside .sat. The worker runs checks after resolution: do not redirect command output into project files. If intent is ambiguous return blocked or questions. Return JSON {"verdict":"pass|blocked|questions","summary":"brief evidence","questions":[],"plan":"","commitMessage":""}.\n`
       + `${AgentHandoff.instructions}\nTask context:\n${AgentHandoff.task(context)}\nConflicts (base/target/task):\n${JSON.stringify(descriptions)}`;
     const priorHead = (await git(['rev-parse', 'HEAD'])).trim();
     const priorStatus = await git(['status', '--porcelain']);
-    const outcome = await this.invoke(profile, prompt, cwd, resolverSignal, run.trustedExecution ? undefined : run.settings.maxResolverToolCalls ?? 16);
+    const outcome = await this.invoke(profile, prompt, project, resolverSignal, run.trustedExecution ? undefined : run.settings.maxResolverToolCalls ?? 16, cwd);
     if (outcome.verdict !== 'pass') throw new Error(`Conflict resolver blocked: ${outcome.summary}`);
     await checkpoint.save({ key, head: priorHead, fingerprint: '', priorHead, priorStatus, outcome });
   }

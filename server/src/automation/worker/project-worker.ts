@@ -12,6 +12,7 @@ import { researchProject } from './project-research.js';
 import { RunCleanup } from './run-cleanup.js';
 import type { ExecutionControl } from './execution-supervisor.js';
 import { readProjectPackageManager } from '../package-manager.js';
+import { projectLocation, selectedDirectory } from '../project-location.js';
 import { ProjectEnvironment } from '../runners/project-environment.js';
 import { bindProjectMcp } from '../runners/mcp-transport.js';
 import { TaskEnvironment } from '../runners/task-environment.js';
@@ -51,7 +52,7 @@ export class ProjectWorker {
     }
     const target = input.path || os.homedir();
     if (!path.isAbsolute(target)) throw new Error('Укажите абсолютную папку на машине worker.');
-    const directory = await realpath(target);
+    const directory = await selectedDirectory(target);
     if (input.action === ProjectAction.ProbeMcp) {
       if (!input.mcp) throw new Error('Не указано подключение MCP.');
       const server = bindProjectMcp(input.mcp, directory);
@@ -65,13 +66,17 @@ export class ProjectWorker {
         const signal = AbortSignal.timeout(PROJECT_LIMITS.deploymentMs - PROJECT_LIMITS.requestMs);
         const common = (await this.git(directory, ['rev-parse', '--path-format=absolute', '--git-common-dir'])).trim();
         const operations = new PostOperationRunner(this.executor);
-        for (const [index, command] of deployment.entries()) {
-          try {
-            await operations.run(command, directory, common, signal);
-          } catch (cause) {
-            const diagnostic = cause instanceof Error ? cause.message : String(cause);
-            return { path: directory, deploymentError: `Пост-операция ${index + 1} из ${deployment.length}: ${diagnostic.slice(0, 2000)}` };
+        let completed = 0;
+        try {
+          const project = await projectLocation(input.previewPatch.deploymentProject ?? directory, this.executor, signal);
+          if (project.root !== directory) throw new Error('Приложение находится в другом репозитории.');
+          for (const command of deployment) {
+            await operations.run(command, project.directory, common, signal, undefined, project.relative);
+            completed++;
           }
+        } catch (cause) {
+          const diagnostic = cause instanceof Error ? cause.message : String(cause);
+          return { path: directory, deploymentError: `Пост-операция ${completed + 1} из ${deployment.length}: ${diagnostic.slice(0, 2000)}` };
         }
       }
       return { path: directory };
@@ -88,32 +93,33 @@ export class ProjectWorker {
       return { path: directory, diff: { text, truncated } };
     }
     if (input.action === ProjectAction.Browse) {
-      const entries = (await readdir(directory, { withFileTypes: true })).filter((entry) => entry.isDirectory() && !entry.name.startsWith('.')).sort((a, b) => a.name.localeCompare(b.name));
+      const contents = await readdir(directory, { withFileTypes: true });
+      const packageManifest = contents.some(entry => entry.name === 'package.json' && entry.isFile()) ? path.join(directory, 'package.json') : undefined;
+      const entries = contents.filter((entry) => entry.isDirectory() && !entry.name.startsWith('.')).sort((a, b) => a.name.localeCompare(b.name));
       const drives = process.platform === 'win32' ? (await Promise.all(Array.from('ABCDEFGHIJKLMNOPQRSTUVWXYZ', async letter => {
         const root = letter + ':/';
         try { return (await stat(root)).isDirectory() ? root : undefined; } catch { return undefined; }
       }))).filter((root): root is string => root !== undefined) : undefined;
-      return { path: directory, parent: path.dirname(directory), drives, truncated: entries.length > PROJECT_LIMITS.maxEntries,
+      return { path: directory, parent: path.dirname(directory), drives, packageManifest, truncated: entries.length > PROJECT_LIMITS.maxEntries,
         directories: entries.slice(0, PROJECT_LIMITS.maxEntries).map((entry) => ({ name: entry.name, path: path.join(directory, entry.name) })) };
     }
-    const root = (await this.git(directory, ['rev-parse', '--show-toplevel'])).trim();
+    const { root, relative } = await projectLocation(directory, this.executor, AbortSignal.timeout(PROJECT_LIMITS.commandMs));
     if (input.action === ProjectAction.RunScript) {
       const script = input.script;
       if (!input.path || !isProjectScript(script)) throw new Error('Выберите скрипт build или deploy.');
-      if (await realpath(root) !== directory) throw new Error('Сохраните путь к корню репозитория.');
-      const { scripts, packageManager } = await this.readPackage(root);
+      const { scripts, packageManager } = await this.readPackage(directory);
       if (!scripts || !Object.hasOwn(scripts, script) || typeof scripts[script] !== 'string' || !scripts[script].trim()) {
         throw new Error(`В package.json проекта отсутствует скрипт ${script}.`);
       }
-      const manager = await readProjectPackageManager(root, packageManager ?? null);
+      const manager = await readProjectPackageManager(directory, packageManager ?? null);
       let scriptOutput = '';
-      await this.executor.run({ ...packageScript(manager.packageManager, script), cwd: root,
+      await this.executor.run({ ...packageScript(manager.packageManager, script), cwd: directory,
         env: TaskEnvironment.create(), signal: AbortSignal.timeout(PROJECT_LIMITS.deploymentMs - PROJECT_LIMITS.requestMs - 5000),
         onProgress: text => { scriptOutput = (scriptOutput + text).slice(-12000); } });
-      return { path: root, scriptOutput };
+      return { path: directory, scriptOutput };
     }
     if (input.action === ProjectAction.Research) {
-      return { path: root, passport: await researchProject(this.executor, root, input.baseBranch ?? '') };
+      return { path: directory, passport: await researchProject(this.executor, directory, input.baseBranch ?? '', !!relative) };
     }
     if (input.action === ProjectAction.CreateBranch) {
       const branch = input.newBranch ?? ''; const base = input.baseBranch ?? '';
@@ -124,13 +130,13 @@ export class ProjectWorker {
     }
     const branches = (await this.git(root, ['for-each-ref', '--format=%(refname:short)', 'refs/heads/'])).trim().split('\n').map((v) => v.trim()).filter(Boolean);
     if (branches.length > PROJECT_LIMITS.maxEntries) throw new Error('Слишком много веток для выбора.');
-    const { scripts, packageManager } = await this.readPackage(root);
+    const { scripts, packageManager } = await this.readPackage(directory);
     const scriptBodies = Object.fromEntries(Object.entries(scripts ?? {})
       .filter((entry): entry is [string, string] => entry[0].length <= 200 && typeof entry[1] === 'string' && !!entry[1].trim())
       .slice(0, PROJECT_LIMITS.maxEntries)
       .map(([name, value]) => [name, value.length > 300 ? value.slice(0, 300) + '…' : value]));
-    return { path: root, branches, currentBranch: (await this.git(root, ['branch', '--show-current'])).trim(),
-      scripts: Object.keys(scriptBodies), scriptBodies, ...await readProjectPackageManager(root, packageManager ?? null) };
+    return { path: directory, branches, currentBranch: (await this.git(root, ['branch', '--show-current'])).trim(),
+      scripts: Object.keys(scriptBodies), scriptBodies, ...await readProjectPackageManager(directory, packageManager ?? null) };
   }
   private async readPackage(root: string): Promise<{ scripts?: Record<string, unknown>; packageManager?: unknown }> {
     try {

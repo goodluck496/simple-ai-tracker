@@ -16,14 +16,18 @@ test('preview patch applies over the current base without moving HEAD and rolls 
   const fixture = await gitFixture();
   try {
     const source = await fixture.branch('sat-fixture', 'a.txt', ['1\n']);
+    const project = path.join(fixture.repository, 'web');
+    await mkdir(project);
+    await writeFile(path.join(project, 'package.json'), '{}');
+    await fixture.git(['add', '--', 'web/package.json']);
     await writeFile(path.join(fixture.repository, 'b.txt'), '2\n');
     await fixture.git(['commit', '-am', 'base moved']);
     const head = (await fixture.git(['rev-parse', 'HEAD'])).trim();
     const worker = new ProjectWorker({ async call() { throw new Error('Unexpected RPC'); } }, 'preview-fixture');
     const execute = (rollback: boolean) => worker.execute({ action: ProjectAction.PreviewPatch, path: fixture.repository,
-      previewPatch: { runId: 'fixture', head: source.sourceSha, branch: 'master', rollback,
+      previewPatch: { runId: 'fixture', head: source.sourceSha, branch: 'master', rollback, deploymentProject: project,
         deployment: [{ command: process.execPath, args: ['-e',
-          "const patched = require('node:fs').readFileSync('a.txt','utf8').trim() === '1'; require('node:assert').equal(patched, " + !rollback + ")"] }],
+          "const patched = require('node:fs').readFileSync('../a.txt','utf8').trim() === '1'; require('node:assert').equal(patched, " + !rollback + ")"] }],
       } });
     assert.equal((await execute(false)).deploymentError, undefined);
     assert.equal((await fixture.git(['rev-parse', 'HEAD'])).trim(), head);
@@ -98,6 +102,36 @@ test('manual build and deploy use the saved checkout and its package scripts', a
     assert.equal(mailbox.get(deploy.id).status, ProjectRequestStatus.Completed);
     assert.match(mailbox.get(deploy.id).result?.scriptOutput ?? '', /\b42\b/);
   } finally { app.close(); await fixture.dispose(); }
+});
+
+test('selecting a package.json scopes scripts and branch research to that application', async () => {
+  const fixture = await gitFixture();
+  try {
+    const worker = new ProjectWorker({ async call() { throw new Error('Unexpected RPC'); } }, 'package-fixture');
+    const selected = path.join(fixture.repository, 'apps', 'web app');
+    const manifest = path.join(selected, 'package.json');
+    const sibling = path.join(fixture.repository, 'apps', 'api');
+    await mkdir(selected, { recursive: true });
+    await mkdir(sibling);
+    await writeFile(manifest, JSON.stringify({ scripts: { build: 'node -p "require(\'./package.json\').name"' }, name: 'selected-web' }));
+    await writeFile(path.join(sibling, 'package.json'), '{"scripts":{"deploy":"other-script"}}');
+    await fixture.git(['add', '.']);
+    await fixture.git(['commit', '-m', 'two apps without a root manifest']);
+    assert.equal((await worker.execute({ action: ProjectAction.Browse, path: selected })).packageManifest, manifest);
+    const inspected = await worker.execute({ action: ProjectAction.Inspect, path: manifest });
+    assert.equal(inspected.path, selected);
+    assert.deepEqual(inspected.scripts, ['build']);
+    assert.equal(inspected.currentBranch, 'master');
+    const created = await worker.execute({ action: ProjectAction.CreateBranch, path: selected, baseBranch: 'master', newBranch: 'web-work' });
+    assert.equal(created.path, selected);
+    assert.ok(created.branches?.includes('web-work'));
+    const researched = await worker.execute({ action: ProjectAction.Research, path: selected, baseBranch: 'web-work' });
+    assert.deepEqual(researched.passport?.commands, [{ source: 'package.json', names: ['build'] }]);
+    assert.equal(researched.passport?.path, selected);
+    const build = await worker.execute({ action: ProjectAction.RunScript, path: manifest, script: 'build' });
+    assert.match(build.scriptOutput ?? '', /^selected-web\s*$/m);
+    await assert.rejects(worker.execute({ action: ProjectAction.RunScript, path: selected, script: 'deploy' }), /отсутствует скрипт deploy/);
+  } finally { await fixture.dispose(); }
 });
 
 test('host worker browses folders, reads branches/scripts and creates branch without checkout or overwriting', async () => {

@@ -1100,12 +1100,15 @@ export class AutomationService {
         || (!rollback && !this.canPreviewPatch(run))) {
         throw new TrackerError('CONFLICT', 'Для примерки нужен остановленный запуск с сохранённым коммитом и рабочей копией.');
       }
-      const deployment = deploy ? this.settings().postOperations : undefined;
+      const configured = this.settings();
+      const deploymentSettings = configured.repositoryPath === run.settings.repositoryPath ? configured : run.settings;
+      const deployment = deploy ? deploymentSettings.postOperations : undefined;
       if (deploy && !deployment?.length) throw new TrackerError('VALIDATION_FAILED', 'Настройте команды в «Проект и проверки → Пост-операции».');
       if (this.projects.previewPatchPending(run.id)) throw new TrackerError('CONFLICT', 'Операция с патчем уже выполняется.');
       if (!rollback && this.projects.hasPreviewPatch(run.id)) throw new TrackerError('CONFLICT', 'Патч уже примеряется или накатан.');
       return this.projects.enqueue({ action: ProjectAction.PreviewPatch, path: run.checkout.repositoryRoot,
-        previewPatch: { runId: run.id, head: run.commitSha, branch: run.settings.baseBranch, rollback, deployment } }, true);
+        previewPatch: { runId: run.id, head: run.commitSha, branch: run.settings.baseBranch, rollback, deployment,
+          ...(deploy ? { deploymentProject: run.settings.repositoryPath } : {}) } }, true);
     });
   }
 
@@ -1192,7 +1195,7 @@ export class AutomationService {
       if (run.status !== RunStatus.Merged && !discard) throw new TrackerError('CONFLICT', 'Запуск не слит автоматически. Подтвердите удаление неперенесённых изменений.');
       const workspace = this.workspace;
       const request = this.projects.enqueue({ action: ProjectAction.Cleanup, path: run.settings.repositoryPath, cleanup: {
-        runId: run.id, workspace, repository: run.settings.repositoryPath, directory: run.checkout?.worktreePath,
+        runId: run.id, workspace, repository: run.checkout?.repositoryRoot ?? run.settings.repositoryPath, directory: run.checkout?.worktreePath,
         baseBranch: run.settings.baseBranch, sourceSha: run.commitSha ?? undefined, candidateSha: run.integration?.candidateSha,
         children: run.feature?.children.map(c => ({ key: c.key, sourceSha: c.sourceSha, mergedSha: c.mergedSha })) ?? [], merged: run.status === RunStatus.Merged, discard,
       } }, true);

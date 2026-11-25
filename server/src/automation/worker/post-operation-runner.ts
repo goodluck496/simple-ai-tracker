@@ -15,7 +15,7 @@ interface Receipt { pid: number; started: string; }
 export class PostOperationRunner {
   public constructor(private readonly executor: ProcessExecutor) {}
 
-  public async run(op: PostOperation, cwd: string, common: string, signal: AbortSignal, onProgress?: (text: string) => void): Promise<void> {
+  public async run(op: PostOperation, cwd: string, common: string, signal: AbortSignal, onProgress?: (text: string) => void, projectRelative = ''): Promise<void> {
     op = projectCommand(op, await readProjectPackageManager(cwd));
     const missing = await PostOperationRunner.isMissingNpmScript(op, cwd);
     if (missing) {
@@ -28,7 +28,7 @@ export class PostOperationRunner {
       return;
     }
 
-    const key = createHash('sha256').update(JSON.stringify([op.command, op.args])).digest('hex');
+    const key = createHash('sha256').update(JSON.stringify(projectRelative ? [projectRelative, op.command, op.args] : [op.command, op.args])).digest('hex');
     const directory = path.join(common, 'sat-runtime');
     const coordinator = new RuntimeCoordinator(path.join(directory, 'coordination.sqlite'));
     try {

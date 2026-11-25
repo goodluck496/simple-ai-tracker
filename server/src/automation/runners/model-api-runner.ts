@@ -292,7 +292,7 @@ export class ModelApiRunner implements AgentRunner {
       if (!job.baseSha) throw new Error('Review baseline is unavailable.');
       const file = typeof args.path === 'string' ? args.path : undefined;
       if (file) await this.safePath(job.cwd, file, true);
-      const output = await this.executor.run({ command: 'git', args: ['diff', ...(file ? [] : ['--name-only']), job.baseSha, '--', ...(file ? [`:(literal)${file}`] : ['.', ':!.sat'])], cwd: job.cwd, signal: job.signal, maxOutputChars: 7000 });
+      const output = await this.executor.run({ command: 'git', args: ['diff', '--relative', ...(file ? [] : ['--name-only']), job.baseSha, '--', ...(file ? [`:(literal)${file}`] : ['.', ':!.sat'])], cwd: job.cwd, signal: job.signal, maxOutputChars: 7000 });
       return { content: output.slice(0, 6000), limited: output.length > 6000, advice: 'Read only the relevant source ranges for current code.' };
     }
     if (name === ModelTool.Explore) {
