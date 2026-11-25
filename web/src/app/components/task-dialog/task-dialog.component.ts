@@ -45,7 +45,8 @@ import { TrackerStore } from '../../services/tracker-store.service';
 import { TrackerApiService } from '../../services/tracker-api.service';
 import { Router } from '@angular/router';
 import { HttpClient } from '@angular/common/http';
-import { EMPTY, catchError, exhaustMap, firstValueFrom, of, timer } from 'rxjs';
+import { catchError, exhaustMap, firstValueFrom, of, timer } from 'rxjs';
+import type { PreviewPatchState } from '../../../../../shared/automation/project';
 import type { QueueSnapshot } from '../../../../../shared/automation/queue';
 import type { RunStatus } from '../../../../../shared/automation/contracts';
 import { formatBytes, formatDateTime, formatRelative } from '../../shared/format';
@@ -168,6 +169,19 @@ export class TaskDialogComponent {
   });
   private readonly api = inject(TrackerApiService);
   public deployPreviewPatch = false;
+  public readonly patchState = signal<PreviewPatchState | null | undefined>(undefined);
+  public readonly patchReady = computed(() => this.patchState()?.status === 'idle' || this.patchState()?.status === 'applied');
+  public readonly patchLabel = computed(() => {
+    const patch = this.patchState();
+    if (!patch) return patch === null ? 'Состояние патча недоступно' : 'Проверяем состояние патча…';
+    return {
+      idle: 'Патч не накатан',
+      applied: 'Патч накатан',
+      applying: 'Воркер накатывает патч…',
+      rolling_back: 'Воркер откатывает патч…',
+      rolling_back_for_merge: 'Воркер откатывает патч перед слиянием…',
+    }[patch.status];
+  });
   public readonly patchNotice = signal('');
   private readonly commentImagePattern = /^\[скриншот\] (\/api\/images\/[a-z0-9]{8,64}\.(?:png|jpg|webp|gif)(?:\?workspace=[\w%-]+)?)$/;
   public readonly clarificationDraft = signal('');
@@ -207,7 +221,9 @@ export class TaskDialogComponent {
     effect(onCleanup => {
       const card = this.task();
       if (card?.status !== 'review' || this.tab() !== 'discussion') return;
-      const request = timer(0, 2000).pipe(exhaustMap(() => this.api.previewPatchActive(card.id).pipe(catchError(() => EMPTY)))).subscribe(state => {
+      const request = timer(0, 2000).pipe(exhaustMap(() => this.api.previewPatchActive(card.id).pipe(catchError(() => of(null))))).subscribe(state => {
+        this.patchState.set(state?.patch ?? null);
+        if (!state) return;
         this.acceptance.set(state.acceptance ?? null);
         if (state.acceptance?.status === 'merged') void this.store.reloadOpenCard().then(() => {
           const current = this.task();
@@ -498,11 +514,12 @@ export class TaskDialogComponent {
 
   public async acceptAutomation(): Promise<void> {
     const card = this.task();
-    if (card?.status === 'review' && !this.acceptanceBusy() && !this.store.busy()
-      && await this.store.reviewAutomation(card.id, 'accept') && this.task()?.id === card.id) {
-      this.status.set(this.task()!.status);
-      if (this.task()!.status === 'review') this.acceptance.set({ status: 'queued', summary: 'Слияние поставлено в очередь.' });
-    }
+    if (card?.status !== 'review' || !this.patchReady() || this.acceptanceBusy() || this.store.busy()) return;
+    this.patchNotice.set('');
+    const saved = await this.store.reviewAutomation(card.id, 'accept');
+    if (this.task()?.id !== card.id) return;
+    if (saved) this.status.set(this.task()!.status);
+    else this.patchNotice.set(this.store.error() ?? 'Не удалось начать приёмку.');
   }
   public async previewPatch(rollback: boolean, deploy = false): Promise<void> {
     const card = this.task();
@@ -511,17 +528,17 @@ export class TaskDialogComponent {
     if (deploy) this.patchNotice.set('Воркер выполнит операцию с патчем и запустит пост-операции…');
     const request = await this.store.previewPatch(card.id, rollback, deploy);
     if (this.task()?.id !== card.id) return;
-    if (!request) { this.patchNotice.set(''); return; }
+    if (!request) { this.patchNotice.set(this.store.error() ?? 'Не удалось выполнить операцию с патчем.'); return; }
+    this.patchState.set({ status: rollback ? 'idle' : 'applied' });
     if (deploy) {
-      const state = rollback ? 'Патч снят.' : 'Патч накатан.';
       this.patchNotice.set(request.result?.deploymentError
-        ? state + ' Развёртывание не завершилось. ' + request.result.deploymentError
-        : state + ' Пост-операции выполнены.');
+        ? 'Развёртывание не завершилось. ' + request.result.deploymentError
+        : 'Пост-операции выполнены.');
       if (request.result?.deploymentError) return;
     } else {
       this.patchNotice.set(rollback
-        ? 'Патч снят. Пересоберите приложение, чтобы вернуть прежнюю сборку.'
-        : 'Патч в базовой рабочей копии. Пересоберите приложение для проверки.');
+        ? 'Пересоберите приложение, чтобы вернуть прежнюю сборку.'
+        : 'Пересоберите приложение для проверки.');
     }
     if (rollback && this.hasCommentDraft()) await this.submitComment(true);
   }
@@ -812,6 +829,7 @@ export class TaskDialogComponent {
     this.lastSyncedTaskId.set(card.id);
     if (sameCard) return;
     this.acceptance.set(null);
+    this.patchState.set(undefined);
 
     this.title.set(card.title);
     this.description.set(card.description);

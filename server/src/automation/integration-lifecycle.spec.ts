@@ -76,6 +76,68 @@ test('failed accepted integration can be retried and manual acceptance clears th
   } finally { f.app.close(); }
 });
 
+test('accepting an applied preview waits for its rollback and queues the reviewed SHA just once', () => {
+  const f = fixture();
+  try {
+    f.finish(false);
+    const state = () => f.service.previewPatchState(f.task.id);
+    const accept = () => f.service.reviewTask(f.task.id, 'accept');
+    const host = () => f.service.projects.poll('host')!;
+    assert.deepEqual(state(), { status: 'idle' });
+    f.service.requestPreviewPatch(f.task.id, false);
+    assert.deepEqual(state(), { status: 'applying' });
+    assert.throws(accept, /уже выполняется/);
+    const apply = host();
+    f.service.completeHost(apply.id, apply.token!, { path: '/fixture' });
+    assert.deepEqual(state(), { status: 'applied' });
+
+    accept();
+    accept();
+    const rollback = host();
+    assert.equal(rollback.previewPatch?.runId, f.run.id);
+    assert.equal(rollback.previewPatch?.head, apply.previewPatch?.head);
+    assert.equal(rollback.previewPatch?.rollback, true);
+    assert.equal(rollback.previewPatch?.deployment, undefined);
+    assert.deepEqual(state(), { status: 'rolling_back_for_merge' });
+    assert.equal(host(), null);
+    assert.equal(f.service.claim('integration'), null);
+    f.service.completeHost(rollback.id, rollback.token!, undefined, 'Рабочая копия изменилась после примерки.');
+    assert.deepEqual(state(), { status: 'applied', error: 'Рабочая копия изменилась после примерки.' });
+    assert.equal(f.app.taskService.getTaskCard(f.task.id).status, 'review');
+    assert.equal(f.service.claim('integration'), null);
+
+    accept();
+    const retry = host();
+    assert.throws(() => f.service.completeHost(retry.id, 'stale-token'), /другому worker/);
+    f.service.completeHost(retry.id, retry.token!, { path: '/fixture' });
+    assert.deepEqual(state(), { status: 'idle' });
+    assert.equal(accept().status, 'queued');
+    const claimed = f.service.claim('integration')!;
+    assert.equal(claimed.status, 'integrating');
+    assert.equal(claimed.acceptedSha, apply.previewPatch?.head);
+    assert.equal(accept().id, f.run.id);
+    assert.equal(f.service.claim('integration'), null);
+  } finally { f.app.close(); }
+});
+
+test('a successful rollback still clears the preview if the task is no longer eligible for merge', () => {
+  const f = fixture();
+  try {
+    f.finish(false);
+    f.service.requestPreviewPatch(f.task.id, false);
+    const apply = f.service.projects.poll('host')!;
+    f.service.completeHost(apply.id, apply.token!, { path: '/fixture' });
+    f.service.reviewTask(f.task.id, 'accept');
+    const rollback = f.service.projects.poll('host')!;
+    f.app.taskService.askQuestions({ id: f.task.id, questions: ['Уточните требования.'] });
+    f.service.completeHost(rollback.id, rollback.token!, { path: '/fixture' });
+    const patch = f.service.previewPatchState(f.task.id);
+    assert.equal(patch.status, 'idle');
+    assert.match(patch.error!, /Патч снят/);
+    assert.equal(f.service.claim('integration'), null);
+  } finally { f.app.close(); }
+});
+
 test('integration keeps its lease, fences publication cancellation and acknowledges a verified SHA after the budget deadline', () => {
   const f = fixture();
   try {

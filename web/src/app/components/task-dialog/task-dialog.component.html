@@ -311,21 +311,22 @@
                           (onClick)="openLatestRun()"
                         ></p-button>
                       </div>
+                      <p class="subform-hint" role="status">{{ patchLabel() }}</p>
                       <label class="review-deploy-checkbox" for="deploy-preview-patch">
-                        <p-checkbox inputId="deploy-preview-patch" [binary]="true" [(ngModel)]="deployPreviewPatch" [disabled]="store.busy() || !!acceptance()" />
-                        <span>Выполнить пост-операции развёртывания после накатки или отката</span>
+                        <p-checkbox inputId="deploy-preview-patch" [binary]="true" [(ngModel)]="deployPreviewPatch" [disabled]="store.busy() || !patchReady() || !!acceptance()" />
+                        <span>Выполнить пост-операции развёртывания после ручной накатки или отката</span>
                       </label>
                       <div class="review-action-row">
                         <div class="patch-buttons">
                           <p-button label="Накатить патч" icon="pi pi-file-edit" severity="secondary" size="small"
-                            [disabled]="store.busy() || !!acceptance()" (onClick)="previewPatch(false, deployPreviewPatch)" />
+                            [disabled]="store.busy() || patchState()?.status !== 'idle' || !!acceptance()" (onClick)="previewPatch(false, deployPreviewPatch)" />
                           <p-button label="Откатить патч" icon="pi pi-undo" severity="secondary" size="small"
-                            [disabled]="store.busy() || !!acceptance()" (onClick)="previewPatch(true, deployPreviewPatch)" />
+                            [disabled]="store.busy() || (patchState()?.status !== 'applied' && !patchState()?.error) || !!acceptance()" (onClick)="previewPatch(true, deployPreviewPatch)" />
                         </div>
                         <div class="merge-button">
                           <p-button [label]="acceptance()?.status === 'queued' ? 'Слияние в очереди' : acceptance()?.status === 'integrating' ? 'Выполняется слияние…' : 'Принять и слить'"
                             icon="pi pi-check" severity="success" size="small"
-                            [disabled]="store.busy() || acceptanceBusy()" (onClick)="acceptAutomation()" />
+                            [disabled]="store.busy() || !patchReady() || acceptanceBusy()" (onClick)="acceptAutomation()" />
                         </div>
                       </div>
                       @if (acceptance(); as merge) {
@@ -336,7 +337,8 @@
                           }
                         </p>
                       }
-                      @if (patchNotice()) { <p class="patch-notice" role="status">{{ patchNotice() }}</p> }
+                      @if (patchState()?.error; as error) { <p class="patch-notice" role="alert">{{ error }}</p> }
+                      @if (patchNotice() && patchNotice() !== patchState()?.error) { <p class="patch-notice" role="status">{{ patchNotice() }}</p> }
                     </section>
                   }
 
@@ -396,7 +398,7 @@
                             icon="pi pi-replay"
                             severity="warn"
                             size="small"
-                            [disabled]="store.busy() || commentUploading() || !!acceptance()"
+                            [disabled]="store.busy() || commentUploading() || !patchReady() || !!acceptance()"
                             (onClick)="returnWithFeedback(reviewFeedbackInput)"
                             pTooltip="Отправить текст из поля выше агенту и вернуть задачу на доработку"
                           ></p-button>

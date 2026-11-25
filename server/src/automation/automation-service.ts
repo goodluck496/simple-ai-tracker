@@ -23,7 +23,7 @@ import { FeaturePlanning } from './feature-planning.js';
 import { PipelinePolicy } from '../../../shared/automation/pipeline-policy.js';
 import { BATCH_TASK_LIMIT } from '../../../shared/automation/batch.js';
 import { StageNotes, type StageMemory } from '../../../shared/automation/stage-note.js';
-import { ProjectAction, isProjectScript, type ProjectResult } from '../../../shared/automation/project.js';
+import { ProjectAction, isProjectScript, type PreviewPatchState, type ProjectResult } from '../../../shared/automation/project.js';
 import type { CheckExecution, ImprovementPeriod } from '../../../shared/automation/improvement-metrics.js';
 import { checkBelongsToRun, checkFingerprint } from './check-evidence.js';
 import { collectMetrics, verifyRefs } from './improvement-metrics.js';
@@ -980,7 +980,13 @@ export class AutomationService {
     return this.runs.db.transaction(() => {
       const task = this.tasks.getTaskCard(taskId);
       const run = this.runs.list(taskId)[0];
-      if (run && this.projects.hasPreviewPatch(run.id)) throw new TrackerError('CONFLICT', 'Сначала откатите патч проверки.');
+      const patch = run && this.projects.previewPatchState(run.id).status;
+      if (run && decision === 'accept' && (patch === 'rolling_back_for_merge' ||
+        (run.acceptedSha && run.acceptedSha === run.commitSha && (run.status === RunStatus.Queued || run.status === RunStatus.Integrating)))) {
+        return this.publicRun(run);
+      }
+      if (patch && patch !== 'idle' && patch !== 'applied') throw new TrackerError('CONFLICT', 'Операция с патчем уже выполняется.');
+      if (patch === 'applied' && decision === 'rework') throw new TrackerError('CONFLICT', 'Сначала откатите патч проверки.');
       if (decision === 'accept' && run?.acceptedSha === run?.commitSha && run?.acceptedSha
         && RESUMABLE_RUN_STATUSES.includes(run.status) && run.stage >= run.settings.pipeline.length) {
         return this.resume(run.id);
@@ -1029,6 +1035,11 @@ export class AutomationService {
       let updated: AgentRun = { ...run, status: RunStatus.Queued, finishedAt: undefined, updatedAt: now,
         workerId: null, leaseUntil: null, leaseToken: null, proposedFix: null };
       if (decision === 'accept') {
+        if (patch === 'applied') {
+          this.projects.enqueue({ action: ProjectAction.PreviewPatch, path: run.checkout.repositoryRoot,
+            previewPatch: { runId: run.id, head: run.commitSha, branch: run.settings.baseBranch, rollback: true, acceptAfterRollback: true } }, true);
+          return this.publicRun(run);
+        }
         updated = { ...updated, settings: { ...run.settings, mergePolicy: MergePolicy.Local },
           stage: run.settings.pipeline.length, acceptedSha: run.commitSha, summary: 'Результат принят пользователем. Ожидает слияния.' };
       } else {
@@ -1098,10 +1109,10 @@ export class AutomationService {
     });
   }
 
-  public previewPatchActive(taskId: string): boolean {
+  public previewPatchState(taskId: string): PreviewPatchState {
     this.tasks.getTaskCard(taskId);
     const run = this.runs.list(taskId)[0];
-    return !!run && this.projects.hasPreviewPatch(run.id);
+    return run ? this.projects.previewPatchState(run.id) : { status: 'idle' };
   }
   public acceptanceState(taskId: string): { status: RunStatus; summary: string } | null {
     const run = this.runs.list(taskId)[0];
@@ -1185,7 +1196,12 @@ export class AutomationService {
   public completeHost(id: string, token: string, result?: ProjectResult, error?: string): void {
     this.runs.db.transaction(() => {
       const request = this.projects.get(id);
-      this.projects.complete(id, token, result, error);
+      this.projects.complete(id, token, result, error, patch => {
+        const run = this.requireRun(patch.runId);
+        if (run.commitSha !== patch.head || run.status !== RunStatus.Review || this.runs.list(run.taskId)[0]?.id !== run.id)
+          throw new TrackerError('CONFLICT', 'Проверяемый запуск изменился. Откройте актуальный результат.');
+        this.reviewTask(run.taskId, 'accept');
+      });
       if (request.action !== ProjectAction.Cleanup || !request.cleanup) return;
       const run = this.requireRun(request.cleanup.runId);
       if (run.cleanup?.requestId !== id) throw new TrackerError('CONFLICT', 'Устаревший результат очистки.');

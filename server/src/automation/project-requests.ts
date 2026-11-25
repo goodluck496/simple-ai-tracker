@@ -5,7 +5,7 @@ import { TrackerError } from '../core/errors.js';
 import { DEFAULT_AUTOMATION_SETTINGS, RUNNER_IDS, RunnerId, ProviderKind } from '../../../shared/automation/contracts.js';
 import { AutomationSettingsValidator } from './settings.js';
 import { validMcp } from '../../../shared/automation/project-mcp.js';
-import { ProjectAction, ProjectRequestStatus, PROJECT_LIMITS, isProjectScript, type HostStatus, type ProjectInput, type ProjectRequest, type ProjectResult, type ExecutionStatus, type ProjectPassport } from '../../../shared/automation/project.js';
+import { ProjectAction, ProjectRequestStatus, PROJECT_LIMITS, isProjectScript, type HostStatus, type PreviewPatch, type PreviewPatchState, type ProjectInput, type ProjectRequest, type ProjectResult, type ExecutionStatus, type ProjectPassport } from '../../../shared/automation/project.js';
 
 const STATE_KEY = 'automation_host_requests_v1';
 interface HostState { workerId?: string; lastSeen?: number; platform?: string; execution?: ExecutionStatus; executionDesired?: boolean; requests: ProjectRequest[]; passport?: ProjectPassport; previewRuns?: string[]; }
@@ -14,14 +14,22 @@ export class ProjectRequests {
   public constructor(private readonly meta: MetaRepository, private readonly db: SqlDatabase, private readonly now: () => number = Date.now) {}
   public passport(): ProjectPassport | undefined { return this.read().passport; }
   public status(): HostStatus { const state = this.read(); return { online: !!state.lastSeen && this.now() - state.lastSeen < PROJECT_LIMITS.requestMs, workerId: state.workerId, lastSeen: state.lastSeen, platform: state.platform, execution: state.execution, executionDesired: state.executionDesired }; }
+  public previewPatchState(runId: string): PreviewPatchState {
+    const state = this.read();
+    const latest = state.requests.filter(request => request.previewPatch?.runId === runId).at(-1);
+    if (latest?.previewPatch && (latest.status === ProjectRequestStatus.Queued || latest.status === ProjectRequestStatus.Running)) {
+      if (latest.previewPatch.acceptAfterRollback) return { status: 'rolling_back_for_merge' };
+      return { status: latest.previewPatch.rollback ? 'rolling_back' : 'applying' };
+    }
+    const status = state.previewRuns?.includes(runId) ? 'applied' : 'idle';
+    return latest?.error ? { status, error: latest.error } : { status };
+  }
   public previewPatchPending(runId: string): boolean {
-    return this.read().requests.some(request => request.previewPatch?.runId === runId
-      && (request.status === ProjectRequestStatus.Queued || request.status === ProjectRequestStatus.Running));
+    const { status } = this.previewPatchState(runId);
+    return status !== 'idle' && status !== 'applied';
   }
   public hasPreviewPatch(runId: string): boolean {
-    const state = this.read();
-    return !!state.previewRuns?.includes(runId) || state.requests.some(request => request.previewPatch?.runId === runId
-      && (request.status === ProjectRequestStatus.Queued || request.status === ProjectRequestStatus.Running));
+    return this.previewPatchState(runId).status !== 'idle';
   }
   public enqueue(input: ProjectInput, internal = false): ProjectRequest {
     if (input?.action === ProjectAction.Cleanup && (!internal || !input.cleanup)) throw new TrackerError('VALIDATION_FAILED', 'Очистку запуска создаёт только сервис запусков.');
@@ -59,7 +67,8 @@ export class ProjectRequests {
         if (previous) return this.public(previous);
       }
       if ((!internal || runScript) && state.requests.some((r) => r.status === ProjectRequestStatus.Queued || r.status === ProjectRequestStatus.Running)) throw new TrackerError('CONFLICT', 'Предыдущий запрос к worker ещё выполняется.');
-      const request: ProjectRequest = { action: input.action, path: input.path, baseBranch: input.baseBranch, newBranch: input.newBranch, catalog, model: input.action === ProjectAction.UnloadOllama ? input.model : undefined, cleanup: input.cleanup, diff: input.diff, previewPatch: input.previewPatch,
+      const request: ProjectRequest = { action: input.action, path: input.path, baseBranch: input.baseBranch, newBranch: input.newBranch, catalog, model: input.action === ProjectAction.UnloadOllama ? input.model : undefined, cleanup: input.cleanup, diff: input.diff,
+        ...(input.action === ProjectAction.PreviewPatch ? { previewPatch: input.previewPatch } : {}),
         ...(input.action === ProjectAction.ProbeMcp ? {mcp: input.mcp} : {}),
         ...(runScript ? { script: input.script } : {}),
         id: randomUUID(), status: ProjectRequestStatus.Queued, createdAt: this.now(), ...(control || runScript ? { targetWorkerId: state.workerId } : {}) };
@@ -80,7 +89,7 @@ export class ProjectRequests {
       this.save(state); return request ?? null;
     });
   }
-  public complete(id: string, token: string, result?: ProjectResult, error?: string): void {
+  public complete(id: string, token: string, result?: ProjectResult, error?: string, afterRollback?: (patch: PreviewPatch) => void): void {
     this.db.transaction(() => {
       const state = this.read(); const request = state.requests.find((r) => r.id === id);
       if (!request || request.status !== ProjectRequestStatus.Running || request.token !== token) throw new TrackerError('CONFLICT', 'Запрос истёк или принадлежит другому worker.');
@@ -94,6 +103,15 @@ export class ProjectRequests {
       }
       if (!error && request.action === ProjectAction.Research && result?.passport) state.passport = result.passport;
       request.result = result; request.error = error?.slice(0, 4000); delete request.token; this.save(state);
+      if (!error && request.action === ProjectAction.PreviewPatch && request.previewPatch?.rollback && request.previewPatch.acceptAfterRollback && afterRollback) {
+        try { afterRollback(request.previewPatch); }
+        catch (cause) {
+          if (!(cause instanceof TrackerError)) throw cause;
+          request.status = ProjectRequestStatus.Failed;
+          request.error = `Патч снят. Не удалось поставить слияние в очередь. ${cause.message}`;
+          this.save(state);
+        }
+      }
       if (!error && (request.action === ProjectAction.StartWorker || request.action === ProjectAction.StopWorker) && result?.execution && state.workerId === request.workerId) { state.execution = this.execution(result.execution); this.save(state); }
     });
   }
