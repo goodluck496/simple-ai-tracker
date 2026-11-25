@@ -2,8 +2,7 @@ import { publicUrl } from './public-url';
 import { HttpClient, HttpParams } from '@angular/common/http';
 import { Injectable, inject } from '@angular/core';
 import { Observable, catchError, exhaustMap, filter, of, switchMap, take, throwError, timeout, timer } from 'rxjs';
-import { PROJECT_LIMITS, ProjectRequestStatus, type PreviewPatchState, type ProjectRequest } from '../../../../shared/automation/project';
-import type { RunStatus } from '../../../../shared/automation/contracts';
+import { PROJECT_LIMITS, ProjectRequestStatus, type TaskReviewState, type ProjectRequest } from '../../../../shared/automation/project';
 import type {
   BackupListResponse,
   BackupRecord,
@@ -30,13 +29,6 @@ interface TaskListResponse {
 
 interface TaskResponse {
   readonly task: TaskCard;
-}
-
-interface TaskPreviewResponse {
-  patch: PreviewPatchState;
-  active: boolean;
-  canResumeRework: boolean;
-  acceptance: { status: RunStatus; summary: string } | null;
 }
 
 @Injectable({ providedIn: 'root' })
@@ -84,8 +76,8 @@ export class TrackerApiService {
   public reviewAutomation(id: string, decision: 'accept' | 'rework', feedback?: string): Observable<unknown> {
     return this.http.post(`/api/automation/tasks/${encodeURIComponent(id)}/review/${decision}`, { feedback });
   }
-  public previewPatchActive(id: string): Observable<TaskPreviewResponse> {
-    return this.http.get<TaskPreviewResponse>(`/api/automation/tasks/${encodeURIComponent(id)}/preview-patch`);
+  public previewPatchActive(id: string): Observable<TaskReviewState> {
+    return this.http.get<TaskReviewState>(`/api/automation/tasks/${encodeURIComponent(id)}/preview-patch`);
   }
   public previewPatch(id: string, rollback: boolean, deploy = false): Observable<ProjectRequest> {
     return this.http.post<ProjectRequest>(`/api/automation/tasks/${encodeURIComponent(id)}/preview-patch`, { rollback, deploy }).pipe(

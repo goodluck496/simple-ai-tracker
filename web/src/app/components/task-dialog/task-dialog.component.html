@@ -297,7 +297,7 @@
                     </div>
                   }
 
-                  @if (card.status === 'review') {
+                  @if (card.status === 'review' || (card.status === 'done' && acceptance()?.status === 'merged')) {
                     <section class="review-actions" aria-label="Приёмка задачи">
                       <div class="review-actions-header">
                         <h4><i class="pi pi-check-circle" aria-hidden="true"></i> Приёмка задачи</h4>
@@ -311,34 +311,55 @@
                           (onClick)="openLatestRun()"
                         ></p-button>
                       </div>
-                      <p class="subform-hint" role="status">{{ patchLabel() }}</p>
-                      <label class="review-deploy-checkbox" for="deploy-preview-patch">
-                        <p-checkbox inputId="deploy-preview-patch" [binary]="true" [(ngModel)]="deployPreviewPatch" [disabled]="store.busy() || !patchReady() || !!acceptance()" />
-                        <span>Выполнить пост-операции развёртывания после ручной накатки или отката</span>
-                      </label>
-                      <div class="review-action-row">
-                        <div class="patch-buttons">
-                          <p-button label="Накатить патч" icon="pi pi-file-edit" severity="secondary" size="small"
-                            [disabled]="store.busy() || patchState()?.status !== 'idle' || !!acceptance()" (onClick)="previewPatch(false, deployPreviewPatch)" />
-                          <p-button label="Откатить патч" icon="pi pi-undo" severity="secondary" size="small"
-                            [disabled]="store.busy() || (patchState()?.status !== 'applied' && !patchState()?.error) || !!acceptance()" (onClick)="previewPatch(true, deployPreviewPatch)" />
-                        </div>
-                        <div class="merge-button">
-                          <p-button [label]="acceptance()?.status === 'queued' ? 'Слияние в очереди' : acceptance()?.status === 'integrating' ? 'Выполняется слияние…' : 'Принять и слить'"
-                            icon="pi pi-check" severity="success" size="small"
-                            [disabled]="store.busy() || !patchReady() || acceptanceBusy()" (onClick)="acceptAutomation()" />
-                        </div>
-                      </div>
-                      @if (acceptance(); as merge) {
-                        <p class="subform-hint" role="status">
-                          {{ merge.status === 'integrating' ? 'Воркер проверяет и сливает изменения.' : merge.summary }}
-                          @if (merge.status === 'merge_blocked' || merge.status === 'failed' || merge.status === 'interrupted') {
-                            <a href="javascript:void(0)" (click)="openLatestRun()">Откройте журнал запуска</a>, чтобы увидеть причину и продолжить слияние.
+                      @let progress = mergeProgress();
+                      @if (acceptance()?.status === 'merged') {
+                        <p class="merge-result" role="status">
+                          <i class="pi pi-check-circle" aria-hidden="true"></i>
+                          Слияние завершено в <strong>{{ acceptance()?.targetBranch }}</strong>
+                          @if (acceptance()?.candidateSha; as sha) { <code [title]="sha">{{ sha.slice(0, 8) }}</code> }
+                        </p>
+                      } @else if (progress) {
+                        <ol class="merge-steps" aria-label="Этапы слияния">
+                          @for (step of mergeSteps; track step; let i = $index) {
+                            <li [class.passed]="i < progress.step" [attr.aria-current]="i === progress.step ? 'step' : null">
+                              <i [class]="i < progress.step ? 'pi pi-check' : 'pi pi-circle'" aria-hidden="true"></i>{{ step }}
+                            </li>
+                          }
+                        </ol>
+                        <p class="merge-status" role="status">
+                          <i class="pi pi-spin pi-spinner" aria-hidden="true"></i> {{ progress.label }}
+                          @if (acceptance()?.checks; as checks) {
+                            @if (checks.total) { <span>Пройдено проверок {{ checks.passed }} из {{ checks.total }}</span> }
                           }
                         </p>
+                        @if (patchState() === null) { <p class="subform-hint" role="status">Обновить прогресс пока не удалось. Повторяем запрос…</p> }
+                      } @else if (reviewActionsAvailable()) {
+                        @if (acceptance(); as merge) {
+                          <p class="patch-notice" role="alert">{{ merge.summary }}</p>
+                        } @else {
+                          <p class="subform-hint" role="status">{{ patchLabel() }}</p>
+                          <label class="review-deploy-checkbox" for="deploy-preview-patch">
+                            <p-checkbox inputId="deploy-preview-patch" [binary]="true" [(ngModel)]="deployPreviewPatch" [disabled]="store.busy() || !patchReady()" />
+                            <span>Выполнить пост-операции развёртывания после ручной накатки или отката</span>
+                          </label>
+                        }
+                        <div class="review-action-row">
+                          @if (!acceptance()) {
+                            <div class="patch-buttons">
+                              <p-button label="Накатить патч" icon="pi pi-file-edit" severity="secondary" size="small"
+                                [disabled]="store.busy() || patchState()?.status !== 'idle'" (onClick)="previewPatch(false, deployPreviewPatch)" />
+                              <p-button label="Откатить патч" icon="pi pi-undo" severity="secondary" size="small"
+                                [disabled]="store.busy() || (patchState()?.status !== 'applied' && !patchState()?.error)" (onClick)="previewPatch(true, deployPreviewPatch)" />
+                            </div>
+                          }
+                          <p-button [label]="acceptance() ? 'Повторить слияние' : 'Принять и слить'" icon="pi pi-check" severity="success" size="small"
+                            [disabled]="store.busy() || !patchReady()" (onClick)="acceptAutomation()" />
+                        </div>
+                        @if (patchState()?.error; as error) { <p class="patch-notice" role="alert">{{ error }}</p> }
+                        @if (patchNotice() && patchNotice() !== patchState()?.error) { <p class="patch-notice" role="status">{{ patchNotice() }}</p> }
+                      } @else {
+                        <p class="subform-hint" role="status">{{ patchLabel() }}</p>
                       }
-                      @if (patchState()?.error; as error) { <p class="patch-notice" role="alert">{{ error }}</p> }
-                      @if (patchNotice() && patchNotice() !== patchState()?.error) { <p class="patch-notice" role="status">{{ patchNotice() }}</p> }
                     </section>
                   }
 
@@ -392,7 +413,7 @@
                           (onClick)="submitComment()"
                           pTooltip="Добавить комментарий в обсуждение без изменения статуса задачи"
                         ></p-button>
-                        @if (card.status === 'review') {
+                        @if (reviewActionsAvailable() && !acceptance()) {
                           <p-button
                             label="Отправить замечание и вернуть"
                             icon="pi pi-replay"

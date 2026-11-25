@@ -46,14 +46,14 @@ test('human rework keeps the branch, run history and prior agent usage', () => {
     assert.equal(queued.revision, reviewed.revision + 1);
     assert.equal(f.app.taskService.getTaskCard(f.task.id).status, 'in_progress');
     f.service.cancel(queued.id);
-    assert.equal(f.service.canResumeRework(f.task.id), true);
+    assert.equal(f.service.taskReviewState(f.task.id).canResumeRework, true);
     assert.throws(() => f.service.reviewTask(f.task.id, 'rework', ' '), /Опишите/);
     const resumed = f.service.reviewTask(f.task.id, 'rework', 'Добавлено точное описание проблемы.');
     assert.equal(resumed.id, queued.id);
     assert.equal(resumed.stage, queued.stage);
     assert.equal(resumed.revision, queued.revision);
     assert.equal(resumed.reviewFeedback, 'Добавлено точное описание проблемы.');
-    assert.equal(f.service.canResumeRework(f.task.id), false);
+    assert.equal(f.service.taskReviewState(f.task.id).canResumeRework, false);
     assert.equal(f.service.claim('rework')?.status, 'running');
   } finally { f.app.close(); }
 });
@@ -63,7 +63,7 @@ test('failed accepted integration can be retried and manual acceptance clears th
   try {
     f.finish();
     f.service.fail(f.run.id, f.token, 'Commit message rejected');
-    assert.equal(f.service.acceptanceState(f.task.id)?.status, 'merge_blocked');
+    assert.equal(f.service.taskReviewState(f.task.id).acceptance?.status, 'merge_blocked');
     const retried = f.service.reviewTask(f.task.id, 'accept');
     assert.equal(retried.status, 'queued');
     assert.equal(retried.stage, retried.settings.pipeline.length);
@@ -71,7 +71,7 @@ test('failed accepted integration can be retried and manual acceptance clears th
     f.service.fail(f.run.id, claimed.leaseToken!, 'Another recoverable merge failure');
     const accepted = f.service.acceptManually(f.run.id);
     assert.equal(accepted.acceptedSha, undefined);
-    assert.equal(f.service.acceptanceState(f.task.id), null);
+    assert.equal(f.service.taskReviewState(f.task.id).acceptance, null);
     assert.equal(f.service.reviewTask(f.task.id, 'accept').status, 'queued');
   } finally { f.app.close(); }
 });
@@ -80,7 +80,7 @@ test('accepting an applied preview waits for its rollback and queues the reviewe
   const f = fixture();
   try {
     f.finish(false);
-    const state = () => f.service.previewPatchState(f.task.id);
+    const state = () => f.service.taskReviewState(f.task.id).patch;
     const accept = () => f.service.reviewTask(f.task.id, 'accept');
     const host = () => f.service.projects.poll('host')!;
     assert.deepEqual(state(), { status: 'idle' });
@@ -131,7 +131,7 @@ test('a successful rollback still clears the preview if the task is no longer el
     const rollback = f.service.projects.poll('host')!;
     f.app.taskService.askQuestions({ id: f.task.id, questions: ['Уточните требования.'] });
     f.service.completeHost(rollback.id, rollback.token!, { path: '/fixture' });
-    const patch = f.service.previewPatchState(f.task.id);
+    const patch = f.service.taskReviewState(f.task.id).patch;
     assert.equal(patch.status, 'idle');
     assert.match(patch.error!, /Патч снят/);
     assert.equal(f.service.claim('integration'), null);

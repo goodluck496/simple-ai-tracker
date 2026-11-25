@@ -27,10 +27,14 @@ try {
   const task = app.taskService.createTask({ title: 'Проверка приёмки патча' });
   app.taskService.attachPlan({ id: task.id, planContent: '1. Change a.txt to 1.', actor: 'agent' });
   const registry = new TrackerToolRegistry(app);
+  let duringCandidateChecks: (() => Promise<void>) | undefined;
   const channel = { async call<T>(name: string, args = {}): Promise<T> {
     const result = await registry.call(name, { ...args, workspace: 'default' });
     const text = result.content.filter(c => c.type === 'text').map(c => c.text).join('');
     if (result.isError) throw Error(text);
+    if (name.endsWith('_integration') && (args as {result?: {state?: string}}).result?.state === 'checking') {
+      await duringCandidateChecks?.();
+    }
     return JSON.parse(text) as T;
   } };
   const pipeline = new PipelineWorker(channel, 'browser-integration', fixture.executor);
@@ -74,26 +78,39 @@ try {
   await host.tick();
   await page.getByRole('alert').filter({ hasText: 'Сохраните правки перед откатом' }).waitFor();
   assert.equal(await readFile(file, 'utf8'), 'local change\n');
-  assert.equal(app.automationService.acceptanceState(task.id), null);
+  assert.equal(app.automationService.taskReviewState(task.id).acceptance, null);
   await writeFile(file, preview);
   await accept.click();
   await page.getByText('Воркер откатывает патч перед слиянием…', { exact: true }).waitFor();
   await page.reload();
   await discuss();
   await page.getByText('Воркер откатывает патч перед слиянием…', { exact: true }).waitFor();
-  assert.ok(await accept.isDisabled());
-  await page.close();
+  assert.equal(await accept.count(), 0);
   await host.tick();
-  assert.equal(app.automationService.acceptanceState(task.id)?.status, 'queued');
+  assert.equal(app.automationService.taskReviewState(task.id).acceptance?.status, 'queued');
+  await page.getByText('Слияние в очереди. Ожидаем воркер.').waitFor();
   assert.equal((await fixture.git(['status','--porcelain'])).trim(), '');
+  let sawChecks = false;
+  duringCandidateChecks = async () => {
+    await page.getByText('Пройдено проверок 0 из 1').waitFor();
+    sawChecks = true;
+  };
   await pipeline.tick();
+  assert.ok(sawChecks);
   const merged = app.automationService.detail(run.id).run;
   assert.equal(merged.status, 'merged', merged.summary);
+  await host.tick();
+  assert.equal(app.automationService.list(task.id).length, 0);
+  await page.getByText(/Слияние завершено в/).waitFor();
+  await page.reload();
+  await discuss();
+  await page.getByText(/Слияние завершено в/).waitFor();
+  assert.equal(await accept.count() + await undo.count() + await apply.count(), 0);
   assert.equal(app.taskService.getTaskCard(task.id).status, 'done');
   assert.equal((await readFile(path.join(fixture.repository, 'a.txt'), 'utf8')).trim(), '1');
   assert.equal((await fixture.git(['rev-list','--count',reviewed.checkout!.baseSha + '..HEAD'])).trim(), '1');
   assert.deepEqual(browserErrors, []);
-  console.log('PASS: browser reloads restore preview states, closing browser does not interrupt real Git rollback and single-commit acceptance.');
+  console.log('PASS: preview rollback, queued merge and archived merge result survive browser reload.');
 } finally {
   await browser.close();
   await new Promise<void>(resolve => server.close(() => resolve()));

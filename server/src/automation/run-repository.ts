@@ -5,9 +5,9 @@ import type { CheckEvidence, CheckExecution, ImprovementOccurrence, ImprovementP
 
 export class AgentRunRepository {
   public constructor(public readonly db: SqlDatabase) {}
-  public list(taskId?: string): AgentRun[] {
-    const rows = taskId ? this.db.prepare('SELECT payload FROM agent_runs WHERE task_id = ? AND id NOT IN (SELECT run_id FROM archived_agent_runs) ORDER BY updated_at DESC LIMIT 100').all<{ payload: string }>([taskId])
-      : this.db.prepare('SELECT payload FROM agent_runs WHERE id NOT IN (SELECT run_id FROM archived_agent_runs) ORDER BY updated_at DESC LIMIT 100').all<{ payload: string }>();
+  public list(taskId?: string, limit = 100): AgentRun[] {
+    const rows = taskId ? this.db.prepare('SELECT payload FROM agent_runs WHERE task_id = ? AND id NOT IN (SELECT run_id FROM archived_agent_runs) ORDER BY updated_at DESC LIMIT ?').all<{ payload: string }>([taskId, limit])
+      : this.db.prepare('SELECT payload FROM agent_runs WHERE id NOT IN (SELECT run_id FROM archived_agent_runs) ORDER BY updated_at DESC LIMIT ?').all<{ payload: string }>([limit]);
     return rows.map(({ payload }) => JSON.parse(payload) as AgentRun);
   }
   public get(id: string): AgentRun | undefined {
@@ -61,10 +61,10 @@ export class AgentRunRepository {
     return this.db.prepare('SELECT payload FROM automation_occurrences WHERE run_id = ? ORDER BY event_id DESC')
       .all<{ payload: string }>([runId]).map(row => JSON.parse(row.payload) as ImprovementOccurrence);
   }
-  public history(taskId?: string): AgentRun[] {
+  public history(taskId?: string, limit = 200): AgentRun[] {
     const rows = taskId
-      ? this.db.prepare('SELECT payload FROM agent_runs WHERE task_id=? ORDER BY updated_at DESC, id ASC LIMIT 200').all<{ payload: string }>([taskId])
-      : this.db.prepare('SELECT payload FROM agent_runs ORDER BY updated_at DESC, id ASC LIMIT 200').all<{ payload: string }>();
+      ? this.db.prepare('SELECT payload FROM agent_runs WHERE task_id=? ORDER BY updated_at DESC, id ASC LIMIT ?').all<{ payload: string }>([taskId, limit])
+      : this.db.prepare('SELECT payload FROM agent_runs ORDER BY updated_at DESC, id ASC LIMIT ?').all<{ payload: string }>([limit]);
     return rows.map(row => JSON.parse(row.payload) as AgentRun);
   }
   public delete(id: string): void {

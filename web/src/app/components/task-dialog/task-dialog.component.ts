@@ -45,10 +45,9 @@ import { TrackerStore } from '../../services/tracker-store.service';
 import { TrackerApiService } from '../../services/tracker-api.service';
 import { Router } from '@angular/router';
 import { HttpClient } from '@angular/common/http';
-import { catchError, exhaustMap, firstValueFrom, of, timer } from 'rxjs';
-import type { PreviewPatchState } from '../../../../../shared/automation/project';
-import type { QueueSnapshot } from '../../../../../shared/automation/queue';
-import type { RunStatus } from '../../../../../shared/automation/contracts';
+import { catchError, exhaustMap, firstValueFrom, of, takeWhile, timer } from 'rxjs';
+import type { PreviewPatchState, TaskReviewState } from '../../../../../shared/automation/project';
+import { INTEGRATION_STATE_TITLES, RUN_PHASE_TITLES, type QueueSnapshot } from '../../../../../shared/automation/queue';
 import { formatBytes, formatDateTime, formatRelative } from '../../shared/format';
 import { PlanViewerComponent } from '../plan-viewer/plan-viewer.component';
 import { DecisionLogComponent } from '../decision-log/decision-log.component';
@@ -166,11 +165,24 @@ export class TaskDialogComponent {
   public readonly commentUploading = signal(false);
   public readonly hasCommentDraft = computed(() => !!this.commentDraft().trim() || this.commentImages().length > 0);
   public readonly stoppedRework = signal(false);
-  public readonly acceptance = signal<{ status: RunStatus; summary: string } | null>(null);
-  public readonly acceptanceBusy = computed(() => {
-    const state = this.acceptance()?.status;
-    return state === 'queued' || state === 'integrating' || state === 'running' || state === 'merged';
+  public readonly acceptance = signal<TaskReviewState['acceptance']>(null);
+  private readonly acceptRequest = signal<'sending' | 'confirming' | null>(null);
+  private readonly postingAcceptance = computed(() => this.acceptRequest() === 'sending');
+  private readonly serverTaskStatus = signal<TaskStatus | null>(null);
+  public readonly mergeSteps = ['Подготовка', 'Проверки', 'Слияние'];
+  public readonly mergeProgress = computed(() => {
+    if (this.acceptRequest()) return { step: -1, label: 'Запрос на приёмку…' };
+    if (this.patchState()?.status === 'rolling_back_for_merge') return { step: -1, label: 'Воркер откатывает патч перед слиянием…' };
+    const merge = this.acceptance();
+    if (merge?.status === 'queued') return { step: -1, label: 'Слияние в очереди. Ожидаем воркер.' };
+    if (merge?.status !== 'integrating' && merge?.status !== 'running') return null;
+    const state = merge.integrationState;
+    if (!state || state === 'blocked') return { step: 0, label: RUN_PHASE_TITLES[merge.phase ?? 'preparing'] };
+    const step = state === 'checking' ? 1 : state === 'ready' || state === 'publishing' || state === 'merged' ? 2 : 0;
+    return { step, label: INTEGRATION_STATE_TITLES[state] };
   });
+  public readonly reviewActionsAvailable = computed(() => this.task()?.status === 'review'
+    && this.serverTaskStatus() === 'review' && !this.mergeProgress() && this.acceptance()?.status !== 'merged');
   private readonly api = inject(TrackerApiService);
   public deployPreviewPatch = false;
   public readonly patchState = signal<PreviewPatchState | null | undefined>(undefined);
@@ -224,15 +236,24 @@ export class TaskDialogComponent {
   public constructor() {
     effect(onCleanup => {
       const card = this.task();
-      if (card?.status !== 'review' || this.tab() !== 'discussion') return;
-      const request = timer(0, 2000).pipe(exhaustMap(() => this.api.previewPatchActive(card.id).pipe(catchError(() => of(null))))).subscribe(state => {
+      if (!card || (card.status !== 'review' && card.status !== 'done') || this.tab() !== 'discussion' || this.postingAcceptance()) return;
+      let refreshingCard = false;
+      const request = timer(0, 2000).pipe(
+        exhaustMap(() => this.api.previewPatchActive(card.id).pipe(catchError(() => of(null)))),
+        takeWhile(state => card.status !== 'done' || state?.taskStatus !== 'done', true),
+      ).subscribe(state => {
         this.patchState.set(state?.patch ?? null);
         if (!state) return;
-        this.acceptance.set(state.acceptance ?? null);
-        if (state.acceptance?.status === 'merged') void this.store.reloadOpenCard().then(() => {
-          const current = this.task();
-          if (current?.id === card.id) this.status.set(current.status);
-        });
+        this.acceptance.set(state.acceptance);
+        this.serverTaskStatus.set(state.taskStatus);
+        this.acceptRequest.set(null);
+        if (state.taskStatus !== card.status && !refreshingCard) {
+          refreshingCard = true;
+          void this.store.reloadOpenCard().then(() => {
+            const current = this.task();
+            if (current?.id === card.id) this.status.set(current.status);
+          }).finally(() => { refreshingCard = false; });
+        }
       });
       onCleanup(() => request.unsubscribe());
     });
@@ -483,6 +504,14 @@ export class TaskDialogComponent {
   public async openLatestRun(): Promise<void> {
     const card = this.task();
     if (!card) return;
+    const merge = this.acceptance();
+    if (merge) {
+      this.close();
+      await this.router.navigate(['/automation/runs', merge.status === 'merged' ? 'history' : 'queue'], {
+        queryParams: { taskId: card.id, run: merge.runId },
+      });
+      return;
+    }
 
     try {
       const queueSnapshot = await firstValueFrom(
@@ -523,10 +552,12 @@ export class TaskDialogComponent {
 
   public async acceptAutomation(): Promise<void> {
     const card = this.task();
-    if (card?.status !== 'review' || !this.patchReady() || this.acceptanceBusy() || this.store.busy()) return;
+    if (!card || !this.reviewActionsAvailable() || !this.patchReady() || this.store.busy()) return;
     this.patchNotice.set('');
+    this.acceptRequest.set('sending');
     const saved = await this.store.reviewAutomation(card.id, 'accept');
     if (this.task()?.id !== card.id) return;
+    this.acceptRequest.set(saved ? 'confirming' : null);
     if (saved) this.status.set(this.task()!.status);
     else this.patchNotice.set(this.store.error() ?? 'Не удалось начать приёмку.');
   }
@@ -839,6 +870,8 @@ export class TaskDialogComponent {
     this.lastSyncedTaskId.set(card.id);
     if (sameCard) return;
     this.acceptance.set(null);
+    this.acceptRequest.set(null);
+    this.serverTaskStatus.set(null);
     this.patchState.set(undefined);
 
     this.title.set(card.title);

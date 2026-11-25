@@ -23,7 +23,7 @@ import { FeaturePlanning } from './feature-planning.js';
 import { PipelinePolicy } from '../../../shared/automation/pipeline-policy.js';
 import { BATCH_TASK_LIMIT } from '../../../shared/automation/batch.js';
 import { StageNotes, type StageMemory } from '../../../shared/automation/stage-note.js';
-import { ProjectAction, isProjectScript, type PreviewPatchState, type ProjectResult } from '../../../shared/automation/project.js';
+import { ProjectAction, isProjectScript, type PreviewPatchState, type ProjectResult, type TaskReviewState } from '../../../shared/automation/project.js';
 import type { CheckExecution, ImprovementPeriod } from '../../../shared/automation/improvement-metrics.js';
 import { checkBelongsToRun, checkFingerprint } from './check-evidence.js';
 import { collectMetrics, verifyRefs } from './improvement-metrics.js';
@@ -1109,21 +1109,29 @@ export class AutomationService {
     });
   }
 
-  public previewPatchState(taskId: string): PreviewPatchState {
-    this.tasks.getTaskCard(taskId);
-    const run = this.runs.list(taskId)[0];
-    return run ? this.projects.previewPatchState(run.id) : { status: 'idle' };
-  }
-  public acceptanceState(taskId: string): { status: RunStatus; summary: string } | null {
-    const run = this.runs.list(taskId)[0];
-    return run?.acceptedSha && run.acceptedSha === run.commitSha && run.status !== RunStatus.Review
-      ? { status: run.status, summary: run.summary } : null;
-  }
-  public canResumeRework(taskId: string): boolean {
-    const task = this.tasks.getTaskCard(taskId);
-    const run = this.runs.list(taskId)[0];
-    return task.status === TaskStatus.InProgress && !task.openQuestionsCount && !!run
-      && this.stoppedRework(run) && !this.runs.hasActive(taskId);
+  public taskReviewState(taskId: string): TaskReviewState {
+    return this.runs.db.transaction(() => {
+      const task = this.tasks.getTaskCard(taskId);
+      // Completed runs move to history as soon as the host acknowledges cleanup.
+      const [run] = task.status === TaskStatus.Done ? this.runs.history(taskId, 1) : this.runs.list(taskId, 1);
+      const patch: PreviewPatchState = run ? this.projects.previewPatchState(run.id) : { status: 'idle' };
+      const canResumeRework = task.status === TaskStatus.InProgress && !task.openQuestionsCount && !!run
+        && this.stoppedRework(run) && !this.runs.hasActive(taskId);
+      let acceptance: TaskReviewState['acceptance'] = null;
+      if (run?.acceptedSha && run.acceptedSha === run.commitSha && run.status !== RunStatus.Review
+        && (run.status !== RunStatus.Merged || task.status === TaskStatus.Done)) {
+        const integration = run.integration;
+        acceptance = { runId: run.id, status: run.status, summary: run.summary, phase: run.phase,
+          targetBranch: run.settings.baseBranch, integrationState: integration?.state, candidateSha: integration?.candidateSha };
+        if (run.status === RunStatus.Integrating && integration?.state === 'checking' && integration.candidateSha) {
+          const passed = this.runs.checks(run.id).filter(check => check.phase === 'candidate'
+            && check.sha === integration.candidateSha && check.attempt === integration.attempt
+            && check.outcome.kind === 'exit' && check.outcome.code === 0 && checkBelongsToRun(check, run));
+          acceptance.checks = { passed: new Set(passed.map(check => check.position)).size, total: run.settings.checks.length };
+        }
+      }
+      return { taskStatus: task.status, patch, active: patch.status !== 'idle', canResumeRework, acceptance };
+    });
   }
   private stoppedRework(run: AgentRun): boolean {
     return RESUMABLE_RUN_STATUSES.includes(run.status) && !!run.reviewFeedback && !!run.checkout && !run.cleanup

@@ -427,10 +427,33 @@
       flex-wrap: wrap;
     }
 
-    .merge-button {
-      display: flex;
-      align-items: center;
-    }
+  }
+
+  .merge-steps, .merge-status, .merge-result {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    font-size: 0.84rem;
+  }
+  .merge-steps {
+    list-style: none;
+    padding: 0;
+    margin: 0.75rem 0;
+    gap: 1rem;
+    color: var(--sat-text-muted);
+    li { display: flex; align-items: center; gap: 0.35rem; }
+    [aria-current="step"] { color: var(--sat-accent); font-weight: 600; }
+    .passed { color: var(--sat-success); }
+  }
+  .merge-status, .merge-result {
+    margin: 0;
+    overflow-wrap: anywhere;
+    span, code { color: var(--sat-text-muted); }
+  }
+  .merge-result i { color: var(--sat-success); }
+  @media (prefers-reduced-motion: reduce) {
+    .pi-spin { animation: none; }
   }
 
   .subform-hint {

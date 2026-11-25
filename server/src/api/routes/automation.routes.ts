@@ -18,11 +18,8 @@ export function registerAutomationRoutes(router: Router, app: AppContainer): voi
   })));
   router.post('/api/automation/runs/:id/accept-manually', ({ params, res }) =>
     sendJson(res, 200, { run: app.automationService.acceptManually(params.id) }));
-  router.get('/api/automation/tasks/:id/preview-patch', ({ params, res }) => {
-    const patch = app.automationService.previewPatchState(params.id);
-    sendJson(res, 200, { patch, active: patch.status !== 'idle', canResumeRework: app.automationService.canResumeRework(params.id),
-      acceptance: app.automationService.acceptanceState(params.id) });
-  });
+  router.get('/api/automation/tasks/:id/preview-patch', ({ params, res }) =>
+    sendJson(res, 200, app.automationService.taskReviewState(params.id)));
   router.post('/api/automation/tasks/:id/preview-patch', ({ params, body, res }) =>
     sendJson(res, 201, app.automationService.requestPreviewPatch(params.id, bodyField(body, 'rollback') === true, bodyField(body, 'deploy') === true)));
   router.post('/api/automation/runs/:id/preview-patch', ({ params, body, res }) => {

@@ -1,4 +1,6 @@
-import type { CheckCommand, PostOperation } from './contracts.js';
+import type { CheckCommand, IntegrationInfo, PostOperation, RunStatus } from './contracts.js';
+import type { RunPhase } from './queue.js';
+import type { TaskStatus } from '../tasks/status.js';
 import type { ModelCatalogInput, ModelOption } from './model-catalog.js';
 
 export const ProjectAction = { ProbeMcp: 'probe-mcp', Browse: 'browse', Inspect: 'inspect', Research: 'research', CreateBranch: 'create-branch', PickFolder: 'pick-folder', Models: 'models', UnloadOllama: 'unload-ollama', Diff: 'diff', PreviewPatch: 'preview-patch', Cleanup: 'cleanup', StartWorker: 'start-worker', StopWorker: 'stop-worker', RunScript: 'run-script' } as const;
@@ -14,6 +16,22 @@ export interface PreviewPatch { runId: string; head: string; branch: string; rol
 export interface PreviewPatchState {
   status: 'idle' | 'applied' | 'applying' | 'rolling_back' | 'rolling_back_for_merge';
   error?: string;
+}
+export interface TaskReviewState {
+  taskStatus: TaskStatus;
+  patch: PreviewPatchState;
+  active: boolean;
+  canResumeRework: boolean;
+  acceptance: {
+    runId: string;
+    status: RunStatus;
+    summary: string;
+    targetBranch: string;
+    phase?: RunPhase;
+    integrationState?: IntegrationInfo['state'];
+    candidateSha?: string;
+    checks?: { passed: number; total: number };
+  } | null;
 }
 export interface ProjectDiff { text: string; truncated: boolean; }
 export interface ProjectPassport {
