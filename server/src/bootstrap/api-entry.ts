@@ -1,3 +1,4 @@
+import './env.js';
 import { GoogleAuth } from '../api/google-auth.js';
 import { createContainer } from './container.js';
 import { createApiServer } from '../api/http-server.js';

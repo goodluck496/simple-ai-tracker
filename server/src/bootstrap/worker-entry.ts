@@ -1,3 +1,4 @@
+import './env.js';
 import { WorkerApplication } from '../automation/worker/worker-application.js';
 
 try {

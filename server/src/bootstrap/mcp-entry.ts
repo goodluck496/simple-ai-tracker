@@ -1,3 +1,4 @@
+import './env.js';
 import { createContainer } from './container.js';
 import { TrackerMcpServer } from '../mcp/server.js';
 
