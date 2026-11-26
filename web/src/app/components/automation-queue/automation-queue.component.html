@@ -67,7 +67,7 @@
               </div> }
             </div>
             <div class="fix-dialog-footer">
-              @if (fix.action === 'repair_stage' || fix.action === 'retry_stage' || fix.action === 'commit_dirty_repo' || fix.action === 'switch_branch') {
+              @if (fix.action === 'repair_stage' || fix.action === 'retry_stage' || fix.action === 'commit_dirty_repo' || fix.action === 'switch_branch' || fix.action === 'accept_risk') {
                 <button pButton severity="success" icon="pi pi-check" [disabled]="busy()" (click)="applyFix()">
                   {{ fix.applyLabel || (fix.action === 'repair_stage' ? 'Запустить исправление' : fix.action === 'retry_stage' ? 'Повторить этап' : 'Применить и продолжить') }}
                 </button>
@@ -313,7 +313,7 @@
             }
             @if (item.proposedFix) {
               <button pButton severity="secondary" size="small" icon="pi pi-wrench" (click)="openRunPage(item.id, 'diagnosis')">
-                {{ item.proposedFix.action === 'retry_stage' ? 'Анализ сбоя' : 'Проверить изменения' }}
+                {{ item.proposedFix.action === 'retry_stage' ? 'Анализ сбоя' : item.proposedFix.action === 'accept_risk' ? 'Проверить файлы и принять риск' : 'Проверить изменения' }}
               </button>
             } @else if (item.status === runStatus.Failed || item.status === runStatus.Interrupted) {
               <button pButton severity="secondary" size="small" icon="pi pi-sparkles" [disabled]="busy()" (click)="diagnose(item)">

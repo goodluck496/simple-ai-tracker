@@ -1332,6 +1332,10 @@ export class AutomationService {
     if (!RESUMABLE_RUN_STATUSES.includes(run.status)) throw new TrackerError('CONFLICT', 'Сначала остановите запуск.');
     if (run.proposedFix.action === 'repair_stage') return this.resume(id, undefined, undefined, true);
     if (run.proposedFix.action === 'retry_stage') return this.resume(id);
+    if (run.proposedFix.action === 'accept_risk') {
+      await this.doctor.apply(run, run.proposedFix);
+      return this.resume(id);
+    }
     await this.doctor.apply(run, run.proposedFix);
     const now = this.clock.now();
     const updated: AgentRun = { ...run, proposedFix: null, updatedAt: now, summary: `Применено авто-исправление: ${run.proposedFix.title}` };

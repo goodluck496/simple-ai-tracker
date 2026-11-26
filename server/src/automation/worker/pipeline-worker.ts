@@ -552,8 +552,13 @@ export class PipelineWorker {
             outcome = { verdict: AgentVerdict.ChangesRequested,
               summary: redact(`Configured check failed: ${failedCommand} (exit ${error.exitCode})\n${diagnostics || error.message}`) };
           }
-          if ((await git(['rev-parse', 'HEAD'], cwd)).trim() !== sha || !await checkpoint.isClean()) {
-            throw new Error(`Checks changed the tested commit or left uncommitted files.${checkFailed ? '\n' + outcome.summary : ''}`);
+          const cleanUntracked = (await git(['ls-files', '--others', '--exclude-standard', '-z', '--', '.', ':!.sat'], cwd)).split('\0').filter(Boolean);
+          const cleanTracked = (await git(['diff', 'HEAD', '--name-only', '-z', '--', '.', ':!.sat'], cwd)).split('\0').filter(Boolean);
+          const dirtyFiles = [...new Set([...cleanTracked, ...cleanUntracked])];
+          if ((await git(['rev-parse', 'HEAD'], cwd)).trim() !== sha || dirtyFiles.length > 0) {
+            const filesList = dirtyFiles.slice(0, 10).map(f => `  • ${f}`).join('\n');
+            const filesSummary = dirtyFiles.length > 0 ? `\nЗатронутые файлы (${dirtyFiles.length}):\n${filesList}${dirtyFiles.length > 10 ? '\n  • ...' : ''}` : '';
+            throw new Error(`Checks changed the tested commit or left uncommitted files.${filesSummary}${checkFailed ? '\n' + outcome.summary : ''}`);
           }
           saved.outcome = outcome;
           saved.checks = checksEvidence;

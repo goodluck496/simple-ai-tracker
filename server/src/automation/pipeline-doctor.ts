@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import type { AgentRun, ProposedFix, ModelConnection } from '../../../shared/automation/contracts.js';
 import { AgentRole, ProviderKind } from '../../../shared/automation/contracts.js';
@@ -67,6 +68,7 @@ export class PipelineDoctor {
     // 3. Detect known deterministic failure patterns
     const isCleanCheckoutError = /clean target checkout|dirty target|requires a clean/i.test(combinedLog) ||
       (run.settings?.mergePolicy === 'local' && Boolean(repoStatus) && !wtCwd);
+    const isUncommittedChecksError = /Checks changed the tested commit|left uncommitted files/i.test(combinedLog);
     const isBranchError = /target branch must be checked out|not on target branch/i.test(combinedLog);
     const isBuildError = /build|compile|syntax|typescript|ts\(\d+\)/i.test(combinedLog);
     const isTestError = /test|jest|vitest|playwright|assert/i.test(combinedLog);
@@ -77,6 +79,7 @@ export class PipelineDoctor {
     let explanation = '';
     let scope: 'worktree' | 'repository' = 'worktree';
     let action: NonNullable<ProposedFix['action']> = 'advice_only';
+    let applyLabel: string | undefined;
     let files: string[] = [];
     let diff = '';
 
@@ -103,6 +106,21 @@ export class PipelineDoctor {
         diff = repoUntracked.map(f => `+ ${f} (новый неотслеживаемый файл)`).join('\n');
       } else {
         diff = `(Несохранённые локальные файлы в рабочем репозитории: ${files.join(', ')})`;
+      }
+    } else if (isUncommittedChecksError) {
+      scope = 'worktree';
+      action = 'accept_risk';
+      applyLabel = 'Принять риск и продолжить';
+      title = 'Неотслеживаемые файлы или артефакты после проверок';
+      files = wtAllFiles.length > 0 ? wtAllFiles : ['(артефакты проверок)'];
+      const fileListStr = files.slice(0, 15).map(f => `  • ${f}`).join('\n');
+      explanation = `Команды проверок оставили не закоммиченные файлы (${files.length} шт.):\n${fileListStr}${files.length > 15 ? '\n  • ...' : ''}\n\nЕсли это временные артефакты тестов (кэш, логи, дампы), нажмите «Принять риск и продолжить». Файлы будут локально исключены из проверки чистоты рабочего дерева через git info/exclude (без изменения .gitignore, чтобы не блокировать доступ ИИ к ним), и конвейер продолжит выполнение.`;
+      if (wtDiff) {
+        diff = wtDiff;
+      } else if (wtUntracked.length > 0) {
+        diff = wtUntracked.map(f => `+ ${f} (неотслеживаемый артефакт проверок)`).join('\n');
+      } else {
+        diff = `(Файлы вне индекса git: ${files.join(', ')})`;
       }
     } else if (isBranchError) {
       scope = 'repository';
@@ -162,11 +180,12 @@ export class PipelineDoctor {
       }
     }
 
-    const known = !!failure || isCleanCheckoutError || isBranchError || isBuildError || isTestError || isDepError;
+    const known = !!failure || isCleanCheckoutError || isUncommittedChecksError || isBranchError || isBuildError || isTestError || isDepError;
     return {
-      diagnosis: {confidence: failure || isCleanCheckoutError || isBranchError ? 'confirmed' : known || modelBadge ? 'hypothesis' : 'unknown',
+      diagnosis: {confidence: failure || isCleanCheckoutError || isUncommittedChecksError || isBranchError ? 'confirmed' : known || modelBadge ? 'hypothesis' : 'unknown',
         evidence: [failureSummary.slice(0,2400)],
         steps: failure ? ['Устранить указанное ограничение среды или выбрать доступный профиль модели.', 'Повторить этап в сохранённой рабочей ветке.']
+          : isUncommittedChecksError ? ['Просмотреть список не закоммиченных файлов и артефактов проверок.', 'Нажать «Принять риск и продолжить», чтобы локально исключить их через git info/exclude (без изменения .gitignore) и продолжить конвейер.']
           : isBuildError || isTestError || isDepError ? ['Открыть диагностику конкретной команды и проверить ожидаемый и фактический результат.', 'Исправить подтверждённую причину в рабочей ветке.', 'Повторить упавшую проверку, затем обязательные проверки проекта.']
           : isCleanCheckoutError || isBranchError ? ['Проверить состояние и ветку основного репозитория.', 'Применить показанное действие только после просмотра изменений.']
           : ['Причина не установлена: открыть stderr и последнее событие исполнителя.', 'Проверить доступность CLI, модели и проектных инструментов.', 'После установления причины выбрать восстановление или смену профиля.']},
@@ -177,6 +196,7 @@ export class PipelineDoctor {
       files,
       scope,
       action,
+      ...(applyLabel ? { applyLabel } : {}),
       ...(modelBadge ? { model: modelBadge } : {}),
       createdAt: new Date().toISOString(),
     };
@@ -186,7 +206,37 @@ export class PipelineDoctor {
    * Applies the proposed fix by committing changes into the task worktree or main repository.
    */
   public async apply(run: AgentRun, fix: ProposedFix): Promise<void> {
-    if (fix.action !== 'commit_dirty_repo' && fix.action !== 'switch_branch') throw new Error('Готового патча для применения нет.');
+    if (fix.action !== 'commit_dirty_repo' && fix.action !== 'switch_branch' && fix.action !== 'accept_risk') throw new Error('Готового патча для применения нет.');
+    if (fix.action === 'accept_risk') {
+      const wtCwd = run.checkout?.worktreePath;
+      if (!wtCwd || !fs.existsSync(wtCwd)) throw new Error('Рабочая копия задачи недоступна.');
+      const signal = AbortSignal.timeout(30000);
+      const git = (args: string[]) => this.executor.run({ command: 'git', args, cwd: wtCwd, signal });
+      const excludeRel = (await git(['rev-parse', '--git-path', 'info/exclude'])).trim();
+      const excludePath = path.resolve(wtCwd, excludeRel);
+      await fs.promises.mkdir(path.dirname(excludePath), { recursive: true });
+      let currentExclusions = '';
+      try { currentExclusions = await fs.promises.readFile(excludePath, 'utf8'); } catch {}
+      const existingLines = new Set(currentExclusions.split(/\r?\n/).map(l => l.trim()));
+      const untrackedRaw = await git(['ls-files', '--others', '--exclude-standard', '-z', '--', '.', ':!.sat']);
+      const untracked = untrackedRaw.split('\0').filter(Boolean);
+      const allFiles = [...new Set([...(fix.files || []), ...untracked])];
+      const toAdd: string[] = [];
+      for (const file of allFiles) {
+        const normalized = file.replace(/\\/g, '/');
+        if (normalized && !existingLines.has(normalized) && !existingLines.has(`/${normalized}`)) {
+          toAdd.push(`/${normalized}`);
+        }
+      }
+      if (toAdd.length) {
+        await fs.promises.appendFile(excludePath, '\n# SAT accepted check artifacts\n' + toAdd.join('\n') + '\n', 'utf8');
+      }
+      const trackedMod = (await git(['diff', 'HEAD', '--name-only'])).trim();
+      if (trackedMod) {
+        await git(['checkout', '--', '.']);
+      }
+      return;
+    }
     const cwd = run.checkout?.repositoryRoot ?? run.settings.repositoryPath;
     if (!fs.existsSync(cwd)) throw new Error('Серверу недоступен репозиторий воркера. Выполните действие на машине воркера.');
     const signal = AbortSignal.timeout(30000);
@@ -266,7 +316,7 @@ export class PipelineDoctor {
     repoFiles: string[],
     worktreeDiff: string,
     worktreeFiles: string[]
-  ): Promise<{ title?: string; explanation?: string; scope?: 'worktree' | 'repository'; action?: 'commit_dirty_repo' | 'patch_code' | 'switch_branch' | 'retry_stage' } | null> {
+  ): Promise<{ title?: string; explanation?: string; scope?: 'worktree' | 'repository'; action?: 'commit_dirty_repo' | 'patch_code' | 'switch_branch' | 'retry_stage' | 'accept_risk' } | null> {
     const rawBase = connection.baseUrl?.replace(/\/$/, '');
     if (!rawBase) return null;
     const base = this.resolveBaseUrl(rawBase);
@@ -324,8 +374,8 @@ export class PipelineDoctor {
       title: typeof parsed.title === 'string' ? parsed.title.trim() : undefined,
       explanation: typeof parsed.explanation === 'string' ? parsed.explanation.trim() : undefined,
       scope: parsed.scope === 'repository' || parsed.scope === 'worktree' ? parsed.scope : undefined,
-      action: ['commit_dirty_repo', 'patch_code', 'switch_branch', 'retry_stage'].includes(parsed.action as string)
-        ? (parsed.action as 'commit_dirty_repo' | 'patch_code' | 'switch_branch' | 'retry_stage')
+      action: ['commit_dirty_repo', 'patch_code', 'switch_branch', 'retry_stage', 'accept_risk'].includes(parsed.action as string)
+        ? (parsed.action as 'commit_dirty_repo' | 'patch_code' | 'switch_branch' | 'retry_stage' | 'accept_risk')
         : undefined,
     };
   }

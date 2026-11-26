@@ -1,5 +1,9 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { execSync } from 'node:child_process';
 import { createContainer } from '../bootstrap/container.js';
 import { SilentLogger } from '../core/logger.js';
 import { DEFAULT_AUTOMATION_SETTINGS, ProviderKind } from '../../../shared/automation/contracts.js';
@@ -243,4 +247,58 @@ test('doctor respects doctorAgent profile configuration and custom instructions'
   assert.equal(fix.title, 'Специальный анализ доктор-агента');
   assert.equal(fix.model, 'Доктор Коннект (deepseek-coder:14b)');
   assert.ok(capturedBody.messages[0].content.includes('КАСТОМНАЯ ИНСТРУКЦИЯ ДОКТОРА'));
+});
+
+test('doctor detects uncommitted check artifacts, proposes accept_risk, and applies exclude', async () => {
+  const { PipelineDoctor } = await import('./pipeline-doctor.js');
+  const doctor = new PipelineDoctor();
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'sat-doctor-check-'));
+  const git = (args: string[]) => execSync(`git ${args.join(' ')}`, { cwd: tmp, encoding: 'utf8' });
+
+  try {
+    git(['init']);
+    git(['config', 'user.name', 'Tester']);
+    git(['config', 'user.email', 'tester@example.com']);
+    fs.writeFileSync(path.join(tmp, 'app.ts'), 'console.log("hello");\n');
+    git(['add', '.']);
+    git(['commit', '-m', 'initial']);
+
+    // Create untracked test artifact
+    fs.mkdirSync(path.join(tmp, 'test-results'), { recursive: true });
+    fs.writeFileSync(path.join(tmp, 'test-results', 'junit.xml'), '<xml/>\n');
+
+    const run: any = {
+      id: 'run-uncommitted-checks',
+      taskId: 'SAT-99',
+      stage: 1,
+      summary: 'Checks changed the tested commit or left uncommitted files.',
+      checkout: {
+        repositoryRoot: tmp,
+        worktreePath: tmp,
+        baseSha: 'dummy',
+        dependencyMode: 'isolated'
+      },
+      settings: {
+        ...DEFAULT_AUTOMATION_SETTINGS,
+        connections: [],
+        agents: []
+      }
+    };
+
+    const fix = await doctor.diagnose(run, ['Checks changed the tested commit or left uncommitted files.']);
+    assert.equal(fix.scope, 'worktree');
+    assert.equal(fix.action, 'accept_risk');
+    assert.equal(fix.applyLabel, 'Принять риск и продолжить');
+    assert.match(fix.title, /Неотслеживаемые файлы или артефакты после проверок/);
+    assert.ok(fix.files.some(f => f.includes('junit.xml')));
+
+    // Apply the fix
+    await doctor.apply(run, fix);
+
+    // Verify git ls-files now reports clean worktree
+    const remainingUntracked = git(['ls-files', '--others', '--exclude-standard']).trim();
+    assert.equal(remainingUntracked, '');
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
 });

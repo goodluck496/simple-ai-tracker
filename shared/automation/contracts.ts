@@ -130,7 +130,7 @@ export interface ProposedFix {
   files: string[];
   createdAt: string;
   scope?: 'worktree' | 'repository';
-  action?: 'commit_dirty_repo' | 'patch_code' | 'switch_branch' | 'retry_stage' | 'advice_only' | 'repair_stage';
+  action?: 'commit_dirty_repo' | 'patch_code' | 'switch_branch' | 'retry_stage' | 'advice_only' | 'repair_stage' | 'accept_risk';
   model?: string;
 }
 
