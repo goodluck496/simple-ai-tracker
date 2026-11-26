@@ -27,6 +27,8 @@ Thumbs.db
 
 # Local automation runtime artifacts
 .sat/
+patches/
+*.patch
 
 .idea/
 

@@ -26,7 +26,7 @@ export class InstructionsService {
   /** Initialization is repeated by some clients in every tool description. */
   public getSessionInstructions(): string {
     this.get(); // Preserve loading diagnostics and the full document for explicit retrieval.
-    return FALLBACK_INSTRUCTIONS + '\nПолная актуальная инструкция: tracker_get_instructions. Прочитай её перед работой с задачами. Всегда передавай явный workspace. Перед реализацией собери контекст и приложи план. После тестов приложи отчёт и передай в review. Не расширяй область задачи и не отменяй изменения пользователя.\n';
+    return FALLBACK_INSTRUCTIONS + '\nПолная актуальная инструкция: tracker_get_instructions. Прочитай её перед работой с задачами. Всегда передавай явный workspace. Перед реализацией собери контекст и приложи план. При наличии изменений в репозитории предложи сохранить их в файл патча и восстановить после работы, не прерывая процесс. После тестов приложи отчёт и передай в review. Не расширяй область задачи и не отменяй изменения пользователя.\n';
   }
 
   public get(): string {
@@ -59,4 +59,7 @@ const FALLBACK_INSTRUCTIONS = `# Simple AI Tracker — правила для а�
 7. В done переводит только пользователь.
 8. Любое уточнение пользователя — tracker_record_clarification, затем перечитай
    план и при необходимости приложи новую версию плана.
+9. Если в репозитории есть несохранённые изменения — не падай с ошибкой: предложи
+   сохранить их в отдельный файл патча, выполни задачу и попробуй восстановить
+   патч после работы, чтобы не стопорить процесс.
 `;
