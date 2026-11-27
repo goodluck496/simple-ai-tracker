@@ -37,6 +37,9 @@ import { type DialogTab, resolveDefaultTab, TaskLinkService } from '../../servic
 import { filterQueueItems } from './queue-search';
 import { formatQueueDate, sortRunHistory } from './queue-dates';
 
+import { TabsModule } from 'primeng/tabs';
+import { BadgeModule } from 'primeng/badge';
+import { RunsHeaderService, type LaneFilterItem } from '../../services/runs-header.service';
 import { PipelineFlowComponent } from '../automation-panel/pipeline-flow.component';
 import { AutomationMetricsComponent } from './automation-metrics.component';
 import { GitDiffViewerComponent } from '../git-diff-viewer/git-diff-viewer.component';
@@ -47,7 +50,7 @@ type RunsView = 'queue' | 'history' | 'metrics';
 type RunPage = 'diagnosis' | 'commit-diff' | 'branch-diff';
 const HISTORY_LANES = ['attention', 'finished', 'running', 'queued'] as const;
 
-@Component({ selector: 'sat-automation-queue', standalone: true, imports: [RunProfileEditorComponent, DatePipe, DecimalPipe, RunConsoleComponent, RunActivityComponent, TableModule, ButtonModule, FormsModule, CheckboxModule, SelectModule, PanelModule, PopoverModule, MessageModule, InputTextModule, InputNumberModule, PipelineFlowComponent, AutomationMetricsComponent, TaskDialogComponent, GitDiffViewerComponent],
+@Component({ selector: 'sat-automation-queue', standalone: true, imports: [RunProfileEditorComponent, DatePipe, DecimalPipe, RunConsoleComponent, RunActivityComponent, TableModule, ButtonModule, FormsModule, CheckboxModule, SelectModule, PanelModule, PopoverModule, MessageModule, InputTextModule, InputNumberModule, PipelineFlowComponent, AutomationMetricsComponent, TaskDialogComponent, GitDiffViewerComponent, TabsModule, BadgeModule],
   changeDetection: ChangeDetectionStrategy.OnPush, templateUrl: './automation-queue.component.html', styleUrl: './automation-queue.component.scss' })
 export class AutomationQueueComponent implements OnInit {
   private readonly element = inject<ElementRef<HTMLElement>>(ElementRef);
@@ -57,6 +60,7 @@ export class AutomationQueueComponent implements OnInit {
   private readonly route = inject(ActivatedRoute);
   private readonly router = inject(Router);
   public readonly store = inject(TrackerStore);
+  public readonly runsHeader = inject(RunsHeaderService);
   private readonly refresh = new Subject<void>();
   public readonly selectedId = signal<string | null>(null);
   public readonly view = signal<RunsView>('queue');
@@ -79,7 +83,37 @@ export class AutomationQueueComponent implements OnInit {
   public readonly leftSidebarOpen = signal(true);
   public readonly inspectorWidth = signal<number>(this.loadInspectorWidth());
   public readonly isResizingInspector = signal(false);
-  public readonly activeLaneFilter = signal<string>('all');
+  public readonly activeLaneFilter = this.runsHeader.activeLaneFilter;
+  public readonly laneFilterItems = computed<LaneFilterItem[]>(() => {
+    const result: LaneFilterItem[] = [
+      { id: 'all', label: 'Все', count: this.historyMode() ? this.snapshot().items.length : this.totalActive() },
+    ];
+    for (const lane of this.visibleLanes()) {
+      result.push({ id: lane.id, label: lane.title, count: this.items(lane.id).length });
+    }
+    return result;
+  });
+  private readonly syncHeaderEffect = effect(() => {
+    const host = this.snapshot().host;
+    let label = 'Ожидание worker';
+    if (!host.online) {
+      label = 'Хост оффлайн';
+    } else {
+      switch (host.execution?.state) {
+        case 'running': label = 'Worker работает'; break;
+        case 'starting': label = 'Worker запускается'; break;
+        case 'stopping': label = 'Worker останавливается'; break;
+        case 'stopped': label = 'Worker остановлен'; break;
+        default: label = 'Статус неизвестен'; break;
+      }
+    }
+    this.runsHeader.workerStatus.set({
+      online: host.online,
+      state: host.execution?.state,
+      label,
+    });
+    this.runsHeader.laneFilters.set(this.laneFilterItems());
+  });
   public readonly confirmation = signal<'cleanup' | 'delete' | null>(null);
   public discard = false;
   private readonly selectedCache = signal<QueueItem | undefined>(undefined);
@@ -109,10 +143,29 @@ export class AutomationQueueComponent implements OnInit {
   public readonly budgetFields = RUN_BUDGET_FIELDS;
   public budgetDraft: Partial<Record<RunBudgetKey, number | null>> = {};
   private originalBudget: Partial<Record<RunBudgetKey, number>> = {};
+  public readonly inspectorTab = signal<'overview' | 'pipeline' | 'evidence' | 'tokens'>('overview');
+  public readonly evidenceCount = computed(() => {
+    const d = this.detail();
+    if (!d) return 0;
+    const checks = d.checks?.length ?? 0;
+    const acceptance = d.run?.acceptance?.results?.length ?? 0;
+    const user = d.userAcceptance ? 1 : 0;
+    return checks + acceptance + user;
+  });
+  public openInspectorTab(tab: 'overview' | 'pipeline' | 'evidence' | 'tokens'): void {
+    this.inspectorTab.set(tab);
+    this.inspectRun(true);
+  }
+  public onInspectorTabChange(value: string | number | undefined): void {
+    if (typeof value === 'string' && ['overview', 'pipeline', 'evidence', 'tokens'].includes(value)) {
+      this.inspectorTab.set(value as 'overview' | 'pipeline' | 'evidence' | 'tokens');
+    }
+  }
   public editBudget(run: AgentRun): void {
     this.originalBudget = Object.fromEntries(this.budgetFields.map(field => [field.key, RunBudget.value(run, field)]));
     this.budgetDraft = { ...this.originalBudget };
     this.budgetEditing.set(true);
+    this.inspectorTab.set('tokens');
   }
   public saveBudget(run: AgentRun): void {
     if (this.busy()) return;
@@ -125,7 +178,7 @@ export class AutomationQueueComponent implements OnInit {
       });
   }
   public profileChanged(): void { this.refresh.next(); this.notice.set('Профиль этапа обновлён в этом запуске. Рабочая ветка сохранена.'); }
-  public readonly search = signal('');
+  public readonly search = this.runsHeader.search;
   public readonly statusTitles = RUN_STATUS_TITLES;
   public readonly taskTitles = TASK_STATUS_TITLES;
   public readonly phaseTitles = RUN_PHASE_TITLES;
@@ -322,6 +375,9 @@ export class AutomationQueueComponent implements OnInit {
     this.applyRoute();
     this.router.events.pipe(filter(event => event instanceof NavigationEnd), takeUntilDestroyed(this.destroyRef))
       .subscribe(() => this.applyRoute());
+    this.runsHeader.refreshRequested.pipe(takeUntilDestroyed(this.destroyRef)).subscribe(() => {
+      this.refresh.next();
+    });
     this.destroyRef.onDestroy(() => this.closeTask());
   }
   private applyRoute(): void {
@@ -353,7 +409,9 @@ export class AutomationQueueComponent implements OnInit {
       this.leftSidebarOpen.set(!run);
     }
     this.view.set(view);
+    this.runsHeader.view.set(view);
     this.historyTask.set(task);
+    this.runsHeader.historyTask.set(task);
     if (eventId !== this.sourceEventId() || run !== this.routedRun) {
       this.evidenceExpanded.set(false);
       if (eventId) this.leftSidebarOpen.set(false);
@@ -457,6 +515,7 @@ export class AutomationQueueComponent implements OnInit {
     this.taskTab.set(null);
     this.store.closeCard();
     this.queueReturnUrl = null;
+    document.querySelectorAll('.p-image-preview-mask').forEach(el => el.remove());
   }
 
   public onCloseTaskFromDialog(): void {

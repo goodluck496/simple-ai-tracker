@@ -1,0 +1,101 @@
+<div class="runs-toolbar">
+  <!-- Переключатель видов: Рабочая очередь / История / Метрики -->
+  <nav class="runs-nav-segment" aria-label="Разделы запусков">
+    @for (viewItem of views; track viewItem.id) {
+      <button
+        type="button"
+        class="nav-segment-btn"
+        [class.active]="runsHeader.view() === viewItem.id"
+        [attr.aria-current]="runsHeader.view() === viewItem.id ? 'page' : null"
+        (click)="runsHeader.navigate(viewItem.id)"
+      >
+        <i [class]="viewItem.icon" aria-hidden="true"></i>
+        <span>{{ viewItem.label }}</span>
+      </button>
+    }
+  </nav>
+
+  <!-- Поиск по запускам -->
+  <div class="runs-search-box">
+    <i class="pi pi-search search-icon" aria-hidden="true"></i>
+    <input
+      type="search"
+      class="runs-search-input"
+      placeholder="Поиск по ID, задаче..."
+      aria-label="Поиск запусков"
+      [ngModel]="runsHeader.search()"
+      (ngModelChange)="runsHeader.search.set($event)"
+    />
+    @if (runsHeader.search()) {
+      <button
+        type="button"
+        class="search-clear-btn"
+        (click)="runsHeader.clearSearch()"
+        pTooltip="Очистить поиск"
+        tooltipPosition="bottom"
+      >
+        <i class="pi pi-times"></i>
+      </button>
+    }
+  </div>
+
+  <!-- Фильтры по статусам (когда не в метриках) -->
+  @if (runsHeader.view() !== 'metrics' && runsHeader.laneFilters().length > 0) {
+    <div class="runs-lane-filters" aria-label="Фильтр по статусу">
+      @for (filter of runsHeader.laneFilters(); track filter.id) {
+        <button
+          type="button"
+          class="lane-filter-btn"
+          [class.active]="runsHeader.activeLaneFilter() === filter.id"
+          (click)="runsHeader.activeLaneFilter.set(filter.id)"
+        >
+          <span>{{ filter.label }}</span>
+          <span class="lane-filter-badge">{{ filter.count }}</span>
+        </button>
+      }
+    </div>
+  }
+
+  <!-- Правая группа: статус worker, обновление, настройки -->
+  <div class="runs-actions-group">
+    @let host = runsHeader.workerStatus();
+    <div
+      class="worker-status-badge"
+      [class.online]="host.online && host.state === 'running'"
+      [class.warn]="host.online && host.state !== 'running'"
+      [class.offline]="!host.online"
+      [pTooltip]="host.label"
+      tooltipPosition="bottom"
+    >
+      <span class="status-pulse-dot"></span>
+      <span class="worker-text">{{ host.label }}</span>
+    </div>
+
+    <button
+      pButton
+      type="button"
+      severity="secondary"
+      [text]="true"
+      size="small"
+      icon="pi pi-refresh"
+      class="icon-action-btn"
+      (click)="runsHeader.requestRefresh()"
+      pTooltip="Обновить список запусков"
+      tooltipPosition="bottom"
+    ></button>
+
+    <button
+      pButton
+      type="button"
+      severity="secondary"
+      size="small"
+      icon="pi pi-cog"
+      class="settings-action-btn"
+      (click)="runsHeader.openSettings()"
+      pTooltip="Настройки команды и worker"
+      tooltipPosition="bottom"
+    >
+      <span class="settings-btn-label">Настройки</span>
+    </button>
+  </div>
+</div>

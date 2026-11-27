@@ -54,6 +54,13 @@ import { DecisionLogComponent } from '../decision-log/decision-log.component';
 import { QuestionsPanelComponent } from '../questions-panel/questions-panel.component';
 import { type DialogTab, isDialogTab, TaskLinkService } from '../../services/task-link';
 
+export interface ImageGalleryState {
+  images: string[];
+  index: number;
+  zoom: number;
+  rotate: number;
+}
+
 /** Ширина сайдбара: как в прежнем UI (тянется за левую границу, запоминается). */
 const SIDEBAR_DEFAULT_WIDTH = 720;
 const SIDEBAR_MIN_WIDTH = 420;
@@ -799,7 +806,58 @@ export class TaskDialogComponent {
     await this.store.deleteAttachment(card.id, attachment.id);
   }
 
+  public readonly activeGallery = signal<ImageGalleryState | null>(null);
+
+  public openGallery(images: string[], initialIndex = 0): void {
+    if (!images || images.length === 0) return;
+    const index = Math.max(0, Math.min(initialIndex, images.length - 1));
+    this.activeGallery.set({
+      images: [...images],
+      index,
+      zoom: 1,
+      rotate: 0,
+    });
+  }
+
+  public closeGallery(): void {
+    this.activeGallery.set(null);
+  }
+
+  public nextImage(): void {
+    const g = this.activeGallery();
+    if (!g || g.images.length <= 1) return;
+    const next = (g.index + 1) % g.images.length;
+    this.activeGallery.set({ ...g, index: next, zoom: 1, rotate: 0 });
+  }
+
+  public prevImage(): void {
+    const g = this.activeGallery();
+    if (!g || g.images.length <= 1) return;
+    const prev = (g.index - 1 + g.images.length) % g.images.length;
+    this.activeGallery.set({ ...g, index: prev, zoom: 1, rotate: 0 });
+  }
+
+  public rotateGallery(delta: number): void {
+    const g = this.activeGallery();
+    if (!g) return;
+    this.activeGallery.set({ ...g, rotate: (g.rotate + delta) % 360 });
+  }
+
+  public zoomGallery(delta: number): void {
+    const g = this.activeGallery();
+    if (!g) return;
+    const newZoom = Math.max(0.25, Math.min(4, Math.round((g.zoom + delta) * 100) / 100));
+    this.activeGallery.set({ ...g, zoom: newZoom });
+  }
+
+  public resetGalleryTransform(): void {
+    const g = this.activeGallery();
+    if (!g) return;
+    this.activeGallery.set({ ...g, zoom: 1, rotate: 0 });
+  }
+
   public close(): void {
+    this.closeGallery();
     this.closed.emit();
   }
 
@@ -852,13 +910,56 @@ export class TaskDialogComponent {
     this.sidebarWidth.set(Math.max(600, window.innerWidth - 60));
   }
 
-  @HostListener('document:keydown.escape')
-  public onEscapeKey(): void {
-    this.close();
-  }
-
   @HostListener('document:keydown', ['$event'])
   public onKeydown(event: KeyboardEvent): void {
+    const gallery = this.activeGallery();
+    if (gallery) {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        event.stopPropagation();
+        this.closeGallery();
+        return;
+      }
+      if (event.key === 'ArrowRight' || event.key === 'ArrowDown') {
+        event.preventDefault();
+        event.stopPropagation();
+        this.nextImage();
+        return;
+      }
+      if (event.key === 'ArrowLeft' || event.key === 'ArrowUp') {
+        event.preventDefault();
+        event.stopPropagation();
+        this.prevImage();
+        return;
+      }
+      if (event.key === '+' || event.key === '=') {
+        event.preventDefault();
+        this.zoomGallery(0.25);
+        return;
+      }
+      if (event.key === '-' || event.key === '_') {
+        event.preventDefault();
+        this.zoomGallery(-0.25);
+        return;
+      }
+      return;
+    }
+
+    if (this.preview()) {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        event.stopPropagation();
+        this.closePreview();
+        return;
+      }
+    }
+
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      this.close();
+      return;
+    }
+
     if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's') {
       event.preventDefault();
       void this.save();

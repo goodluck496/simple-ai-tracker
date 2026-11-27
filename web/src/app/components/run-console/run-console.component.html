@@ -2,22 +2,184 @@
   <div class="toolbar">
     <label>Уровень <p-select ariaLabel="Уровень журнала" [options]="levelOptions" optionLabel="label" optionValue="value" [ngModel]="level()" (ngModelChange)="level.set($event)" appendTo="body" /></label>
     <label>Этап <p-select ariaLabel="Этап журнала" [options]="stageOptions()" optionLabel="label" optionValue="value" [ngModel]="stage()" (ngModelChange)="stage.set($event)" appendTo="body" /></label>
-    <button pButton severity="secondary" type="button" (click)="copy()">Копировать вывод</button>
-    <button pButton severity="secondary" type="button" [disabled]="downloading()" (click)="download()">Скачать полный исходный журнал</button>
-    <button pButton severity="secondary" type="button" (click)="latest()">К последним строкам</button>
+    <div class="search-wrap">
+      <label for="console-search">Поиск</label>
+      <div class="search-input-inner">
+        <i class="pi pi-search search-icon" aria-hidden="true"></i>
+        <input id="console-search" pInputText type="search" placeholder="Поиск в логе..." [ngModel]="searchQuery()" (ngModelChange)="searchQuery.set($event)" />
+        @if (searchQuery()) {
+          <button type="button" class="clear-search-btn" (click)="searchQuery.set('')" title="Очистить поиск">×</button>
+        }
+      </div>
+    </div>
+    <button pButton [severity]="errorCount() > 0 ? 'danger' : 'primary'" size="small" icon="pi pi-window-maximize" (click)="openDetailModal()" title="Открыть полноэкранный детальный просмотр с подсветкой и фильтрами">
+      Подробный просмотр
+      @if (errorCount() > 0) {
+        <span class="btn-badge-error" title="Количество обнаруженных ошибок">{{ errorCount() }}</span>
+      }
+    </button>
+    <button pButton severity="secondary" type="button" size="small" icon="pi pi-copy" (click)="copy()">Копировать</button>
+    <button pButton severity="secondary" type="button" size="small" icon="pi pi-download" [disabled]="downloading()" (click)="download()">Скачать лог</button>
+    <button pButton severity="secondary" type="button" size="small" icon="pi pi-arrow-down" (click)="latest()">К последним</button>
   </div>
   <p class="hint">Последние {{ limit }} строк из доступного окна событий. Полная сохранённая история — в скачиваемом журнале.
+    @if (errorCount() > 0) {
+      <strong class="hint-error">Обнаружено ошибок: {{ errorCount() }}.</strong>
+    }
     @if (view().omitted) { Скрыто строк: {{ view().omitted }}. }
     @if (!follow()) { Автопрокрутка приостановлена. }
   </p>
   @if (view().incomplete) { <p role="status">Получена часть структурированной записи; ожидается продолжение.</p> }
   <div #viewport class="terminal" role="log" aria-label="Вывод выполнения" tabindex="0">
     @for (line of rows(); track line.id) {
-      <div class="line" [attr.data-level]="line.level"><time>{{ line.at | date:'HH:mm:ss' }}</time><span class="stage">{{ line.stage }}</span><span class="level">{{ line.level }}</span><pre>{{ line.text }}</pre></div>
-    } @empty { <p>Нет строк для выбранного фильтра. Запуск может ожидать worker.</p> }
+      <div class="line" [attr.data-level]="line.level">
+        <time>{{ line.at | date:'HH:mm:ss' }}</time>
+        <span class="stage">{{ line.stage }}</span>
+        <span class="level" [attr.data-level]="line.level">{{ line.level }}</span>
+        <pre>{{ line.text }}</pre>
+      </div>
+    } @empty {
+      <p class="terminal-empty">
+        @if (searchQuery() || level() !== 'all' || stage() !== 'all') {
+          Нет строк для выбранных фильтров. Попробуйте сбросить фильтры.
+        } @else {
+          Нет строк в журнале. Запуск может ожидать worker.
+        }
+      </p>
+    }
   </div>
-  @if (message()) { <p role="status">{{ message() }}</p> }
+  @if (message()) { <p class="console-toast-message" role="status">{{ message() }}</p> }
   <p-panel class="raw-panel" header="Исходные события текущего окна" [toggleable]="true" [collapsed]="!rawOpen()" (collapsedChange)="rawOpen.set(!$event)">
     @if (rawOpen()) { <pre class="raw">{{ raw() }}</pre> }
   </p-panel>
 </section>
+
+<!-- ДЕТАЛЬНАЯ МОДАЛКА ПОДРОБНОГО ПРОСМОТРА С ПОДСВЕТКАМИ И ФИЛЬТРОМ -->
+<p-dialog
+  [(visible)]="detailModalOpen"
+  [modal]="true"
+  [draggable]="false"
+  [resizable]="true"
+  [maximizable]="true"
+  [dismissableMask]="true"
+  [style]="{ width: 'min(1360px, 96vw)', height: '92vh' }"
+  styleClass="detail-log-dialog"
+  header="Детальный анализ операций и ошибок запуска"
+>
+  <div class="detail-modal-body">
+    <!-- СТАТИСТИКА И БЫСТРЫЕ ФИЛЬТРЫ -->
+    <header class="detail-header-stats">
+      <div class="detail-run-identity">
+        <span class="detail-run-id">ID: <code>{{ runId() }}</code></span>
+        <span class="detail-total-badge">Всего записей: {{ view().lines.length }}</span>
+      </div>
+      <div class="filter-chips-group" role="group" aria-label="Фильтр по типу события">
+        <button type="button" class="filter-chip chip-all" [class.active]="detailFilter() === 'all'" (click)="detailFilter.set('all')">
+          Все <span class="chip-count">{{ view().lines.length }}</span>
+        </button>
+        <button type="button" class="filter-chip chip-error" [class.active]="detailFilter() === 'error'" (click)="detailFilter.set('error')">
+          <i class="pi pi-times-circle" aria-hidden="true"></i> Что не так (ошибки) <span class="chip-count">{{ errorCount() }}</span>
+        </button>
+        <button type="button" class="filter-chip chip-command" [class.active]="detailFilter() === 'command'" (click)="detailFilter.set('command')">
+          <i class="pi pi-cog" aria-hidden="true"></i> Операции бота <span class="chip-count">{{ commandCount() }}</span>
+        </button>
+        <button type="button" class="filter-chip chip-success" [class.active]="detailFilter() === 'success'" (click)="detailFilter.set('success')">
+          <i class="pi pi-check-circle" aria-hidden="true"></i> Что так (успех) <span class="chip-count">{{ successCount() }}</span>
+        </button>
+        @if (warningCount() > 0) {
+          <button type="button" class="filter-chip chip-warning" [class.active]="detailFilter() === 'warning'" (click)="detailFilter.set('warning')">
+            <i class="pi pi-exclamation-triangle" aria-hidden="true"></i> Предупреждения <span class="chip-count">{{ warningCount() }}</span>
+          </button>
+        }
+      </div>
+    </header>
+
+    <!-- ПАНЕЛЬ ПОИСКА И УПРАВЛЕНИЯ -->
+    <div class="detail-filter-bar">
+      <div class="detail-search-wrap">
+        <i class="pi pi-search search-icon" aria-hidden="true"></i>
+        <input pInputText type="search" placeholder="Фильтр: команда, файл, сообщение об ошибке..." [ngModel]="detailSearch()" (ngModelChange)="detailSearch.set($event)" aria-label="Поиск по журналу" />
+        @if (detailSearch()) {
+          <button type="button" class="clear-search-btn" (click)="detailSearch.set('')" title="Сбросить поиск">×</button>
+        }
+      </div>
+
+      <div class="detail-stage-wrap">
+        <p-select [options]="stageOptions()" optionLabel="label" optionValue="value" [ngModel]="detailStage()" (ngModelChange)="detailStage.set($event)" ariaLabel="Фильтр этапа" appendTo="body" />
+      </div>
+
+      <div class="detail-actions-group">
+        @if (errorCount() > 0) {
+          <button pButton severity="danger" size="small" [outlined]="true" icon="pi pi-arrow-down" (click)="scrollToFirstError()" title="Перейти к первой ошибке в списке">
+            К 1-й ошибке
+          </button>
+          @if (errorCount() > 1) {
+            <button pButton severity="danger" size="small" [outlined]="true" icon="pi pi-arrow-down" (click)="scrollToLastError()" title="Перейти к последней ошибке в списке">
+              К последней
+            </button>
+          }
+          <button pButton severity="danger" size="small" [outlined]="true" icon="pi pi-copy" (click)="copyErrors()" title="Скопировать только строки с ошибками">
+            Копировать ошибки ({{ errorCount() }})
+          </button>
+        }
+        <button pButton severity="secondary" size="small" icon="pi pi-copy" (click)="copyDetailFiltered()" title="Скопировать отфильтрованные строки">
+          Копировать видимое
+        </button>
+        <button pButton severity="secondary" size="small" icon="pi pi-download" [disabled]="downloading()" (click)="download()" title="Скачать полный исходный JSONL журнал">
+          Скачать JSONL
+        </button>
+      </div>
+    </div>
+
+    <!-- СПИСОК СТРОК С ПОДСВЕТКОЙ -->
+    <div #modalViewport class="detail-log-list" role="log" tabindex="0">
+      @for (line of detailRows(); track line.id) {
+        <article class="detail-row" [attr.data-level]="line.level">
+          <header class="detail-row-header">
+            <span class="detail-level-badge" [attr.data-level]="line.level">
+              @switch (line.level) {
+                @case ('error') { <i class="pi pi-times-circle" aria-hidden="true"></i> СБОЙ / ОШИБКА }
+                @case ('command') { <i class="pi pi-cog" aria-hidden="true"></i> ОПЕРАЦИЯ БОТА }
+                @case ('success') { <i class="pi pi-check" aria-hidden="true"></i> УСПЕХ }
+                @case ('warning') { <i class="pi pi-exclamation-triangle" aria-hidden="true"></i> ВНИМАНИЕ }
+                @default { <i class="pi pi-info-circle" aria-hidden="true"></i> ИНФО }
+              }
+            </span>
+            <time class="detail-time">{{ line.at | date:'HH:mm:ss.SSS' }}</time>
+            <span class="detail-stage-pill">{{ line.stage }}</span>
+            <button type="button" class="detail-copy-line-btn" (click)="copyLine(line.text)" title="Скопировать эту запись">
+              <i class="pi pi-copy" aria-hidden="true"></i>
+            </button>
+          </header>
+          <div class="detail-row-content">
+            <pre class="detail-pre">{{ line.text }}</pre>
+          </div>
+        </article>
+      } @empty {
+        <div class="detail-empty-state">
+          @if (detailFilter() === 'error') {
+            <div class="empty-success-banner">
+              <i class="pi pi-check-circle success-large-icon" aria-hidden="true"></i>
+              <h3>Ошибок не обнаружено!</h3>
+              <p>Все операции и этапы в этом запуске завершились без зарегистрированных сбоев.</p>
+              <button pButton severity="secondary" size="small" (click)="detailFilter.set('all')">Показать все операции</button>
+            </div>
+          } @else if (detailSearch()) {
+            <i class="pi pi-search search-empty-icon" aria-hidden="true"></i>
+            <p>Нет совпадений для запроса «{{ detailSearch() }}» в выбранном этапе.</p>
+            <button pButton severity="secondary" size="small" (click)="detailSearch.set('')">Сбросить поиск</button>
+          } @else {
+            <p>Нет записей для выбранного фильтра.</p>
+          }
+        </div>
+      }
+    </div>
+  </div>
+
+  <ng-template pTemplate="footer">
+    <div class="detail-dialog-footer">
+      <span class="footer-shown-counter">Показано: {{ detailRows().length }} из {{ view().lines.length }} записей</span>
+      <p-button label="Закрыть" severity="secondary" size="small" (onClick)="closeDetailModal()"></p-button>
+    </div>
+  </ng-template>
+</p-dialog>

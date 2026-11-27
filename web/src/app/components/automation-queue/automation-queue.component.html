@@ -1,13 +1,4 @@
 <div class="runs-page" [attr.inert]="taskContext() && store.openTask() ? '' : null">
-  <header class="runs-page-header">
-    <h2>Запуски агентов</h2>
-    <nav aria-label="Разделы запусков">
-      @for (item of views; track item.id) {
-        <button pButton type="button" size="small" severity="secondary" [text]="true"
-          [attr.aria-current]="view() === item.id ? 'page' : null" (click)="navigate(item.id)">{{ item.label }}</button>
-      }
-    </nav>
-  </header>
   @if (runPage(); as panel) {
     <section class="run-subpage" aria-labelledby="run-subpage-title">
       <header>
@@ -107,57 +98,14 @@
       @if (leftSidebarOpen()) { <strong>Список запусков</strong> }
     </header>
     <div id="run-list-content" class="run-list-content" [hidden]="!leftSidebarOpen()">
-    <div class="sidebar-top">
-      <div class="sidebar-status-row">
-        @let host = snapshot().host;
-        <span class="host-badge" [class.online]="host.online && host.execution?.state === 'running'">
-          <span class="status-dot"></span>
-          <span class="host-badge-text">
-            @if (!host.online) {
-              Хост оффлайн
-            } @else {
-              @switch (host.execution?.state) {
-                @case ('running') { Worker работает }
-                @case ('starting') { Worker запускается }
-                @case ('stopping') { Worker останавливается }
-                @case ('stopped') { Worker остановлен }
-                @default { Статус worker неизвестен }
-              }
-            }
-          </span>
-        </span>
-        @if (host.online && host.execution?.state === 'stopped') {
-          <button pButton size="small" severity="secondary" [text]="true" (click)="configure()">Управление worker</button>
-        }
-        @if (historyTask()) {
+      @if (historyTask()) {
+        <div class="sidebar-top">
           <span class="task-filter-tag" title="Фильтр по задаче">
-            {{ historyTask() }}
+            Задача: {{ historyTask() }}
             <button pButton type="button" class="tag-remove-btn" (click)="viewHistory('')" title="Сбросить фильтр">×</button>
           </span>
-        }
-      </div>
-
-      <div class="sidebar-search-row">
-        <div class="search-input-wrap">
-          <i class="pi pi-search search-icon"></i>
-          <input pInputText type="search" [value]="search()" (input)="search.set($any($event.target).value)" placeholder="Поиск по ID, названию..." aria-label="Поиск запусков" />
-          @if (search()) {
-            <button pButton type="button" class="clear-search-btn" (click)="clearSearch()" title="Очистить поиск">×</button>
-          }
         </div>
-      </div>
-
-      <div class="lane-chips" role="group" aria-label="Статус запуска">
-        <button pButton type="button" class="lane-chip" [class.active]="activeLaneFilter() === 'all'" [attr.aria-pressed]="activeLaneFilter() === 'all'" (click)="activeLaneFilter.set('all')">
-          Все <span class="chip-count">{{ historyMode() ? snapshot().items.length : totalActive() }}</span>
-        </button>
-        @for (lane of visibleLanes(); track lane.id) {
-          <button pButton type="button" class="lane-chip" [class.active]="activeLaneFilter() === lane.id" [attr.aria-pressed]="activeLaneFilter() === lane.id" (click)="activeLaneFilter.set(lane.id)">
-            {{ lane.title }} <span class="chip-count">{{ items(lane.id).length }}</span>
-          </button>
-        }
-      </div>
-    </div>
+      }
 
     <div class="sidebar-runs-list">
       @for (lane of filteredLanes(); track lane.id) {
@@ -280,27 +228,37 @@
       <header class="run-header">
         <div class="run-header-top">
           <div class="run-header-left">
-            <div class="run-header-titles">
-              <div class="run-badges-row">
-                <span class="badge-task-id">{{ item.taskId }}</span>
-                <span class="badge-run-status" [attr.data-status]="item.status">
-                  <span class="pulse-dot" [class.active]="item.status === runStatus.Running || item.status === runStatus.Integrating"></span>
-                  {{ item.manualAcceptance ? 'Принято пользователем' : statusTitles[item.status] }}
+            <div class="run-badges-row">
+              <span class="badge-task-id clickable" (click)="openTask({ taskId: item.taskId, runId: item.id })" title="Открыть карточку задачи на доске">
+                {{ item.taskId }} <i class="pi pi-external-link"></i>
+              </span>
+              <span class="badge-run-status" [attr.data-status]="item.status">
+                <span class="pulse-dot" [class.active]="item.status === runStatus.Running || item.status === runStatus.Integrating"></span>
+                {{ item.manualAcceptance ? 'Принято пользователем' : statusTitles[item.status] }}
+              </span>
+              @if (item.status === runStatus.Failed || item.status === runStatus.Interrupted || item.status === runStatus.MergeBlocked || connectionFailure()) {
+                <button pButton type="button" severity="danger" [text]="true" size="small" class="failure-reason-pill"
+                  (click)="failureInfo.toggle($event)" title="Показать причину сбоя">
+                  <i class="pi pi-exclamation-circle"></i> Причина сбоя
+                </button>
+              }
+              <span class="badge-task-status">Карточка: {{ taskTitles[item.taskStatus] }}</span>
+              <span class="badge-stage clickable" (click)="openInspectorTab('pipeline')" title="Открыть схему конвейера и этапов в сайдбаре">
+                Этап {{ item.stage < item.pipeline.length ? item.stage + 1 : item.pipeline.length }}/{{ item.pipeline.length }} · {{ currentRole(item) }}
+                <i class="pi pi-sitemap"></i>
+              </span>
+              @if (evidenceCount() > 0) {
+                <span class="badge-evidence clickable" (click)="openInspectorTab('evidence')" title="Открыть проверки и доказательства в сайдбаре">
+                  <i class="pi pi-verified"></i> Проверки ({{ evidenceCount() }})
                 </span>
-                <span class="badge-task-status">Карточка: {{ taskTitles[item.taskStatus] }}</span>
-                <span class="badge-stage">Этап {{ item.stage < item.pipeline.length ? item.stage + 1 : item.pipeline.length }}/{{ item.pipeline.length }} · {{ currentRole(item) }}</span>
-                @if (detail()?.run; as run) {
-                  <span class="badge-limits">@if (run.trustedExecution) { Без лимитов } @else { Лимит: {{ run.settings.maxInputTokens | number }} вх · {{ run.settings.maxRunMinutes }} мин }</span>
-                }
-              </div>
-              <h2 class="run-main-title">{{ item.title }}</h2>
+              }
+              @if (detail()?.run; as run) {
+                <span class="badge-limits">@if (run.trustedExecution) { Без лимитов } @else { Лимит: {{ run.settings.maxInputTokens | number }} вх · {{ run.settings.maxRunMinutes }} мин }</span>
+              }
             </div>
           </div>
 
           <div class="run-header-actions">
-            <button pButton severity="secondary" size="small" icon="pi pi-external-link" (click)="openTask({ taskId: item.taskId, runId: item.id })">
-              Открыть задачу {{ item.openQuestions ? 'и ответить' : '' }}
-            </button>
             @if (item.status === runStatus.Queued) {
               <button pButton severity="secondary" size="small" class="dequeue-action" [disabled]="busy()" (click)="dequeue(item)">
                 Убрать из очереди
@@ -325,93 +283,98 @@
                 Продолжить
               </button>
             }
-            @if (item.status === runStatus.Failed || item.status === runStatus.Interrupted || item.status === runStatus.MergeBlocked || connectionFailure()) {
-              <button pButton type="button" severity="secondary" size="small" icon="pi pi-exclamation-circle"
-                (click)="failureInfo.toggle($event)">Причина сбоя</button>
-            }
             <button pButton type="button" severity="secondary" size="small" icon="pi pi-ellipsis-h"
               aria-label="Действия с запуском" (click)="runActions.toggle($event)">Действия</button>
+            <button pButton [severity]="showDetails() ? 'primary' : 'secondary'" [text]="!showDetails()" size="small" icon="pi pi-sliders-h"
+              aria-label="Подробности запуска" (click)="inspectRun(!showDetails())"
+              [title]="showDetails() ? 'Скрыть панель подробностей' : 'Показать панель подробностей'">
+              <span>Подробности</span>
+            </button>
+
             <p-popover #runActions appendTo="body">
               <div class="run-popover-actions" (click)="runActions.hide()">
-            @if (canRetryCurrent(item)) {
-              <button pButton severity="secondary" size="small" icon="pi pi-replay"
-                [disabled]="busy() || !item.canResume || resumeBudgetBlocked(item) || detail()?.previewPatch?.active"
-                (click)="retryCurrent(item)">Повторить текущую проверку</button>
-            }
-            @if (canAcceptManually(item)) {
-              <button pButton severity="secondary" size="small" icon="pi pi-check"
-                [disabled]="busy() || item.openQuestions > 0"
-                (click)="acceptManually(item)">Я проверил — принять результат</button>
-            }
-            @if (item.canRestart) {
-              <button pButton severity="secondary" size="small" icon="pi pi-refresh" [disabled]="busy()" (click)="action(item, runAction.Restart)">
-                {{ item.stage >= item.pipeline.length ? 'Интеграция заново' : 'Начать заново' }}
-              </button>
-            }
+                @if (canRetryCurrent(item)) {
+                  <button pButton severity="secondary" size="small" icon="pi pi-replay"
+                    [disabled]="busy() || !item.canResume || resumeBudgetBlocked(item) || detail()?.previewPatch?.active"
+                    (click)="retryCurrent(item)">Повторить текущую проверку</button>
+                }
+                @if (canAcceptManually(item)) {
+                  <button pButton severity="secondary" size="small" icon="pi pi-check"
+                    [disabled]="busy() || item.openQuestions > 0"
+                    (click)="acceptManually(item)">Я проверил — принять результат</button>
+                }
+                @if (item.canRestart) {
+                  <button pButton severity="secondary" size="small" icon="pi pi-refresh" [disabled]="busy()" (click)="action(item, runAction.Restart)">
+                    {{ item.stage >= item.pipeline.length ? 'Интеграция заново' : 'Начать заново' }}
+                  </button>
+                }
                 <button pButton type="button" size="small" [text]="true" severity="secondary" icon="pi pi-history"
                   (click)="viewHistory(item.taskId)">История задачи</button>
                 @if (item.status === runStatus.Failed && item.canResume && detail()?.run?.checkout) {
-              <button pButton type="button" size="small" severity="secondary" [disabled]="busy() || resumeBudgetBlocked(item)"
-                (click)="action(item, runAction.Resume, true)">Продолжить с проверками из настроек проекта</button>
+                  <button pButton type="button" size="small" severity="secondary" [disabled]="busy() || resumeBudgetBlocked(item)"
+                    (click)="action(item, runAction.Resume, true)">Продолжить с проверками из настроек проекта</button>
                 }
-      @if (detail()?.run; as run) {
-        @if (run.id === item.id && run.commitSha) {
-
-            <button pButton severity="secondary" size="small" (click)="openRunPage(run.id, 'commit-diff')">Diff последнего коммита</button>
-            @if (run.checkout?.baseSha) {
-              <button pButton severity="secondary" size="small" (click)="openRunPage(run.id, 'branch-diff')">Diff всей ветки задачи</button>
-            }
-
-        }
-      }
-              </div>
-            </p-popover>
-            <p-popover #failureInfo appendTo="body">
-          @if (detail()?.run; as run) {
-            <div class="failure-content">
-              <span>{{ runBudget.stopReason(run) || health(item) }}</span>
-              @if (resumeBudgetBlocked(item)) { <span>Продолжение недоступно: бюджет исчерпан.</span> }
-              @if (item.canResume) {
-                <button pButton severity="secondary" size="small" (click)="failureInfo.hide(); inspectRun(true); editBudget(run)">Изменить бюджет запуска</button>
-                @if (item.status === runStatus.Failed && run.stage < run.settings.pipeline.length && !resumeBudgetBlocked(item)) {
-                  <button pButton severity="secondary" size="small" [disabled]="replacementLoading()" (click)="chooseReplacement(run)">Сменить модель</button>
-                  @if (replacement(); as choice) {
-                    @if (choice.runId === run.id) {
-                      @if (choice.options.length) {
-                        <p-select ariaLabel="Профиль для текущего этапа" placeholder="Выберите профиль"
-                          [options]="choice.options" optionLabel="label" optionValue="id" [ngModel]="replacementProfileId"
-                          [disabled]="replacementLoading() || busy()" (ngModelChange)="loadReplacementModels($event)" />
-                        @if (replacementProfileId) {
-                          <p-select ariaLabel="Модель для текущего этапа" [filter]="true"
-                            [options]="replacementModels()" optionLabel="label" optionValue="id" [(ngModel)]="replacementModel"
-                            [loading]="replacementLoading()" [disabled]="busy()" />
-                          @if (replacementError()) { <span role="status">{{ replacementError() }}</span> }
-                          <button pButton size="small" [disabled]="busy() || !replacementModel" (click)="resumeWithReplacement(run)">Продолжить с выбранной моделью</button>
-                        }
-                      } @else {
-                        <span>Сохраните профиль для этой роли в настройках команды.</span>
-                      }
+                @if (detail()?.run; as run) {
+                  @if (run.id === item.id && run.commitSha) {
+                    <button pButton severity="secondary" size="small" (click)="openRunPage(run.id, 'commit-diff')">Diff последнего коммита</button>
+                    @if (run.checkout?.baseSha) {
+                      <button pButton severity="secondary" size="small" (click)="openRunPage(run.id, 'branch-diff')">Diff всей ветки задачи</button>
                     }
                   }
                 }
-              }
-            </div>
-          }
-      @if (connectionFailure(); as failure) {
-        <section class="failure-content">
-          <strong>{{ item.status === runStatus.Running || item.status === runStatus.Queued ? 'Предыдущая попытка: ' : '' }}{{ failure.title }}
-            @if (failure.code) { <code>{{ failure.code }}</code> }
-          </strong>
-          <span>{{ failure.detail }}</span>
-          <button pButton severity="secondary" size="small" type="button"
-            (click)="failureInfo.hide(); runConsole.level.set('error'); runConsole.stage.set('all'); runConsole.follow.set(true); executionLog.scrollIntoView({ block: 'nearest' })">Показать ошибки в журнале</button>
-        </section>
-      }
+              </div>
             </p-popover>
-            <button pButton [severity]="showDetails() ? 'primary' : 'secondary'" [text]="!showDetails()" size="small" icon="pi pi-sliders-h" aria-label="Подробности запуска" (click)="inspectRun(!showDetails())" [title]="showDetails() ? 'Скрыть панель подробностей' : 'Показать панель подробностей'">
-              <span>Подробности</span>
-            </button>
+
+            <p-popover #failureInfo appendTo="body">
+              @if (detail()?.run; as run) {
+                <div class="failure-content">
+                  <span>{{ runBudget.stopReason(run) || health(item) }}</span>
+                  @if (resumeBudgetBlocked(item)) { <span>Продолжение недоступно: бюджет исчерпан.</span> }
+                  @if (item.canResume) {
+                    <button pButton severity="secondary" size="small" (click)="failureInfo.hide(); inspectRun(true); editBudget(run)">Изменить бюджет запуска</button>
+                    @if (item.status === runStatus.Failed && run.stage < run.settings.pipeline.length && !resumeBudgetBlocked(item)) {
+                      <button pButton severity="secondary" size="small" [disabled]="replacementLoading()" (click)="chooseReplacement(run)">Сменить модель</button>
+                      @if (replacement(); as choice) {
+                        @if (choice.runId === run.id) {
+                          @if (choice.options.length) {
+                            <p-select ariaLabel="Профиль для текущего этапа" placeholder="Выберите профиль"
+                              [options]="choice.options" optionLabel="label" optionValue="id" [ngModel]="replacementProfileId"
+                              [disabled]="replacementLoading() || busy()" (ngModelChange)="loadReplacementModels($event)" />
+                            @if (replacementProfileId) {
+                              <p-select ariaLabel="Модель для текущего этапа" [filter]="true"
+                                [options]="replacementModels()" optionLabel="label" optionValue="id" [(ngModel)]="replacementModel"
+                                [loading]="replacementLoading()" [disabled]="busy()" />
+                              @if (replacementError()) { <span role="status">{{ replacementError() }}</span> }
+                              <button pButton size="small" [disabled]="busy() || !replacementModel" (click)="resumeWithReplacement(run)">Продолжить с выбранной моделью</button>
+                            }
+                          } @else {
+                            <span>Сохраните профиль для этой роли в настройках команды.</span>
+                          }
+                        }
+                      }
+                    }
+                  }
+                </div>
+              }
+              @if (connectionFailure(); as failure) {
+                <section class="failure-content">
+                  <strong>{{ item.status === runStatus.Running || item.status === runStatus.Queued ? 'Предыдущая попытка: ' : '' }}{{ failure.title }}
+                    @if (failure.code) { <code>{{ failure.code }}</code> }
+                  </strong>
+                  <span>{{ failure.detail }}</span>
+                  <button pButton severity="secondary" size="small" type="button"
+                    (click)="failureInfo.hide(); runConsole.openDetailModal('error')">Детальный анализ ошибок</button>
+                </section>
+              }
+            </p-popover>
           </div>
+        </div>
+
+        <div class="run-header-bottom">
+          <h2 class="run-main-title" (click)="openTask({ taskId: item.taskId, runId: item.id })" title="Открыть карточку задачи на доске">{{ item.title }}</h2>
+          @if (item.actionReason) {
+            <span class="run-action-reason-badge">{{ item.actionReason }}</span>
+          }
         </div>
 
         @if (item.status === runStatus.Running || item.status === runStatus.Integrating) {
@@ -477,51 +440,20 @@
           }
         }
       }
-      @if (detail()?.run?.id === item.id && detail(); as result) {
-        @if (result.checks?.length || result.run.acceptance || result.userAcceptance) {
-          <p-panel header="Доказательства результатов" [toggleable]="true" [collapsed]="true" styleClass="run-proof-panel">
-            @for (criterion of result.run.acceptance?.results; track criterion.id) {
-              <div class="run-proof-row">
-                <strong>{{ criterion.id }}</strong>
-                @if (criterion.source; as source) {
-                  <button pButton type="button" size="small" severity="secondary" [text]="true" (click)="sourceEventId.set(source.eventId)">Исполнение №{{ source.eventId }}</button>
-                  @if (source.browser; as scenario) {
-                    <p>{{ scenario.action }} · {{ scenario.assertion }} · {{ scenario.actual }}</p>
-                    <a pButton size="small" severity="secondary" [outlined]="true" [href]="evidenceImageUrl(scenario.imageUrl)" target="_blank" rel="noopener">Открыть PNG</a>
-                  }
-                } @else {
-                  <span>{{ criterion.status === 'manual' ? 'Ручная проверка' : 'Доказательство недоступно' }}</span>
-                }
-                <p>{{ criterion.evidence }}</p>
-              </div>
-            }
-            @if (result.userAcceptance; as accepted) {
-              <button pButton type="button" size="small" severity="secondary" [text]="true" (click)="openTask({ taskId: item.taskId, runId: item.id })">Пользовательская приёмка №{{ accepted.id }} · {{ timestamp(accepted.at) }}</button>
-            }
-            @for (check of result.checks; track check.id) {
-              <div class="run-proof-row">
-                <button pButton type="button" size="small" severity="secondary" [text]="true" (click)="sourceEventId.set(check.eventId)">Запись №{{ check.eventId }} · {{ check.command }} {{ check.args.join(' ') }}</button>
-                <span>{{ checkOutcome(check) }} · попытка {{ check.attempt }}</span>
-                <code>{{ check.sha }}</code>
-              </div>
-            }
-          </p-panel>
-        }
-      }
-      <!-- ЖУРНАЛ ВЫПОЛНЕНИЯ: занимает всё оставшееся пространство -->
-      @if (detail()?.run; as run) {
-        @if (run.id === item.id) {
-          <p-panel class="run-pipeline-flow" header="Схема запуска и критерии проверок" [toggleable]="true" [collapsed]="true">
-            <sat-pipeline-flow [settings]="run.settings" [run]="run" />
-          </p-panel>
-        }
-      }
+      <!-- ЖУРНАЛ ВЫПОЛНЕНИЯ: занимает всё основное пространство -->
       <section #executionLog class="run-console-section" aria-label="Консоль и журнал">
         <div class="console-section-header">
           <span class="console-title"><i class="pi pi-terminal"></i> Журнал выполнения</span>
           @if (item.tokenUsage; as usage) {
             <span class="console-tokens-badge">{{ tokenMeter.label(usage) }}</span>
           }
+          <button pButton [severity]="runConsole.errorCount() > 0 ? 'danger' : 'secondary'" size="small" [text]="true" icon="pi pi-window-maximize"
+            class="header-detail-btn" (click)="runConsole.openDetailModal()" title="Развернуть подробный просмотр операций и ошибок в отдельном окне">
+            Подробный просмотр
+            @if (runConsole.errorCount() > 0) {
+              <span class="header-error-pill">Ошибок: {{ runConsole.errorCount() }}</span>
+            }
+          </button>
         </div>
         <sat-run-console #runConsole class="embedded-console" [runId]="item.id" [events]="detail()?.run?.id === item.id ? (detail()?.events ?? []) : []" />
       </section>
@@ -553,237 +485,324 @@
       </div>
 
       <div class="inspector-content">
-        <div class="inspector-card">
-          <p class="identifier">ID: <code>{{ item.id }}</code> @if (item.restartedFromId) { · повтор запуска <code>{{ item.restartedFromId }}</code> }</p>
-          <dl class="run-timestamps">
-            <dt>Создано</dt><dd>{{ timestamp(item.createdAt) }}</dd>
-            <dt>Первый запуск</dt><dd>{{ timestamp(item.startedAt) }}</dd>
-            <dt>Текущая попытка</dt><dd>{{ timestamp(item.attemptStartedAt) }}</dd>
-            <dt>Завершено</dt><dd>{{ timestamp(item.finishedAt) }}</dd>
-            <dt>Активность</dt><dd>{{ timestamp(item.updatedAt) }}</dd>
-          </dl>
-        </div>
+        <p-tabs class="inspector-tabs" [value]="inspectorTab()" (valueChange)="onInspectorTabChange($event)" scrollable>
+          <p-tablist>
+            <p-tab value="overview"><i class="pi pi-info-circle"></i> Обзор</p-tab>
+            <p-tab value="pipeline"><i class="pi pi-sitemap"></i> Схема</p-tab>
+            <p-tab value="evidence"><i class="pi pi-verified"></i> Проверки @if (evidenceCount() > 0) { <p-badge [value]="evidenceCount()" severity="info" size="small" styleClass="tab-badge" /> }</p-tab>
+            <p-tab value="tokens"><i class="pi pi-chart-bar"></i> Бюджет</p-tab>
+          </p-tablist>
 
-        @if (item.actionReason) { <p class="action-reason-hint">{{ item.actionReason }}</p> }
-        @if (detail()?.run?.id === item.id && detail()?.run; as run) {
-          @let time = runBudget.time(run, now());
-          <div class="run-budget-summary" role="status">
-            @if (time.disabled) {
-              Доверенный запуск без лимитов. Работа агентов: {{ time.usedMs / 60000 | number:'1.1-1' }} мин. Можно остановить вручную.
-            } @else {
-            Время: {{ time.usedMs / 60000 | number:'1.1-1' }} из {{ time.limitMs / 60000 | number:'1.0-0' }} мин ·
-            Осталось {{ time.remainingMs / 60000 | number:'1.1-1' }} мин работы агентов. Учитываются все вызовы; подготовка и проверки worker исключены.
-            }
-          </div>
-          <sat-run-profile-editor [run]="run" (changed)="profileChanged()" />
-        }
-
-        @if (item.checkout; as checkout) {
-          <div class="inspector-card">
-            <h4>Рабочая копия</h4>
-            <p class="identifier">Worktree: {{ checkout.worktreePath }}</p>
-            <p class="identifier">Base SHA: {{ checkout.baseSha }}</p>
-            <p>Зависимости: {{ checkout.dependencyMode }} @if (checkout.dependencyNote) { · {{ checkout.dependencyNote }} }</p>
-          </div>
-        }
-
-        @if (item.integration; as integration) {
-          <div class="inspector-card integration-info">
-            <h4>{{ integrationTitles[integration.state] }} · {{ integration.targetBranch }}</h4>
-            <p class="identifier">Source: {{ integration.sourceSha }} · target: {{ integration.baseSha }}</p>
-            <p class="identifier">Squash: {{ integration.candidateSha || 'ещё не создан' }}</p>
-            <p class="identifier">Кандидат: {{ integration.worktreePath }} · попытка {{ integration.attempt }}</p>
-            @if (integration.error) { <p class="error">{{ integration.error }}</p> }
-            @if (integration.noChanges) { <p>Отличий от целевой ветки нет; пустой коммит не создавался.</p> }
-            <p class="muted">Локальная интеграция; ветка задачи и журнал сохранены. Публикация в remote не выполнялась.</p>
-          </div>
-        }
-
-        @if (item.integrationSourceSha) {
-          <div class="inspector-card">
-            <p class="muted">Повторяется только интеграция проверенного исходника {{ item.integrationSourceSha }}. Конвейер разработки не вызывается заново; resolver учитывается отдельно.</p>
-          </div>
-        }
-
-        <div class="inspector-card">
-          <h4>Состояние и метрики</h4>
-          <p role="status" class="health-text">{{ health(item) }}</p>
-          @if (item.status === runStatus.Running || item.status === runStatus.Integrating) {
-            <sat-run-activity [item]="item" [now]="now()" [connected]="dataFresh()" />
-          }
-          <div class="facts">
-            <span>Фаза: {{ item.phase ? phaseTitles[item.phase] : 'Ожидание worker' }}</span>
-            <span>Фаза длится: {{ duration(item.phaseStartedAt) }}</span>
-            <span>С начала попытки: {{ duration(item.attemptStartedAt) }} · лимит одного вызова агента {{ item.timeoutMinutes }} мин</span>
-            <span>Heartbeat: {{ (item.heartbeatAt | date:'mediumTime') || 'ещё не было' }}</span>
-            <span>Событие: {{ (item.progressAt | date:'mediumTime') || 'ещё не было' }}</span>
-            <span>Возвратов: {{ item.revision }}</span>
-            <span class="identifier">Ветка: {{ item.branch || 'ещё не создана' }}</span>
-          </div>
-        </div>
-
-        @if (!item.integrationSourceSha) {
-          <div class="inspector-card">
-            <h4>Этапы конвейера</h4>
-            <ol class="stages">
-              @for (stage of item.pipeline; track $index; let i = $index) {
-                <li [class.current]="i === item.stage">
-                  <strong>{{ role(stage.role) }}</strong> · {{ stage.runner }} / {{ stage.model }}
-                  <span class="stage-status">{{ i < item.stage ? 'Пройден' : i === item.stage ? statusTitles[item.status] : 'Ожидает' }}</span>
-                </li>
-              }
-            </ol>
-          </div>
-        }
-
-        @if (item.summary) {
-          <div class="inspector-card">
-            <h4>Резюме</h4>
-            <p class="summary">{{ progress(item.summary) }}</p>
-          </div>
-        }
-
-        @if (detail()?.run?.id === item.id) {
-          @let attempts = detail()?.run?.usageAttempts || [];
-          @let total = tokenMeter.summary(attempts, detail()?.run?.usageIncomplete);
-          <div class="inspector-card token-meter">
-            <h4>Токенометр</h4>
-            <p class="tokens-summary">{{ tokenMeter.label(total) }}</p>
-            @if (detail()?.run; as run) {
-              @let budget = runBudget.explain(run);
-              <div class="budget-section" aria-label="Диагностика бюджета">
-                @if (run.budgetApproval; as approval) {
-                  <p role="status">Сохранено ожидание старой версии конвейера. Нажмите «Продолжить с места остановки»: число этапов будет рассчитано автоматически по плану. Лимиты токенов и времени сохранятся.</p>
-                }
-                @if (run.feature?.callBudget; as calls) {
-                  <p role="status">Вызовы рассчитаны по плану: {{ calls.planned }} плановых, до {{ calls.revisions }} на исправления, до {{ calls.resolver }} на конфликт. Общий предел {{ calls.limit }}. Резерв не запускается без необходимости; рекурсивная декомпозиция запрещена.</p>
-                }
-                @if (run.status === runStatus.Failed || run.status === runStatus.Interrupted || run.status === runStatus.Waiting || run.status === runStatus.Cancelled || run.status === runStatus.MergeBlocked) {
-                  <button pButton type="button" severity="secondary" size="small" [disabled]="busy()" (click)="editBudget(run)">Изменить бюджет запуска</button>
-                  @if (budgetEditing()) {
-                    <div class="budget-edit-form" aria-label="Изменение бюджета запуска">
-                      @for (field of budgetFields; track field.key) {
-                        <label>{{ field.label }}
-                          <p-inputnumber [ariaLabel]="field.label" [(ngModel)]="budgetDraft[field.key]"
-                            [min]="runBudget.value(run, field)" [max]="field.max" [disabled]="runBudget.calculated(run, field.key)"
-                            [useGrouping]="false" [fluid]="true" />
-                        </label>
-                      }
-                      @if (run.feature?.callBudget) { <p class="muted">Число вызовов агентов и резерв доработок определены планом фичи.</p> }
-                      <p class="muted">Потраченные токены, вызовы и время сохраняются. Лимиты можно только увеличить.</p>
-                      <div class="budget-buttons">
-                        <button pButton type="button" size="small" [disabled]="busy()" (click)="saveBudget(run)">Сохранить лимиты</button>
-                        <button pButton type="button" size="small" severity="secondary" (click)="budgetEditing.set(false)">Отмена</button>
-                      </div>
-                    </div>
-                  }
-                }
-                <p>Вход в бюджете: {{ budget.input | number }} / {{ budget.limit | number }} ({{ budget.percent }}%). Полный вход: {{ budget.totalInput | number }}.</p>
-                @if (budget.cached !== undefined) {
-                  <p>Чтение кеша: {{ budget.cached | number }} · без чтения кеша: {{ budget.nonCached | number }}.</p>
-                } @else { <p>Разделение входа по кешу: нет полных данных.</p> }
-                <p class="muted">{{ budget.advice }} Native CLI может сообщить расход с задержкой, поэтому остановка не гарантирует точного финансового потолка.</p>
+          <p-tabpanels class="inspector-tabpanels">
+            <!-- TAB 1: ОБЗОР -->
+            <p-tabpanel value="overview">
+              <div class="inspector-card">
+                <p class="identifier">ID: <code>{{ item.id }}</code> @if (item.restartedFromId) { · повтор запуска <code>{{ item.restartedFromId }}</code> }</p>
+                <dl class="run-timestamps">
+                  <dt>Создано</dt><dd>{{ timestamp(item.createdAt) }}</dd>
+                  <dt>Первый запуск</dt><dd>{{ timestamp(item.startedAt) }}</dd>
+                  <dt>Текущая попытка</dt><dd>{{ timestamp(item.attemptStartedAt) }}</dd>
+                  <dt>Завершено</dt><dd>{{ timestamp(item.finishedAt) }}</dd>
+                  <dt>Активность</dt><dd>{{ timestamp(item.updatedAt) }}</dd>
+                </dl>
               </div>
-              @if (run.feature; as feature) {
-                <div class="feature-subtasks" aria-label="Подзадачи фичи">
-                  <h5>Подзадачи фичи</h5>
-                  <p class="muted">Подзадачи выполняются по зависимостям; бюджет общий. После их ревью — тестирование всей фичи.</p>
-                  @for (child of feature.children; track child.key) {
-                    <p class="subtask-item">
-                      <button pButton type="button" [text]="true" size="small" (click)="openTask({ taskId: child.taskId, runId: item.id })">{{ child.taskId }} · {{ child.title }}</button>
-                      <span class="subtask-badge">{{ child.state === 'merged' ? 'Включена в фичу' : child.state === 'review' ? 'Разработка завершена, ожидает ревью' : 'Готова к разработке' }}</span>
-                      @if (child.mergedSha) { <code>{{ child.mergedSha.slice(0, 8) }}</code> }
-                    </p>
+
+              @if (item.actionReason) { <p class="action-reason-hint">{{ item.actionReason }}</p> }
+
+              <div class="inspector-card">
+                <h4>Состояние и метрики</h4>
+                <p role="status" class="health-text">{{ health(item) }}</p>
+                @if (item.status === runStatus.Running || item.status === runStatus.Integrating) {
+                  <sat-run-activity [item]="item" [now]="now()" [connected]="dataFresh()" />
+                }
+                <div class="facts">
+                  <span>Фаза: {{ item.phase ? phaseTitles[item.phase] : 'Ожидание worker' }}</span>
+                  <span>Фаза длится: {{ duration(item.phaseStartedAt) }}</span>
+                  <span>С начала попытки: {{ duration(item.attemptStartedAt) }} · лимит одного вызова агента {{ item.timeoutMinutes }} мин</span>
+                  <span>Heartbeat: {{ (item.heartbeatAt | date:'mediumTime') || 'ещё не было' }}</span>
+                  <span>Событие: {{ (item.progressAt | date:'mediumTime') || 'ещё не было' }}</span>
+                  <span>Возвратов: {{ item.revision }}</span>
+                  <span class="identifier">Ветка: {{ item.branch || 'ещё не создана' }}</span>
+                </div>
+              </div>
+
+              @if (item.summary) {
+                <div class="inspector-card">
+                  <h4>Резюме</h4>
+                  <p class="summary">{{ progress(item.summary) }}</p>
+                </div>
+              }
+
+              @if (item.checkout; as checkout) {
+                <div class="inspector-card">
+                  <h4>Рабочая копия</h4>
+                  <p class="identifier">Worktree: {{ checkout.worktreePath }}</p>
+                  <p class="identifier">Base SHA: {{ checkout.baseSha }}</p>
+                  <p>Зависимости: {{ checkout.dependencyMode }} @if (checkout.dependencyNote) { · {{ checkout.dependencyNote }} }</p>
+                </div>
+              }
+
+              @if (item.integration; as integration) {
+                <div class="inspector-card integration-info">
+                  <h4>{{ integrationTitles[integration.state] }} · {{ integration.targetBranch }}</h4>
+                  <p class="identifier">Source: {{ integration.sourceSha }} · target: {{ integration.baseSha }}</p>
+                  <p class="identifier">Squash: {{ integration.candidateSha || 'ещё не создан' }}</p>
+                  <p class="identifier">Кандидат: {{ integration.worktreePath }} · попытка {{ integration.attempt }}</p>
+                  @if (integration.error) { <p class="error">{{ integration.error }}</p> }
+                  @if (integration.noChanges) { <p>Отличий от целевой ветки нет; пустой коммит не создавался.</p> }
+                  <p class="muted">Локальная интеграция; ветка задачи и журнал сохранены. Публикация в remote не выполнялась.</p>
+                </div>
+              }
+
+              @if (item.integrationSourceSha) {
+                <div class="inspector-card">
+                  <p class="muted">Повторяется только интеграция проверенного исходника {{ item.integrationSourceSha }}. Конвейер разработки не вызывается заново; resolver учитывается отдельно.</p>
+                </div>
+              }
+
+              <div class="inspector-card danger-zone">
+                <h4>Управление файлами и историей</h4>
+                @if (manage(item)) {
+                  <div class="danger-actions">
+                    @if (item.cleanup?.state !== 'completed') {
+                      <button pButton severity="secondary" size="small" type="button" icon="pi pi-broom" [disabled]="busy() || item.cleanup?.state === 'queued'" (click)="requestConfirmation('cleanup')">Очистить файлы</button>
+                    }
+                    <button pButton severity="danger" size="small" type="button" icon="pi pi-trash" [disabled]="busy() || (!!detail()?.run?.checkout || !!item.attemptStartedAt) && item.cleanup?.state !== 'completed' && item.cleanup?.state !== 'failed'" (click)="requestConfirmation('delete')">Удалить запуск навсегда</button>
+                  </div>
+                }
+                @if (item.cleanup; as cleanup) {
+                  <p role="status" class="cleanup-msg">Очистка: {{ cleanup.state === 'completed' ? 'файлы очищены, история сохранена' : cleanup.state === 'queued' ? 'ожидает host worker' : cleanup.error }} @if (cleanup.result?.retainedBranches?.length) { Сохранены ветки: {{ cleanup.result?.retainedBranches?.join(', ') }} }</p>
+                }
+              </div>
+            </p-tabpanel>
+
+            <!-- TAB 2: СХЕМА И ЭТАПЫ -->
+            <p-tabpanel value="pipeline">
+              @if (detail()?.run; as run) {
+                @if (run.id === item.id) {
+                  <div class="inspector-card pipeline-flow-inspector">
+                    <h4>Схема запуска и критерии проверок</h4>
+                    <sat-pipeline-flow [settings]="run.settings" [run]="run" />
+                  </div>
+                  <div class="inspector-card">
+                    <h4>Настройка профилей этапов</h4>
+                    <sat-run-profile-editor [run]="run" (changed)="profileChanged()" />
+                  </div>
+                }
+              }
+
+              @if (!item.integrationSourceSha) {
+                <div class="inspector-card">
+                  <h4>Этапы конвейера ({{ item.pipeline.length }})</h4>
+                  <ol class="stages">
+                    @for (stage of item.pipeline; track $index; let i = $index) {
+                      <li [class.current]="i === item.stage">
+                        <strong>{{ role(stage.role) }}</strong> · {{ stage.runner }} / {{ stage.model }}
+                        <span class="stage-status">{{ i < item.stage ? 'Пройден' : i === item.stage ? statusTitles[item.status] : 'Ожидает' }}</span>
+                      </li>
+                    }
+                  </ol>
+                </div>
+              }
+            </p-tabpanel>
+
+            <!-- TAB 3: ДОКАЗАТЕЛЬСТВА РЕЗУЛЬТАТОВ -->
+            <p-tabpanel value="evidence">
+              @if (detail()?.run?.id === item.id && detail(); as result) {
+                @if (result.checks?.length || result.run.acceptance || result.userAcceptance) {
+                  <div class="inspector-card evidence-inspector-card">
+                    <h4>Критерии и результаты приёмки</h4>
+                    @for (criterion of result.run.acceptance?.results; track criterion.id) {
+                      <div class="run-proof-row">
+                        <div class="proof-row-top">
+                          <strong>{{ criterion.id }}</strong>
+                          @if (criterion.source; as source) {
+                            <button pButton type="button" size="small" severity="secondary" [text]="true" (click)="sourceEventId.set(source.eventId)">Исполнение №{{ source.eventId }}</button>
+                          } @else {
+                            <span class="proof-badge-manual">{{ criterion.status === 'manual' ? 'Ручная проверка' : 'Доказательство недоступно' }}</span>
+                          }
+                        </div>
+                        @if (criterion.source?.browser; as scenario) {
+                          <div class="proof-browser-scenario">
+                            <p>{{ scenario.action }} · {{ scenario.assertion }} · {{ scenario.actual }}</p>
+                            <a pButton size="small" severity="secondary" [outlined]="true" [href]="evidenceImageUrl(scenario.imageUrl)" target="_blank" rel="noopener">Открыть PNG</a>
+                          </div>
+                        }
+                        <p class="proof-evidence-text">{{ criterion.evidence }}</p>
+                      </div>
+                    }
+
+                    @if (result.userAcceptance; as accepted) {
+                      <div class="proof-user-acceptance">
+                        <button pButton type="button" size="small" severity="secondary" [text]="true" (click)="openTask({ taskId: item.taskId, runId: item.id })">
+                          Пользовательская приёмка №{{ accepted.id }} · {{ timestamp(accepted.at) }}
+                        </button>
+                      </div>
+                    }
+
+                    @if (result.checks; as checks) {
+                      <h4 class="checks-subheading">Обязательные команды проверок ({{ checks.length }})</h4>
+                      @for (check of checks; track check.id) {
+                        <div class="run-proof-row">
+                          <button pButton type="button" size="small" severity="secondary" [text]="true" (click)="sourceEventId.set(check.eventId)">Запись №{{ check.eventId }} · {{ check.command }} {{ check.args.join(' ') }}</button>
+                          <span>{{ checkOutcome(check) }} · попытка {{ check.attempt }}</span>
+                          <code>{{ check.sha }}</code>
+                        </div>
+                      }
+                    }
+                  </div>
+                } @else {
+                  <div class="inspector-card">
+                    <h4>Доказательства результатов</h4>
+                    <p class="muted">Для этого запуска пока нет зафиксированных доказательств или критериев приёмки.</p>
+                  </div>
+                }
+              }
+            </p-tabpanel>
+
+            <!-- TAB 4: ТОКЕНЫ И БЮДЖЕТ -->
+            <p-tabpanel value="tokens">
+              @if (detail()?.run?.id === item.id && detail()?.run; as run) {
+                @let time = runBudget.time(run, now());
+                <div class="run-budget-summary" role="status">
+                  @if (time.disabled) {
+                    Доверенный запуск без лимитов. Работа агентов: {{ time.usedMs / 60000 | number:'1.1-1' }} мин. Можно остановить вручную.
+                  } @else {
+                  Время: {{ time.usedMs / 60000 | number:'1.1-1' }} из {{ time.limitMs / 60000 | number:'1.0-0' }} мин ·
+                  Осталось {{ time.remainingMs / 60000 | number:'1.1-1' }} мин работы агентов. Учитываются все вызовы; подготовка и проверки worker исключены.
                   }
                 </div>
               }
-            }
-            @if (total.measuredAttempts) {
-              <p>Вход: {{ total.inputTokens | number }} · выход: {{ total.outputTokens | number }}. Данные есть у {{ total.measuredAttempts }} из {{ total.attempts }} попыток этапов.</p>
-            }
-            <p class="muted">Только расход, сообщённый исполнителями этого запуска. Кэш входит во входные токены, reasoning — в выходные. Это не стоимость и не остаток лимита подписки. При ошибке или потере связи данные могут быть неполными.</p>
-            <div class="attempts-table-wrapper">
-              <p-table [value]="attempts" [scrollable]="true" scrollHeight="18rem" styleClass="p-datatable-sm attempts-table">
-                <ng-template #header>
-                  <tr>
-                    <th class="th-stage">Этап / попытка</th>
-                    <th class="th-runner">Исполнитель / модель</th>
-                    <th class="th-num">Вход</th>
-                    <th class="th-num">Выход</th>
-                    <th class="th-num th-cache">Кэш (R / W)</th>
-                    <th class="th-num">Reasoning</th>
-                    <th class="th-status">Данные</th>
-                  </tr>
-                </ng-template>
-                <ng-template #body let-attempt>
-                  <tr>
-                    <td class="td-stage">
-                      <div class="cell-main">
-                        <span class="attempt-stage-name">{{ attempt.kind === 'resolver' ? 'Конфликт' : (attempt.stage + 1) + ' · ' + role(attempt.role) }}</span>
-                        <span class="cell-sub muted">{{ attempt.startedAt | date:'mediumTime' }} · цикл {{ attempt.revision + 1 }}</span>
-                      </div>
-                    </td>
-                    <td class="td-runner">
-                      <div class="cell-main">
-                        <span class="attempt-runner">{{ attempt.runner }}</span>
-                        <span class="cell-sub model-tag" [title]="attempt.model">{{ attempt.model }}</span>
-                      </div>
-                    </td>
-                    <td class="td-num">
-                      <span class="num-val">{{ attempt.usage ? (attempt.usage.inputTokens | number) : '—' }}</span>
-                    </td>
-                    <td class="td-num">
-                      <span class="num-val">{{ attempt.usage ? (attempt.usage.outputTokens | number) : '—' }}</span>
-                    </td>
-                    <td class="td-num td-cache">
-                      @if (attempt.usage && (attempt.usage.cachedInputTokens !== undefined || attempt.usage.cacheWriteInputTokens !== undefined)) {
-                        <span class="cache-read" title="Чтение кэша">{{ attempt.usage.cachedInputTokens !== undefined ? (attempt.usage.cachedInputTokens | number) : '—' }}</span>
-                        <span class="cache-sep">/</span>
-                        <span class="cache-write" title="Запись в кэш">{{ attempt.usage.cacheWriteInputTokens !== undefined ? (attempt.usage.cacheWriteInputTokens | number) : '—' }}</span>
-                      } @else {
-                        <span class="num-val">—</span>
+
+              @if (detail()?.run?.id === item.id) {
+                @let attempts = detail()?.run?.usageAttempts || [];
+                @let total = tokenMeter.summary(attempts, detail()?.run?.usageIncomplete);
+                <div class="inspector-card token-meter">
+                  <h4>Токенометр</h4>
+                  <p class="tokens-summary">{{ tokenMeter.label(total) }}</p>
+                  @if (detail()?.run; as run) {
+                    @let budget = runBudget.explain(run);
+                    <div class="budget-section" aria-label="Диагностика бюджета">
+                      @if (run.budgetApproval; as approval) {
+                        <p role="status">Сохранено ожидание старой версии конвейера. Нажмите «Продолжить с места остановки»: число этапов будет рассчитано автоматически по плану. Лимиты токенов и времени сохранятся.</p>
                       }
-                    </td>
-                    <td class="td-num">
-                      <span class="num-val">{{ attempt.usage && attempt.usage.reasoningTokens !== undefined ? (attempt.usage.reasoningTokens | number) : '—' }}</span>
-                    </td>
-                    <td class="td-status">
-                      <div class="cell-status">
-                        <span class="attempt-status-tag"
-                              [class.tag-reported]="attempt.usage && attempt.finished && !attempt.usage.missingRequests"
-                              [class.tag-partial]="attempt.usage && (!attempt.finished || attempt.usage.missingRequests)"
-                              [class.tag-empty]="!attempt.usage">
-                          {{ !attempt.usage ? 'Нет данных' : !attempt.finished || attempt.usage.missingRequests ? 'Частичные' : 'Сообщены' }}
-                        </span>
-                        @if (attempt.usage?.source) {
-                          <span class="cell-sub muted source-label" [title]="attempt.usage.source">{{ attempt.usage.source }}</span>
+                      @if (run.feature?.callBudget; as calls) {
+                        <p role="status">Вызовы рассчитаны по плану: {{ calls.planned }} плановых, до {{ calls.revisions }} на исправления, до {{ calls.resolver }} на конфликт. Общий предел {{ calls.limit }}. Резерв не запускается без необходимости; рекурсивная декомпозиция запрещена.</p>
+                      }
+                      @if (run.status === runStatus.Failed || run.status === runStatus.Interrupted || run.status === runStatus.Waiting || run.status === runStatus.Cancelled || run.status === runStatus.MergeBlocked) {
+                        <button pButton type="button" severity="secondary" size="small" [disabled]="busy()" (click)="editBudget(run)">Изменить бюджет запуска</button>
+                        @if (budgetEditing()) {
+                          <div class="budget-edit-form" aria-label="Изменение бюджета запуска">
+                            @for (field of budgetFields; track field.key) {
+                              <label>{{ field.label }}
+                                <p-inputnumber [ariaLabel]="field.label" [(ngModel)]="budgetDraft[field.key]"
+                                  [min]="runBudget.value(run, field)" [max]="field.max" [disabled]="runBudget.calculated(run, field.key)"
+                                  [useGrouping]="false" [fluid]="true" />
+                              </label>
+                            }
+                            @if (run.feature?.callBudget) { <p class="muted">Число вызовов агентов и резерв доработок определены планом фичи.</p> }
+                            <p class="muted">Потраченные токены, вызовы и время сохраняются. Лимиты можно только увеличить.</p>
+                            <div class="budget-buttons">
+                              <button pButton type="button" size="small" [disabled]="busy()" (click)="saveBudget(run)">Сохранить лимиты</button>
+                              <button pButton type="button" size="small" severity="secondary" (click)="budgetEditing.set(false)">Отмена</button>
+                            </div>
+                          </div>
+                        }
+                      }
+                      <p>Вход в бюджете: {{ budget.input | number }} / {{ budget.limit | number }} ({{ budget.percent }}%). Полный вход: {{ budget.totalInput | number }}.</p>
+                      @if (budget.cached !== undefined) {
+                        <p>Чтение кеша: {{ budget.cached | number }} · без чтения кеша: {{ budget.nonCached | number }}.</p>
+                      } @else { <p>Разделение входа по кешу: нет полных данных.</p> }
+                      <p class="muted">{{ budget.advice }} Native CLI может сообщить расход с задержкой, поэтому остановка не гарантирует точного финансового потолка.</p>
+                    </div>
+                    @if (run.feature; as feature) {
+                      <div class="feature-subtasks" aria-label="Подзадачи фичи">
+                        <h5>Подзадачи фичи</h5>
+                        <p class="muted">Подзадачи выполняются по зависимостям; бюджет общий. После их ревью — тестирование всей фичи.</p>
+                        @for (child of feature.children; track child.key) {
+                          <p class="subtask-item">
+                            <button pButton type="button" [text]="true" size="small" (click)="openTask({ taskId: child.taskId, runId: item.id })">{{ child.taskId }} · {{ child.title }}</button>
+                            <span class="subtask-badge">{{ child.state === 'merged' ? 'Включена в фичу' : child.state === 'review' ? 'Разработка завершена, ожидает ревью' : 'Готова к разработке' }}</span>
+                            @if (child.mergedSha) { <code>{{ child.mergedSha.slice(0, 8) }}</code> }
+                          </p>
                         }
                       </div>
-                    </td>
-                  </tr>
-                </ng-template>
-                <ng-template #emptymessage>
-                  <tr><td colspan="7" class="empty-table-cell">Данных пока нет. Старые запуски не содержат измерений токенов.</td></tr>
-                </ng-template>
-              </p-table>
-            </div>
-          </div>
-        }
-
-        <div class="inspector-card danger-zone">
-          <h4>Управление файлами и историей</h4>
-          @if (manage(item)) {
-            <div class="danger-actions">
-              @if (item.cleanup?.state !== 'completed') {
-                <button pButton severity="secondary" size="small" type="button" icon="pi pi-broom" [disabled]="busy() || item.cleanup?.state === 'queued'" (click)="requestConfirmation('cleanup')">Очистить файлы</button>
+                    }
+                  }
+                  @if (total.measuredAttempts) {
+                    <p>Вход: {{ total.inputTokens | number }} · выход: {{ total.outputTokens | number }}. Данные есть у {{ total.measuredAttempts }} из {{ total.attempts }} попыток этапов.</p>
+                  }
+                  <p class="muted">Только расход, сообщённый исполнителями этого запуска. Кэш входит во входные токены, reasoning — в выходные. Это не стоимость и не остаток лимита подписки. При ошибке или потере связи данные могут быть неполными.</p>
+                  <div class="attempts-table-wrapper">
+                    <p-table [value]="attempts" [scrollable]="true" scrollHeight="18rem" styleClass="p-datatable-sm attempts-table">
+                      <ng-template #header>
+                        <tr>
+                          <th class="th-stage">Этап / попытка</th>
+                          <th class="th-runner">Исполнитель / модель</th>
+                          <th class="th-num">Вход</th>
+                          <th class="th-num">Выход</th>
+                          <th class="th-num th-cache">Кэш (R / W)</th>
+                          <th class="th-num">Reasoning</th>
+                          <th class="th-status">Данные</th>
+                        </tr>
+                      </ng-template>
+                      <ng-template #body let-attempt>
+                        <tr>
+                          <td class="td-stage">
+                            <div class="cell-main">
+                              <span class="attempt-stage-name">{{ attempt.kind === 'resolver' ? 'Конфликт' : (attempt.stage + 1) + ' · ' + role(attempt.role) }}</span>
+                              <span class="cell-sub muted">{{ attempt.startedAt | date:'mediumTime' }} · цикл {{ attempt.revision + 1 }}</span>
+                            </div>
+                          </td>
+                          <td class="td-runner">
+                            <div class="cell-main">
+                              <span class="attempt-runner">{{ attempt.runner }}</span>
+                              <span class="cell-sub model-tag" [title]="attempt.model">{{ attempt.model }}</span>
+                            </div>
+                          </td>
+                          <td class="td-num">
+                            <span class="num-val">{{ attempt.usage ? (attempt.usage.inputTokens | number) : '—' }}</span>
+                          </td>
+                          <td class="td-num">
+                            <span class="num-val">{{ attempt.usage ? (attempt.usage.outputTokens | number) : '—' }}</span>
+                          </td>
+                          <td class="td-num td-cache">
+                            @if (attempt.usage && (attempt.usage.cachedInputTokens !== undefined || attempt.usage.cacheWriteInputTokens !== undefined)) {
+                              <span class="cache-read" title="Чтение кэша">{{ attempt.usage.cachedInputTokens !== undefined ? (attempt.usage.cachedInputTokens | number) : '—' }}</span>
+                              <span class="cache-sep">/</span>
+                              <span class="cache-write" title="Запись в кэш">{{ attempt.usage.cacheWriteInputTokens !== undefined ? (attempt.usage.cacheWriteInputTokens | number) : '—' }}</span>
+                            } @else {
+                              <span class="num-val">—</span>
+                            }
+                          </td>
+                          <td class="td-num">
+                            <span class="num-val">{{ attempt.usage && attempt.usage.reasoningTokens !== undefined ? (attempt.usage.reasoningTokens | number) : '—' }}</span>
+                          </td>
+                          <td class="td-status">
+                            <div class="cell-status">
+                              <span class="attempt-status-tag"
+                                    [class.tag-reported]="attempt.usage && attempt.finished && !attempt.usage.missingRequests"
+                                    [class.tag-partial]="attempt.usage && (!attempt.finished || attempt.usage.missingRequests)"
+                                    [class.tag-empty]="!attempt.usage">
+                                {{ !attempt.usage ? 'Нет данных' : !attempt.finished || attempt.usage.missingRequests ? 'Частичные' : 'Сообщены' }}
+                              </span>
+                              @if (attempt.usage?.source) {
+                                <span class="cell-sub muted source-label" [title]="attempt.usage.source">{{ attempt.usage.source }}</span>
+                              }
+                            </div>
+                          </td>
+                        </tr>
+                      </ng-template>
+                      <ng-template #emptymessage>
+                        <tr><td colspan="7" class="empty-table-cell">Данных пока нет. Старые запуски не содержат измерений токенов.</td></tr>
+                      </ng-template>
+                    </p-table>
+                  </div>
+                </div>
               }
-              <button pButton severity="danger" size="small" type="button" icon="pi pi-trash" [disabled]="busy() || (!!detail()?.run?.checkout || !!item.attemptStartedAt) && item.cleanup?.state !== 'completed' && item.cleanup?.state !== 'failed'" (click)="requestConfirmation('delete')">Удалить запуск навсегда</button>
-            </div>
-          }
-          @if (item.cleanup; as cleanup) {
-            <p role="status" class="cleanup-msg">Очистка: {{ cleanup.state === 'completed' ? 'файлы очищены, история сохранена' : cleanup.state === 'queued' ? 'ожидает host worker' : cleanup.error }} @if (cleanup.result?.retainedBranches?.length) { Сохранены ветки: {{ cleanup.result?.retainedBranches?.join(', ') }} }</p>
-          }
-        </div>
+            </p-tabpanel>
+          </p-tabpanels>
+        </p-tabs>
       </div>
     </aside>
   }

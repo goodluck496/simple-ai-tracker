@@ -388,10 +388,10 @@
                     @if (commentImages().length) {
                       <div class="comment-previews">
                         @for (image of commentImages(); track $index) {
-                          <div class="comment-preview">
-                            <p-image [src]="imageUrl(image)" [preview]="true" appendTo="body" alt="Скриншот комментария" width="80"></p-image>
+                          <div class="comment-preview" (click)="openGallery(commentImages(), $index)" title="Просмотреть скриншот">
+                            <img [src]="imageUrl(image)" alt="Скриншот комментария" class="thumb-img-comment" />
                             <p-button icon="pi pi-times" ariaLabel="Удалить скриншот из комментария" size="small" [text]="true"
-                              (onClick)="removeCommentImage($index)" />
+                              (onClick)="$event.stopPropagation(); removeCommentImage($index)" />
                           </div>
                         }
                       </div>
@@ -456,8 +456,16 @@
                                   <span class="comment-time">{{ formatDateTime(comment.createdAt) }}</span>
                                 </header>
                                 <p>{{ commentText(comment.text) }}</p>
-                                @for (image of commentScreenshots(comment.text); track $index) {
-                                  <p-image [src]="imageUrl(image)" [preview]="true" appendTo="body" alt="Скриншот комментария" width="120"></p-image>
+                                @let commentImgs = commentScreenshots(comment.text);
+                                @if (commentImgs.length) {
+                                  <div class="comment-screenshots-row">
+                                    @for (image of commentImgs; track $index) {
+                                      <div class="comment-screenshot-thumb" (click)="openGallery(commentImgs, $index)" title="Просмотреть скриншот">
+                                        <img [src]="imageUrl(image)" alt="Скриншот комментария" class="thumb-img-comment-saved" />
+                                        <div class="thumb-overlay"><i class="pi pi-search"></i></div>
+                                      </div>
+                                    }
+                                  </div>
                                 }
                               </li>
                             }
@@ -675,8 +683,9 @@
             @if (images().length > 0) {
               <div class="image-gallery">
                 @for (image of images(); track image; let index = $index) {
-                  <div class="image-thumb">
-                    <p-image [src]="imageUrl(image)" [preview]="true" appendTo="body" alt="Скриншот" width="120"></p-image>
+                  <div class="image-thumb" (click)="openGallery(images(), index)" title="Просмотреть скриншот">
+                    <img [src]="imageUrl(image)" alt="Скриншот" class="thumb-img" />
+                    <div class="thumb-overlay"><i class="pi pi-search"></i></div>
                     <button pButton severity="secondary"
                       type="button"
                       class="image-remove"
@@ -816,4 +825,58 @@
       <p-button label="Закрыть" severity="secondary" [text]="true" size="small" (onClick)="closePreview()"></p-button>
     </ng-template>
   </p-dialog>
+
+  <!-- Галерея скриншотов с навигацией по стрелкам, зумом, поворотом и закрытием по Esc -->
+  @if (activeGallery(); as gallery) {
+    <div class="gallery-overlay" (click)="closeGallery()" role="dialog" aria-modal="true" aria-label="Просмотр скриншота">
+      <div class="gallery-toolbar" (click)="$event.stopPropagation()">
+        <div class="gallery-counter">
+          @if (gallery.images.length > 1) {
+            <span>{{ gallery.index + 1 }} / {{ gallery.images.length }}</span>
+          }
+        </div>
+        <div class="gallery-actions">
+          <button type="button" class="gallery-tool-btn" (click)="rotateGallery(-90)" title="Повернуть влево (↺)">
+            <i class="pi pi-undo"></i>
+          </button>
+          <button type="button" class="gallery-tool-btn" (click)="rotateGallery(90)" title="Повернуть вправо (↻)">
+            <i class="pi pi-refresh"></i>
+          </button>
+          <button type="button" class="gallery-tool-btn" (click)="zoomGallery(-0.25)" [disabled]="gallery.zoom <= 0.25" title="Уменьшить (-)">
+            <i class="pi pi-search-minus"></i>
+          </button>
+          <button type="button" class="gallery-tool-btn" (click)="zoomGallery(0.25)" [disabled]="gallery.zoom >= 4" title="Увеличить (+)">
+            <i class="pi pi-search-plus"></i>
+          </button>
+          <button type="button" class="gallery-tool-btn" (click)="resetGalleryTransform()" title="Сбросить масштаб">
+            <i class="pi pi-arrows-alt"></i>
+          </button>
+          <button type="button" class="gallery-tool-btn gallery-close-btn" (click)="closeGallery()" title="Закрыть (Esc)">
+            <i class="pi pi-times"></i>
+          </button>
+        </div>
+      </div>
+
+      @if (gallery.images.length > 1) {
+        <button type="button" class="gallery-nav-btn gallery-nav-prev" (click)="$event.stopPropagation(); prevImage()" title="Предыдущий скриншот (←)">
+          <i class="pi pi-chevron-left"></i>
+        </button>
+      }
+
+      <div class="gallery-content" (click)="$event.stopPropagation()">
+        <img
+          [src]="imageUrl(gallery.images[gallery.index])"
+          class="gallery-image"
+          [style.transform]="'rotate(' + gallery.rotate + 'deg) scale(' + gallery.zoom + ')'"
+          alt="Скриншот"
+        />
+      </div>
+
+      @if (gallery.images.length > 1) {
+        <button type="button" class="gallery-nav-btn gallery-nav-next" (click)="$event.stopPropagation(); nextImage()" title="Следующий скриншот (→)">
+          <i class="pi pi-chevron-right"></i>
+        </button>
+      }
+    </div>
+  }
 </aside>

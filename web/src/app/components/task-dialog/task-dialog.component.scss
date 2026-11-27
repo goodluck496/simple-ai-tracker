@@ -751,11 +751,100 @@
   border-radius: t.$radius-sm;
   overflow: hidden;
   border: 1px solid var(--sat-border);
+  cursor: pointer;
+  background: rgba(0, 0, 0, 0.2);
 
-  ::ng-deep .p-image > img {
+  .thumb-img {
     display: block;
     width: 120px;
     height: auto;
+    max-height: 120px;
+    object-fit: cover;
+    transition: transform 0.15s ease;
+  }
+
+  &:hover .thumb-img {
+    transform: scale(1.05);
+  }
+
+  .thumb-overlay {
+    position: absolute;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.35);
+    opacity: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #fff;
+    font-size: 1.1rem;
+    transition: opacity 0.15s ease;
+    pointer-events: none;
+  }
+
+  &:hover .thumb-overlay {
+    opacity: 1;
+  }
+}
+
+.thumb-img-comment {
+  display: block;
+  width: 80px;
+  height: auto;
+  border-radius: 4px;
+  border: 1px solid var(--sat-border);
+  cursor: pointer;
+  transition: transform 0.15s ease;
+
+  &:hover {
+    transform: scale(1.05);
+  }
+}
+
+.comment-screenshots-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.comment-screenshot-thumb {
+  position: relative;
+  width: 120px;
+  border-radius: 4px;
+  overflow: hidden;
+  border: 1px solid var(--sat-border);
+  cursor: pointer;
+  background: rgba(0, 0, 0, 0.2);
+
+  .thumb-img-comment-saved {
+    display: block;
+    width: 120px;
+    height: auto;
+    max-height: 120px;
+    object-fit: cover;
+    transition: transform 0.15s ease;
+  }
+
+  &:hover .thumb-img-comment-saved {
+    transform: scale(1.05);
+  }
+
+  .thumb-overlay {
+    position: absolute;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.35);
+    opacity: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #fff;
+    font-size: 1.1rem;
+    transition: opacity 0.15s ease;
+    pointer-events: none;
+  }
+
+  &:hover .thumb-overlay {
+    opacity: 1;
   }
 }
 
@@ -778,6 +867,145 @@
   &:hover {
     background: #dc2626;
   }
+}
+
+/* ------------------------------------------- полноэкранная галерея скриншотов */
+.gallery-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 2000;
+  background: rgba(0, 0, 0, 0.92);
+  backdrop-filter: blur(8px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  user-select: none;
+  animation: gallery-fade-in 0.15s ease-out;
+}
+
+@keyframes gallery-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.gallery-toolbar {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 60px;
+  padding: 0 24px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  z-index: 10;
+  background: linear-gradient(180deg, rgba(0, 0, 0, 0.75) 0%, transparent 100%);
+}
+
+.gallery-counter {
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: #e2e8f0;
+  background: rgba(255, 255, 255, 0.12);
+  padding: 4px 14px;
+  border-radius: 9999px;
+  letter-spacing: 0.05em;
+}
+
+.gallery-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+}
+
+.gallery-tool-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  border: none;
+  background: rgba(255, 255, 255, 0.12);
+  color: #f1f5f9;
+  font-size: 1rem;
+  cursor: pointer;
+  transition: all 0.15s ease;
+
+  &:hover:not(:disabled) {
+    background: rgba(255, 255, 255, 0.25);
+    color: #fff;
+    transform: scale(1.08);
+  }
+
+  &:disabled {
+    opacity: 0.35;
+    cursor: default;
+  }
+
+  &.gallery-close-btn {
+    background: rgba(239, 68, 68, 0.25);
+    color: #fca5a5;
+
+    &:hover {
+      background: #ef4444;
+      color: #fff;
+    }
+  }
+}
+
+.gallery-nav-btn {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 52px;
+  height: 52px;
+  border-radius: 50%;
+  border: none;
+  background: rgba(255, 255, 255, 0.12);
+  color: #f1f5f9;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.4rem;
+  z-index: 10;
+  transition: all 0.15s ease;
+
+  &:hover {
+    background: rgba(255, 255, 255, 0.3);
+    color: #fff;
+    transform: translateY(-50%) scale(1.1);
+  }
+
+  &.gallery-nav-prev {
+    left: 24px;
+  }
+
+  &.gallery-nav-next {
+    right: 24px;
+  }
+}
+
+.gallery-content {
+  max-width: 90vw;
+  max-height: 85vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+
+.gallery-image {
+  max-width: 90vw;
+  max-height: 85vh;
+  object-fit: contain;
+  transition: transform 0.15s ease-out;
+  box-shadow: 0 12px 48px rgba(0, 0, 0, 0.6);
+  border-radius: 4px;
+  user-select: none;
+  pointer-events: auto;
 }
 
 :host ::ng-deep .attachment-preview {

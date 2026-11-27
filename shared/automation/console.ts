@@ -114,7 +114,22 @@ export class RunConsoleDecoder {
     let last: ConsoleLine | undefined;
     for (const raw of RunConsoleDecoder.clean(value).split('\n')) {
       const text = raw.replace(/\r$/, '').split('\r').at(-1) ?? ''; if (!text.trim()) continue;
-      const severity = level ?? (/\b(error|failed|exception)\b|ошибк/i.test(text) ? 'error' : /\bwarn(?:ing)?\b|предупрежд/i.test(text) ? 'warning' : 'info');
+      let severity: ConsoleLevel = level ?? 'info';
+      if (!level || level === 'info') {
+        if (/\b(?:error|failed|failure|exception|fatal|panic|abort|rejected|crash|traceback|assertionerror)\b|ошибк|сбой|провал/iu.test(text)
+            || /exit\s+[1-9]\d*/i.test(text)
+            || /→\s*(?:ошибка|exit\s+[1-9]\d*)/iu.test(text)) {
+          severity = 'error';
+        } else if (/\b(?:warn(?:ing)?|deprecated|timeout)\b|предупрежд|таймаут/iu.test(text)) {
+          severity = 'warning';
+        } else if (/^(?:тесты:.*пройдено|успешно|все тесты пройдены)|exit\s+0\b|→\s*(?:завершён|exit 0)\b|ответ агента (?:получен|завершён)/iu.test(text)
+            || /\b(?:all \d+ tests passed|build succeeded|success)\b/i.test(text)) {
+          severity = 'success';
+        } else if (/^(?:выполняется|команда|инструмент|antigravity (?:tool|stream)|opencode:|mcp\s+[a-z0-9_.-]+:)|(?:read_file|write_file|edit_file|run_command|inspect_changes|explore_code|run_check)\b/iu.test(text)
+            || /:(?:\s*вызов|\s*завершён)/iu.test(text)) {
+          severity = 'command';
+        }
+      }
       last = { id: `${event.id}:${this.sequence++}`, at: event.at, stage: this.stage, level: severity,
         text: text.length > CONSOLE_LIMITS.lineChars ? `${text.slice(0, CONSOLE_LIMITS.lineChars)} … [строка сокращена; полный текст в исходнике]` : text };
       this.lines.push(last);

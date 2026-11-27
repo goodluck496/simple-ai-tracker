@@ -5,14 +5,15 @@ const object = (v: unknown): Fields => v && typeof v === 'object' ? v as Fields 
 export class CompactProgress {
   public static apiTool(name: string, args: Fields): string {
     const safe = (value: unknown) => typeof value === 'string' ? value.replace(/[\x00-\x1f\x7f]/g, ' ').slice(0, 240) : '';
-    const file = safe(args.path) || '.';
+    const file = safe(args.path ?? args.Path) || '.';
     const line = (value: unknown) => Number.isSafeInteger(value) ? String(value) : '?';
     switch (name) {
-      case 'read_file': return `read_file ${file}:${line(args.startLine ?? 1)}–${line(args.endLine ?? Number(args.startLine ?? 1) + 39)}`;
+      case 'read_file': return `read_file ${file}:${line(args.startLine ?? args.StartLine ?? 1)}–${line(args.endLine ?? args.EndLine ?? Number(args.startLine ?? args.StartLine ?? 1) + 39)}`;
       case 'list_files': case 'write_file': case 'edit_file': case 'inspect_changes': return `${name} ${file}`;
       case 'explore_code': return `${name} ${safe(args.symbol)}`;
+      case 'run_command': return `run_command ${CompactProgress.command(String(args.CommandLine ?? args.command ?? ''))}`;
       case 'run_check': return `${name} #${line(args.index)}`;
-      case 'call_project_tool': return `${name} ${safe(args.server)}/${safe(args.tool)}`;
+      case 'call_project_tool': return `${name} ${safe(args.server ?? args.ServerName)}/${safe(args.tool ?? args.ToolName)}`;
       default: return name.replace(/[^\w-]/g, '').slice(0, 80);
     }
   }
@@ -41,9 +42,23 @@ export class CompactProgress {
   }
   public static diagnostics(text: string): string {
     const lines = text.replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, '').split(/\r?\n/);
+    const sanitize = (line: string) => line
+      .replace(/(https?:\/\/)[^\s/@]+:[^\s/@]+@/g, '$1[скрыто]@')
+      .replace(/((?:--?|\/)(?:token|password|secret|api[-_]?key)(?:=|\s+))\S+/gi, '$1[скрыто]')
+      .replace(/([?&](?:token|key|api_key|password|secret)=)[^&\s]+/gi, '$1[скрыто]')
+      .slice(0, 700);
+
     const selected = lines.filter(l => /^\s*ошибк/iu.test(l) ||
       /^(?:\s*(?:at\s|NX\s{2,}|Set NX_SOCKET_DIR\b)|\s*(?:[✘×]\s*)?\[(?:ERROR|FATAL)\]|\s*(?:error|exception|assertionerror|typeerror|referenceerror|syntaxerror|rangeerror|expected|actual|npm (?:err|error))\b)|:\s*error\s+(?:TS\d+|[A-Z]+\d*)\b/i.test(l));
-    return selected.slice(0, 16).map(l => l.slice(0, 700)).join('\n').slice(0, 4000) || 'Ошибка выполнения; подробности доступны у исполнителя.';
+    if (selected.length) return selected.slice(0, 16).map(sanitize).join('\n').slice(0, 4000);
+
+    const broader = lines.filter(l => /\b(?:fatal|failed|failure|cannot|could not|not found|denied|refused|traceback|reject|rejected|invalid|panic|abort|command not found|no such file)\b/i.test(l));
+    if (broader.length) return broader.slice(0, 16).map(sanitize).join('\n').slice(0, 4000);
+
+    const nonBlank = lines.filter(l => l.trim().length > 0);
+    if (nonBlank.length) return nonBlank.slice(-8).map(sanitize).join('\n').slice(0, 4000);
+
+    return 'Ошибка выполнения (пустой вывод команды).';
   }
   public static success(text: string): string[] {
     const tests = text.match(/(?:^|\n)\s*✅ All (\d+) tests passed successfully(?:\r?\n|$)/);
@@ -64,12 +79,15 @@ export class CompactProgress {
         ? input.filePath.replace(/[\x00-\x1f\x7f]/g, '').slice(0, 240) : '';
       const exit = tool === 'bash' ? object(state.metadata).exit : undefined;
       const status = typeof exit === 'number' ? `код выхода ${exit}` : state.status === 'error' ? 'ошибка' : 'завершено';
-      return [`OpenCode: ${(command ?? tool) || 'инструмент'}${path ? ` ${path}` : ''} → ${status}.`];
+      const err = state.status === 'error' && state.error ? `: ${String(state.error).slice(0, 300)}` : '';
+      return [`OpenCode: ${(command ?? tool) || 'инструмент'}${path ? ` ${path}` : ''} → ${status}${err}.`];
     }
     if (type === 'item.started' && item.type === 'command_execution' && typeof item.command === 'string') return [`Выполняется: ${this.command(item.command)}`];
     if ((type === 'item.started' || type === 'item.completed') && item.type === 'mcp_tool_call') {
       const name = [item.server, item.tool].filter(v => typeof v === 'string').map(v => String(v).replace(/[^\w.-]/g, '').slice(0, 100)).join('/');
-      const status = type === 'item.started' ? 'вызов' : item.status === 'failed' || item.error ? 'ошибка' : 'завершён';
+      const err = (item.status === 'failed' || item.error) && item.error
+        ? ` (${typeof item.error === 'object' ? String((item.error as Fields).message ?? JSON.stringify(item.error)) : String(item.error)})` : '';
+      const status = type === 'item.started' ? 'вызов' : item.status === 'failed' || item.error ? `ошибка${err}` : 'завершён';
       return [`MCP ${name || 'инструмент'}: ${status}.`];
     }
     if (type === 'item.completed') {

@@ -48,7 +48,20 @@ export class AntigravityStream {
         const info = object(step.tool_info); const parameters = object(info.parameters);
         const name = String(step.tool_name ?? info.name ?? 'tool').replace(/[^a-zA-Z0-9_./-]/g, '').slice(0, 100);
         const command = typeof parameters.CommandLine === 'string' ? ': ' + CompactProgress.command(parameters.CommandLine) : '';
-        this.progress('Antigravity tool ' + name + ': ' + (step.state === 'ACTIVE' ? 'вызов' : info.error ? 'ошибка' : 'завершён') + command + '.\n');
+        const targetPath = typeof parameters.Path === 'string' ? parameters.Path : typeof parameters.path === 'string' ? parameters.path : '';
+        const file = targetPath ? ` (${targetPath}${parameters.StartLine ? `:${parameters.StartLine}` : ''})` : '';
+        const query = typeof parameters.query === 'string' ? ` ("${parameters.query.slice(0, 60)}")` : '';
+        const mcpTarget = (typeof parameters.ServerName === 'string' || typeof parameters.ToolName === 'string')
+          ? ` (${parameters.ServerName ?? ''}/${parameters.ToolName ?? ''})` : '';
+        const target = command || file || query || mcpTarget;
+        const errVal = info.error ?? step.error;
+        let errDesc = '';
+        if (errVal) {
+          const rawErr = typeof errVal === 'object' && errVal !== null ? String((errVal as Record<string, unknown>).message ?? JSON.stringify(errVal)) : String(errVal);
+          errDesc = ` — ${CompactProgress.diagnostics(rawErr).slice(0, 500)}`;
+        }
+        const status = step.state === 'ACTIVE' ? 'вызов' : (info.error || step.error) ? `ошибка${errDesc}` : 'завершён';
+        this.progress('Antigravity tool ' + name + target + ': ' + status + '.\n');
       }
     }
     if (step.state === 'DONE') {

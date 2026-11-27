@@ -4,13 +4,22 @@ import { FormsModule } from '@angular/forms';
 import { ButtonModule } from 'primeng/button';
 import { SelectModule } from 'primeng/select';
 import { PanelModule } from 'primeng/panel';
+import { DialogModule } from 'primeng/dialog';
+import { InputTextModule } from 'primeng/inputtext';
+import { TooltipModule } from 'primeng/tooltip';
 import { HttpClient } from '@angular/common/http';
 import { firstValueFrom } from 'rxjs';
 import type { RunEvent } from '../../../../../shared/automation/contracts';
 import { CONSOLE_LIMITS, RunConsoleDecoder } from '../../../../../shared/automation/console';
 
-@Component({ selector: 'sat-run-console', standalone: true, imports: [DatePipe, FormsModule, ButtonModule, SelectModule, PanelModule],
-  changeDetection: ChangeDetectionStrategy.OnPush, templateUrl: './run-console.component.html', styleUrl: './run-console.component.scss' })
+@Component({
+  selector: 'sat-run-console',
+  standalone: true,
+  imports: [DatePipe, FormsModule, ButtonModule, SelectModule, PanelModule, DialogModule, InputTextModule, TooltipModule],
+  changeDetection: ChangeDetectionStrategy.OnPush,
+  templateUrl: './run-console.component.html',
+  styleUrl: './run-console.component.scss'
+})
 export class RunConsoleComponent {
   private readonly http = inject(HttpClient);
   private readonly ngZone = inject(NgZone);
@@ -19,9 +28,14 @@ export class RunConsoleComponent {
   public readonly view = computed(() => RunConsoleDecoder.render(this.events()));
   public readonly level = signal('all');
   public readonly stage = signal('all');
+  public readonly searchQuery = signal('');
   public readonly levelOptions = [
-    { label: 'Все', value: 'all' }, { label: 'Ошибки', value: 'error' }, { label: 'Предупреждения', value: 'warning' },
-    { label: 'Команды', value: 'command' }, { label: 'Успех', value: 'success' }, { label: 'Сообщения', value: 'info' },
+    { label: 'Все', value: 'all' },
+    { label: 'Ошибки', value: 'error' },
+    { label: 'Предупреждения', value: 'warning' },
+    { label: 'Команды и операции', value: 'command' },
+    { label: 'Успех', value: 'success' },
+    { label: 'Сообщения', value: 'info' },
   ];
   public readonly stageOptions = computed(() => [{ label: 'Все этапы', value: 'all' }, ...this.stages().map(value => ({ label: value, value }))]);
   public readonly follow = signal(true);
@@ -29,11 +43,49 @@ export class RunConsoleComponent {
   public readonly message = signal('');
   public readonly downloading = signal(false);
   public readonly stages = computed(() => [...new Set(this.view().lines.map((line) => line.stage))]);
-  public readonly rows = computed(() => this.view().lines.filter((line) => (this.level() === 'all' || line.level === this.level())
-    && (this.stage() === 'all' || line.stage === this.stage())));
+
+  // Main console rows with search & filters
+  public readonly rows = computed(() => {
+    const q = this.searchQuery().toLowerCase().trim();
+    const lvl = this.level();
+    const stg = this.stage();
+    return this.view().lines.filter((line) => {
+      if (lvl !== 'all' && line.level !== lvl) return false;
+      if (stg !== 'all' && line.stage !== stg) return false;
+      if (q && !line.text.toLowerCase().includes(q) && !line.stage.toLowerCase().includes(q)) return false;
+      return true;
+    });
+  });
+
   public readonly raw = computed(() => this.events().map((event) => JSON.stringify(event)).join('\n'));
   public readonly limit = CONSOLE_LIMITS.lines;
   public readonly viewport = viewChild<ElementRef<HTMLDivElement>>('viewport');
+  public readonly modalViewport = viewChild<ElementRef<HTMLDivElement>>('modalViewport');
+
+  // Detailed Modal State & Filters
+  public readonly detailModalOpen = signal(false);
+  public readonly detailFilter = signal<'all' | 'error' | 'command' | 'success' | 'warning'>('all');
+  public readonly detailStage = signal('all');
+  public readonly detailSearch = signal('');
+
+  // Counts for statistics
+  public readonly errorCount = computed(() => this.view().lines.filter((l) => l.level === 'error').length);
+  public readonly successCount = computed(() => this.view().lines.filter((l) => l.level === 'success').length);
+  public readonly commandCount = computed(() => this.view().lines.filter((l) => l.level === 'command').length);
+  public readonly warningCount = computed(() => this.view().lines.filter((l) => l.level === 'warning').length);
+
+  // Detailed modal filtered rows
+  public readonly detailRows = computed(() => {
+    const filter = this.detailFilter();
+    const stg = this.detailStage();
+    const q = this.detailSearch().toLowerCase().trim();
+    return this.view().lines.filter((line) => {
+      if (filter !== 'all' && line.level !== filter) return false;
+      if (stg !== 'all' && line.stage !== stg) return false;
+      if (q && !line.text.toLowerCase().includes(q) && !line.stage.toLowerCase().includes(q)) return false;
+      return true;
+    });
+  });
 
   private lastRowCount = -1;
   private lastFollow = false;
@@ -44,11 +96,16 @@ export class RunConsoleComponent {
       this.runId();
       this.level.set('all');
       this.stage.set('all');
+      this.searchQuery.set('');
       this.follow.set(true);
       this.rawOpen.set(false);
       this.message.set('');
       this.lastRowCount = -1;
       this.lastFollow = false;
+      this.detailModalOpen.set(false);
+      this.detailFilter.set('all');
+      this.detailStage.set('all');
+      this.detailSearch.set('');
     });
 
     // Listen to scroll events outside Angular zone to avoid triggering change detection on every scroll event
@@ -108,11 +165,62 @@ export class RunConsoleComponent {
     }
   }
 
+  public openDetailModal(filter: 'all' | 'error' | 'command' | 'success' | 'warning' = 'all'): void {
+    this.detailFilter.set(filter);
+    this.detailStage.set(this.stage());
+    this.detailSearch.set(this.searchQuery());
+    this.detailModalOpen.set(true);
+  }
+
+  public closeDetailModal(): void {
+    this.detailModalOpen.set(false);
+  }
+
+  public scrollToFirstError(): void {
+    const container = this.modalViewport()?.nativeElement;
+    if (!container) return;
+    const errorEl = container.querySelector('.detail-row[data-level="error"]');
+    if (errorEl) {
+      errorEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+  }
+
+  public scrollToLastError(): void {
+    const container = this.modalViewport()?.nativeElement;
+    if (!container) return;
+    const errorEls = container.querySelectorAll('.detail-row[data-level="error"]');
+    if (errorEls.length) {
+      errorEls[errorEls.length - 1].scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+  }
+
   public async copy(): Promise<void> {
     try {
       await navigator.clipboard.writeText(this.rows().map((line) => `${line.at} [${line.stage}] [${line.level}] ${line.text}`).join('\n'));
       this.message.set('Видимый вывод скопирован.');
     } catch { this.message.set('Копирование недоступно. Выделите текст или скачайте журнал.'); }
+  }
+
+  public async copyDetailFiltered(): Promise<void> {
+    try {
+      await navigator.clipboard.writeText(this.detailRows().map((line) => `${line.at} [${line.stage}] [${line.level}] ${line.text}`).join('\n'));
+      this.message.set('Отфильтрованные строки скопированы.');
+    } catch { this.message.set('Копирование недоступно. Выделите текст.'); }
+  }
+
+  public async copyErrors(): Promise<void> {
+    try {
+      const errors = this.view().lines.filter(l => l.level === 'error');
+      await navigator.clipboard.writeText(errors.map((line) => `${line.at} [${line.stage}] [ERROR] ${line.text}`).join('\n'));
+      this.message.set(`Скопировано ошибок: ${errors.length}.`);
+    } catch { this.message.set('Копирование недоступно.'); }
+  }
+
+  public async copyLine(text: string): Promise<void> {
+    try {
+      await navigator.clipboard.writeText(text);
+      this.message.set('Строка скопирована.');
+    } catch { /* ignore */ }
   }
 
   public async download(): Promise<void> {

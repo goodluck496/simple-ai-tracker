@@ -16,6 +16,7 @@ import { TaskDialogComponent } from './components/task-dialog/task-dialog.compon
 import { TagsPanelComponent } from './components/tags-panel/tags-panel.component';
 import { BackupPanelComponent } from './components/backup-panel/backup-panel.component';
 import { InstructionsDialogComponent } from './components/instructions-dialog/instructions-dialog.component';
+import { RunsToolbarComponent } from './components/runs-toolbar/runs-toolbar.component';
 import { NavigationEnd, Router, RouterOutlet } from '@angular/router';
 import { AutomationLaunchService } from './services/automation-launch.service';
 import { SidebarComponent } from './components/sidebar/sidebar.component';
@@ -42,6 +43,7 @@ const PROGRESS_DELAY_MS = 140;
     TagsPanelComponent,
     BackupPanelComponent,
     InstructionsDialogComponent,
+    RunsToolbarComponent,
     RouterOutlet,
   ],
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -64,9 +66,9 @@ export class AppComponent implements OnInit {
   private readonly currentPath = toSignal(this.router.events.pipe(
     filter((event): event is NavigationEnd => event instanceof NavigationEnd),
     map(event => event.urlAfterRedirects.split('?')[0]),
-  ), { initialValue: '' });
+  ), { initialValue: this.router.url.split('?')[0] });
   public readonly boardVisible = computed(() => !this.currentPath().startsWith('/automation/'));
-  public readonly runsVisible = computed(() => this.currentPath().startsWith('/automation/runs/'));
+  public readonly runsVisible = computed(() => this.currentPath().startsWith('/automation/runs'));
 
   public readonly activeItemId = signal<string | null>(null);
   public readonly activeItemTab = signal<DialogTab | null>(null);
